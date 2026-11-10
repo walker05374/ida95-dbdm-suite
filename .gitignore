@@ -1,0 +1,5 @@
+# Ignorar pasta pesada de instaladores do IDA Pro
+ida95/
+
+# Ignorar cache temporario de build do Apktool
+switcher_src/build/

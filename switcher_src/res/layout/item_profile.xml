@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="8.0dp" app:cardBackgroundColor="#1e1e1e" app:cardCornerRadius="8.0dp" app:cardElevation="2.0dp"
+  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <LinearLayout android:orientation="horizontal" android:padding="12.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <LinearLayout android:orientation="vertical" android:layout_width="0.0dp" android:layout_height="wrap_content" android:layout_weight="1.0" android:layout_marginEnd="8.0dp">
+            <TextView android:textSize="15.0sp" android:textStyle="bold" android:textColor="#ffffff" android:id="@id/tv_name" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <TextView android:textSize="12.0sp" android:textColor="#aaaaaa" android:id="@id/tv_ssaid" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="monospace" />
+            <TextView android:textSize="11.0sp" android:textColor="#888888" android:id="@id/tv_user_id" android:layout_width="wrap_content" android:layout_height="wrap_content" android:fontFamily="monospace" />
+            <TextView android:textSize="11.0sp" android:textColor="#666666" android:id="@id/tv_created" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        </LinearLayout>
+        <LinearLayout android:gravity="center" android:orientation="vertical" android:layout_width="wrap_content" android:layout_height="wrap_content">
+            <Button android:textSize="12.0sp" android:id="@id/btn_activate" android:layout_width="80.0dp" android:layout_height="36.0dp" android:layout_marginBottom="4.0dp" android:text="Ativar" />
+            <Button android:textSize="12.0sp" android:id="@id/btn_delete" android:layout_width="80.0dp" android:layout_height="36.0dp" android:text="Excluir" />
+        </LinearLayout>
+    </LinearLayout>
+</androidx.cardview.widget.CardView>
