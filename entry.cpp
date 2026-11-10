@@ -8,6 +8,9 @@
 #include "elf_resolver.hpp"
 #include "in_process_memory.hpp"
 #include "zygisk.hpp"
+#include "imgui_gles3_hud.hpp"
+#include "telemetry_adapter.hpp"
+#include "egl_plt_bridge.hpp"
 #include <jni.h>
 #include <pthread.h>
 #include <time.h>
@@ -85,16 +88,24 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     // UObjectBase / AActor / ACharacter (WITH_CASE_PRESERVING_NAME = 1 -> 12-byte FName)
     uintptr_t fname_comparison_index    = 0x0018;     // UObjectBase::NamePrivate.ComparisonIndex (+0x18)
     uintptr_t fname_index               = 0x001C;     // UObjectBase::NamePrivate.DisplayIndex (+0x1C)
+    uintptr_t custom_time_dilation      = 0x0098;     // AActor::CustomTimeDilation (float, +0x98)
     uintptr_t root_component            = 0x0140;     // AActor::RootComponent (FClassParams @ 0x0C7ABD84)
     uintptr_t character_movement        = 0x0290;     // ACharacter::CharacterMovement / Mesh
+
+    // APlayerCameraManager -> CameraCachePrivate (+0x1AE0) -> POV (+0x10)
+    uintptr_t camera_cache_private      = 0x1AE0;     // FCameraCacheEntry
+    uintptr_t pov_location              = 0x1AE0 + 0x0010; // FMinimalViewInfo::Location (FVector)
+    uintptr_t pov_rotation              = 0x1AE0 + 0x001C; // FMinimalViewInfo::Rotation (FRotator)
+    uintptr_t pov_fov                   = 0x1AE0 + 0x0028; // FMinimalViewInfo::FOV (float)
 
     // USceneComponent
     uintptr_t relative_location         = 0x0134;     // FVector (12 bytes)
     uintptr_t component_velocity        = 0x0140;     // FVector (12 bytes)
 
     // UCharacterMovementComponent
-    uintptr_t max_walk_speed            = 0x018C;     // float
-    uintptr_t max_acceleration          = 0x0198;     // float
+    uintptr_t jump_z_velocity           = 0x0158;     // float (+0x158)
+    uintptr_t max_walk_speed            = 0x018C;     // float (+0x18C)
+    uintptr_t max_acceleration          = 0x0198;     // float (+0x198)
 
     // APlayerState
     uintptr_t player_name_private       = 0x0310;     // FString (TArray<char16_t>)
@@ -188,10 +199,18 @@ public:
         uintptr_t local_pawn,
         const EngineOffsets& off,
         float target_walk_speed,
-        float target_accel
+        float target_accel,
+        float target_jump_z = 0.0f,
+        float target_time_scale = 0.0f
     ) noexcept {
         if (local_pawn == 0) {
             return Status::InvalidArgument;
+        }
+        if (target_time_scale >= 0.1f && target_time_scale <= 5.0f) {
+            const Status st = mem::write_data<float>(local_pawn + off.custom_time_dilation, target_time_scale);
+            if (st != Status::Ok) {
+                return st;
+            }
         }
         const auto move_comp = mem::read<uintptr_t>(local_pawn + off.character_movement);
         if (!move_comp.has_value() || *move_comp == 0) {
@@ -205,6 +224,12 @@ public:
         }
         if (target_accel > 0.0f && target_accel <= 10000.0f) {
             const Status st = mem::write_data<float>(*move_comp + off.max_acceleration, target_accel);
+            if (st != Status::Ok) {
+                return st;
+            }
+        }
+        if (target_jump_z > 0.0f && target_jump_z <= 5000.0f) {
+            const Status st = mem::write_data<float>(*move_comp + off.jump_z_velocity, target_jump_z);
             if (st != Status::Ok) {
                 return st;
             }

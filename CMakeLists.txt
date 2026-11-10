@@ -15,15 +15,35 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ============================================================================
-# Target 1: libinstrument_core.so (entry.cpp + exports.map)
+# Target 1: libinstrument_core.so (entry.cpp + Dear ImGui GLES3 HUD + exports.map)
 # ============================================================================
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
+
+set(IMGUI_SOURCES
+    "${IMGUI_DIR}/imgui.cpp"
+    "${IMGUI_DIR}/imgui_draw.cpp"
+    "${IMGUI_DIR}/imgui_tables.cpp"
+    "${IMGUI_DIR}/imgui_widgets.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp"
+)
+
 add_library(instrument_core SHARED
     entry.cpp
+    imgui_gles3_hud.cpp
+    ${IMGUI_SOURCES}
 )
 
 target_include_directories(instrument_core
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${IMGUI_DIR}
+        ${IMGUI_DIR}/backends
+)
+
+target_compile_definitions(instrument_core
+    PRIVATE
+        IMGUI_IMPL_OPENGL_ES3
+        IMGUI_DISABLE_OBSOLETE_FUNCTIONS
 )
 
 target_compile_options(instrument_core
@@ -61,8 +81,14 @@ set_target_properties(instrument_core PROPERTIES
 
 if(ANDROID)
     find_library(ANDROID_LOG_LIB log REQUIRED)
+    find_library(ANDROID_EGL_LIB EGL REQUIRED)
+    find_library(ANDROID_GLESV3_LIB GLESv3 REQUIRED)
+    find_library(ANDROID_NATIVE_LIB android REQUIRED)
     target_link_libraries(instrument_core
         PRIVATE
+            ${ANDROID_EGL_LIB}
+            ${ANDROID_GLESV3_LIB}
+            ${ANDROID_NATIVE_LIB}
             ${ANDROID_LOG_LIB}
             dl
     )
