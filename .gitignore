@@ -1,5 +1,21 @@
 # Ignorar pasta pesada de instaladores do IDA Pro
 ida95/
 
-# Ignorar cache temporario de build do Apktool
+# Ignorar cache temporario de build (CMake/Ninja/Apktool)
+build-arm64/
 switcher_src/build/
+dist/
+*.idsig
+modulos/debug.keystore
+
+# Ignorar bancos do IDA Pro e binarios gigantes (>100MB limite do GitHub)
+*.i64
+*.idb
+*.nam
+*.til
+*.id0
+*.id1
+*.id2
+**/libUE4.so
+**/libUE4_fixed.so
+
