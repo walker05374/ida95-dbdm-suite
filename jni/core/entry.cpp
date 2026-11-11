@@ -139,8 +139,17 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t camera_default_fov        = 0x0248;     // float APlayerCameraManager::DefaultFOV (+0x248)
     uintptr_t camera_locked_fov         = 0x0250;     // float APlayerCameraManager::LockedFOV (+0x250)
 
-    // UChargeableComponent / Generator Progress & USkillCheck
-    uintptr_t chargeable_current_charge = 0x0338;     // float (+0x338)
+    // AGenerator & UChargeableComponent / FSpeedBasedNetSyncedValue & USkillCheck (Verified in libUE4.so Build 292949)
+    uintptr_t chargeable_current_charge = 0x0378;     // float AGenerator::NativePercentComplete (+0x378, 0.0f..1.0f)
+    uintptr_t generator_activated       = 0x0368;     // uint8 AGenerator::Activated (+0x368)
+    uintptr_t generator_is_repaired     = 0x0369;     // uint8 AGenerator::IsRepaired (+0x369)
+    uintptr_t generator_native_percent  = 0x0378;     // float AGenerator::NativePercentComplete (+0x378, 0.0f..1.0f)
+    uintptr_t generator_charge_comp     = 0x0520;     // UChargeableComponent* AGenerator::_generatorCharge (+0x520)
+    uintptr_t chargeable_replicated_chg = 0x01B8;     // float UChargeableComponent::_currentCharge._replicatedValue (+0x1A0 + 0x18)
+    uintptr_t chargeable_live_charge    = 0x01BC;     // float UChargeableComponent::_currentCharge live interpolated value (+0x1A0 + 0x1C)
+    uintptr_t chargeable_tunable_data   = 0x02F8;     // TMap<FName, float> UChargeableComponent::_tunableValueMap.Data (+0x2F8)
+    uintptr_t chargeable_tunable_count  = 0x0300;     // int32 UChargeableComponent::_tunableValueMap.ArrayNum (+0x300)
+    uintptr_t chargeable_tunable_val    = 0x000C;     // float first tunable entry value at Data + 0x0C (MaxCharge ~ 90.0f)
     uintptr_t player_interaction_handler= 0x08D0;     // UPlayerInteractionHandler* (+0x8D0)
     uintptr_t skillcheck_component      = 0x02E8;     // USkillCheck* (+0x2E8)
     uintptr_t skillcheck_success_start  = 0x0164;     // float USkillCheck::SuccessZoneStart (+0x164)
@@ -1235,53 +1244,169 @@ public:
         return nullptr;
     }
 
-    // Reads active generator repair progress float (0.0f to 100.0f) directly from the
-    // interaction/component offset (+0x0338) or its attached UChargeableComponent instance.
+    // Per-generator component & tunable MaxCharge cache (keyed by actor_ptr, 100ms pointer/tunable refresh).
+    // Live progress fields (IsRepaired +0x369, NativePercentComplete +0x378, and UChargeableComponent::_currentCharge +0x1BC/+0x1B8)
+    // are read directly every frame so repairing/regressing/completed generators update in real time.
+    struct GeneratorProgressCacheEntry {
+        uintptr_t actor_ptr{0};
+        uintptr_t charge_comp_ptr{0};
+        float     max_charge{90.0f};
+        float     last_logged_pct{-10.0f};
+        uint64_t  last_comp_refresh_ms{0};
+    };
+
+    [[nodiscard]] static uint64_t monotonic_now_ms() noexcept {
+        struct timespec ts{};
+        if (::clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+            return 0ULL;
+        }
+        return static_cast<uint64_t>(ts.tv_sec) * 1000ULL +
+               static_cast<uint64_t>(ts.tv_nsec / 1000000L);
+    }
+
     [[nodiscard]] static float read_generator_progress_pct(
         uintptr_t actor_ptr,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
-        if (!InProcessMemory::IsValidPtr(actor_ptr, off.chargeable_current_charge + sizeof(uintptr_t))) {
+        if (!InProcessMemory::IsValidPtr(actor_ptr, off.generator_charge_comp + sizeof(uintptr_t))) {
             return 0.0f;
         }
 
-        // 1. Check if the interaction/chargeable offset on AGenerator holds a live 8-byte aligned UChargeableComponent* pointer
-        if (const auto maybe_comp = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
-            maybe_comp.has_value())
-        {
-            const uintptr_t untagged_comp = *maybe_comp & 0x00FFFFFFFFFFFFFFULL;
-            if ((untagged_comp & 0x7ULL) == 0ULL &&
-                untagged_comp >= 0x0000000100000000ULL &&
-                untagged_comp <= 0x00007FFFFFFFFFFFULL &&
-                validate_canonical_uobject(*maybe_comp, off.chargeable_current_charge + sizeof(float) * 2U, guobjectarray_abs, off))
+        static std::array<GeneratorProgressCacheEntry, 16> s_gen_cache{};
+        const uint64_t now_ms = monotonic_now_ms();
+
+        size_t slot = s_gen_cache.size();
+        size_t oldest_slot = 0;
+        uint64_t oldest_ms = UINT64_MAX;
+        for (size_t i = 0; i < s_gen_cache.size(); ++i) {
+            if (s_gen_cache[i].actor_ptr == actor_ptr) {
+                slot = i;
+                break;
+            }
+            if (s_gen_cache[i].actor_ptr == 0) {
+                oldest_slot = i;
+                oldest_ms   = 0;
+            } else if (s_gen_cache[i].last_comp_refresh_ms < oldest_ms) {
+                oldest_ms   = s_gen_cache[i].last_comp_refresh_ms;
+                oldest_slot = i;
+            }
+        }
+        if (slot == s_gen_cache.size()) {
+            slot = oldest_slot;
+            s_gen_cache[slot] = GeneratorProgressCacheEntry{};
+            s_gen_cache[slot].actor_ptr = actor_ptr;
+        }
+
+        GeneratorProgressCacheEntry& entry = s_gen_cache[slot];
+        if (entry.last_comp_refresh_ms == 0ULL || (now_ms - entry.last_comp_refresh_ms) >= 100ULL) {
+            entry.last_comp_refresh_ms = now_ms;
+            uintptr_t resolved_comp = 0;
+            float     resolved_max  = 90.0f;
+
+            if (const auto maybe_comp = mem::read<uintptr_t>(actor_ptr + off.generator_charge_comp);
+                maybe_comp.has_value())
             {
-                if (const auto comp_chg = mem::read<float>(*maybe_comp + off.chargeable_current_charge);
-                    comp_chg.has_value() && std::isfinite(*comp_chg) && *comp_chg >= 0.0f && *comp_chg <= 100.0f)
+                const uintptr_t untagged_comp = *maybe_comp & 0x00FFFFFFFFFFFFFFULL;
+                if ((untagged_comp & 0x7ULL) == 0ULL &&
+                    untagged_comp >= 0x0000000100000000ULL &&
+                    untagged_comp <= 0x00007FFFFFFFFFFFULL &&
+                    validate_canonical_uobject(
+                        *maybe_comp,
+                        off.chargeable_tunable_count + sizeof(int32_t),
+                        guobjectarray_abs,
+                        off))
                 {
-                    float max_chg = 0.0f;
-                    if (const auto m = mem::read<float>(*maybe_comp + off.chargeable_current_charge + sizeof(float));
-                        m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
-                        max_chg = *m;
+                    resolved_comp = *maybe_comp;
+                    const auto map_data  = mem::read<uintptr_t>(resolved_comp + off.chargeable_tunable_data);
+                    const auto map_count = mem::read<int32_t>(resolved_comp + off.chargeable_tunable_count);
+                    if (map_data.has_value() && map_count.has_value() &&
+                        *map_count > 0 && *map_count <= 64 &&
+                        InProcessMemory::IsValidPtr(*map_data, off.chargeable_tunable_val + sizeof(float)))
+                    {
+                        if (const auto tunable_max = mem::read<float>(*map_data + off.chargeable_tunable_val);
+                            tunable_max.has_value() && std::isfinite(*tunable_max) &&
+                            *tunable_max >= 10.0f && *tunable_max <= 200.0f)
+                        {
+                            resolved_max = *tunable_max;
+                        }
                     }
-                    return hud::adapter::normalize_generator_progress_pct(*comp_chg, max_chg);
+                }
+            }
+            entry.charge_comp_ptr = resolved_comp;
+            entry.max_charge      = resolved_max;
+        }
+
+        // 1. Live completion flags on AGenerator: IsRepaired (+0x0369) or Activated (+0x0368)
+        const uint8_t is_repaired = mem::read<uint8_t>(actor_ptr + off.generator_is_repaired).value_or(0U);
+        const uint8_t activated   = mem::read<uint8_t>(actor_ptr + off.generator_activated).value_or(0U);
+
+        // 2. Live AGenerator::NativePercentComplete (+0x0378, float in [0.0f, 1.0f])
+        float native_pct   = -1.0f;
+        float native_ratio = -1.0f;
+        if (const auto raw_native = mem::read<float>(actor_ptr + off.generator_native_percent);
+            raw_native.has_value() && std::isfinite(*raw_native) &&
+            *raw_native >= 0.0f && *raw_native <= 1.05f)
+        {
+            native_ratio = *raw_native;
+            native_pct   = hud::adapter::normalize_generator_progress_pct(*raw_native, 1.0f);
+        }
+
+        // 3. Live UChargeableComponent::_currentCharge (FSpeedBasedNetSyncedValue at +0x01BC live / +0x01B8 replicated)
+        float charge_pct = -1.0f;
+        float raw_charge = -1.0f;
+        if (entry.charge_comp_ptr != 0) {
+            const float max_chg = (entry.max_charge >= 10.0f && entry.max_charge <= 200.0f) ? entry.max_charge : 90.0f;
+            if (const auto live_chg = mem::read<float>(entry.charge_comp_ptr + off.chargeable_live_charge);
+                live_chg.has_value() && std::isfinite(*live_chg) &&
+                *live_chg >= 0.0f && *live_chg <= max_chg * 1.05f)
+            {
+                raw_charge = *live_chg;
+                charge_pct = hud::adapter::normalize_generator_progress_pct(*live_chg, max_chg);
+            }
+            if (const auto rep_chg = mem::read<float>(entry.charge_comp_ptr + off.chargeable_replicated_chg);
+                rep_chg.has_value() && std::isfinite(*rep_chg) &&
+                *rep_chg >= 0.0f && *rep_chg <= max_chg * 1.05f)
+            {
+                const float rep_pct = hud::adapter::normalize_generator_progress_pct(*rep_chg, max_chg);
+                if (charge_pct < 0.0f || (charge_pct == 0.0f && rep_pct > 0.0f)) {
+                    raw_charge = *rep_chg;
+                    charge_pct = rep_pct;
                 }
             }
         }
 
-        // 2. Read the active repair progress float (0.0f to 100.0f) directly from actor_ptr + off.chargeable_current_charge (+0x0338)
-        if (const auto raw_chg = mem::read<float>(actor_ptr + off.chargeable_current_charge);
-            raw_chg.has_value() && std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f)
-        {
-            float max_chg = 0.0f;
-            if (const auto m = mem::read<float>(actor_ptr + off.chargeable_current_charge + sizeof(float));
-                m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
-                max_chg = *m;
+        float final_pct = 0.0f;
+        if ((is_repaired & 0x01U) != 0U || (activated & 0x01U) != 0U) {
+            final_pct = 100.0f;
+        } else if (charge_pct >= 0.0f && native_pct >= 0.0f) {
+            // Prefer live FSpeedBasedNetSyncedValue when non-zero; fall back to NativePercentComplete when component is 0
+            final_pct = (charge_pct > 0.0f) ? charge_pct : native_pct;
+            if (native_pct >= 99.9f || charge_pct >= 99.9f) {
+                final_pct = 100.0f;
             }
-            return hud::adapter::normalize_generator_progress_pct(*raw_chg, max_chg);
+        } else if (charge_pct >= 0.0f) {
+            final_pct = (charge_pct >= 99.9f) ? 100.0f : charge_pct;
+        } else if (native_pct >= 0.0f) {
+            final_pct = (native_pct >= 99.9f) ? 100.0f : native_pct;
         }
 
-        return 0.0f;
+        if (std::fabs(final_pct - entry.last_logged_pct) >= 1.0f) {
+            entry.last_logged_pct = final_pct;
+            DIAG_LOGI(
+                "[GEN-PROGRESS] Gen=0x%llX Progress=%.1f%% | NativeRatio=%.4f | ChargeComp=0x%llX RawCharge=%.2f/%.1f | IsRepaired=%u Activated=%u",
+                static_cast<unsigned long long>(actor_ptr),
+                static_cast<double>(final_pct),
+                static_cast<double>(native_ratio),
+                static_cast<unsigned long long>(entry.charge_comp_ptr),
+                static_cast<double>(raw_charge),
+                static_cast<double>(entry.max_charge),
+                static_cast<unsigned>(is_repaired),
+                static_cast<unsigned>(activated)
+            );
+        }
+
+        return std::clamp(final_pct, 0.0f, 100.0f);
     }
 
     // Reads Shrine (Totem) state & interaction flags. Returns >= 0.0f while the totem is active/standing
@@ -2425,10 +2550,6 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         std::array<char, 128> scan_name{};
         std::array<char, 128> cls_name{};
 
-        const ue4::FVector ref_origin = (local_pawn != 0)
-            ? local_origin
-            : ue4::FVector{cam_view.location.x, cam_view.location.y, cam_view.location.z};
-
         for (size_t i = 0; i < scan_limit; ++i) {
             const auto a_ptr = mem::read<uintptr_t>(actor_arr->data_ptr + i * sizeof(uintptr_t));
             if (!a_ptr.has_value() || !InProcessMemory::IsValidPtr(*a_ptr, 0x150U)) {
@@ -2515,32 +2636,6 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                                 ps.has_value() && is_valid_player_state(*ps)) {
                                 local_player_st = *ps;
                                 break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Item 4: Generator Progress (+0x0338) & Skillcheck Handler (strictly real interactive Generators only!)
-            const char* cat = ue4::SpatialAndKinematicPipeline::classify_actor_category(scan_name.data(), cls_name.data());
-            if (cat != nullptr && std::strcmp(cat, "Generator") == 0) {
-                if (const auto gpos = ue4::SpatialAndKinematicPipeline::read_actor_location(*a_ptr, guobjectarray_abs, off)) {
-                    const float origin_sq = gpos->x * gpos->x + gpos->y * gpos->y + gpos->z * gpos->z;
-                    const bool is_ghost_pos =
-                        (std::fabs(gpos->x - 330.0f) < 5.0f &&
-                         std::fabs(gpos->y - 180.0f) < 5.0f &&
-                         std::fabs(gpos->z - 20.0f) < 5.0f);
-                    if (origin_sq >= 100.0f && !is_ghost_pos) {
-                        const float gen_pct = ue4::SpatialAndKinematicPipeline::read_generator_progress_pct(
-                            *a_ptr,
-                            guobjectarray_abs,
-                            off);
-                        if (!hud::adapter::should_hide_generator(gen_pct)) {
-                            ++active_gen_count;
-                            const float dsq = ref_origin.dist_squared(*gpos);
-                            if (dsq < nearest_gen_dist_sq) {
-                                nearest_gen_dist_sq = dsq;
-                                nearest_gen_pct     = gen_pct;
                             }
                         }
                     }
@@ -2641,6 +2736,17 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         );
 
         for (size_t i = 0; i < collected_count; ++i) {
+            if (s_snapshots_pool[i].priority_rank == 3 &&
+                std::isfinite(s_snapshots_pool[i].progress_pct) &&
+                s_snapshots_pool[i].progress_pct >= 0.0f)
+            {
+                ++active_gen_count;
+                const float dsq = s_snapshots_pool[i].distance_meters * s_snapshots_pool[i].distance_meters;
+                if (dsq < nearest_gen_dist_sq) {
+                    nearest_gen_dist_sq = dsq;
+                    nearest_gen_pct     = s_snapshots_pool[i].progress_pct;
+                }
+            }
             (void)hud::adapter::push_static_entity_sample(
                 tick_pool,
                 s_snapshots_pool[i].world_pos.x,

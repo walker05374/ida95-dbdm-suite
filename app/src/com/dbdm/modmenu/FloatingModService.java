@@ -273,11 +273,8 @@ public final class FloatingModService extends Service {
                     }
 
                     case 3: { // Gerador (Verde #2ECC71)
-                        if (extra >= 99.5f) {
-                            continue;
-                        }
                         colPrimary = Color.rgb(46, 204, 113);
-                        final int genPct = Math.max(0, Math.min(99, Math.round(extra)));
+                        final int genPct = Math.max(0, Math.min(100, Math.round(extra)));
                         tag = String.format(Locale.US, "%d%% %dm", genPct, distInt);
                         break;
                     }

@@ -676,14 +676,11 @@ void render_hud_frame(float width, float height) noexcept {
                 primary_col = col_teammate;
                 std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::PowerNode) {
-                if (std::isfinite(node.progress_pct) && node.progress_pct >= 99.5f) {
-                    continue;
-                }
                 primary_col = col_power_node;
                 const float clamped_pct = std::clamp(
                     std::isfinite(node.progress_pct) && node.progress_pct >= 0.0f ? node.progress_pct : 0.0f,
                     0.0f,
-                    99.0f);
+                    100.0f);
                 std::snprintf(
                     tag,
                     sizeof(tag),

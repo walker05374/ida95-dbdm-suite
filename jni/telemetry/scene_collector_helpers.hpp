@@ -327,12 +327,10 @@ inline void compute_skeleton_fallback_joints(
     return 0.0f;
 }
 
-// 5. Returns true when a generator's repair progress is invalid or has reached/exceeded 99.5%
-//    (automatic filter/hide condition for completed generators).
+// 5. Returns true only when a generator's repair progress is invalid/negative.
+//    Completed generators (100%) remain visible and render "100% <dist>m".
 [[nodiscard]] inline bool should_hide_generator(float progress_pct) noexcept {
-    return !std::isfinite(progress_pct) ||
-           progress_pct < 0.0f ||
-           progress_pct >= kGeneratorCompleteThresholdPct;
+    return !std::isfinite(progress_pct) || progress_pct < 0.0f;
 }
 
 // 6. Returns true while a Shrine (Totem) node remains standing/uncleansed (progress_pct >= 0.0f)

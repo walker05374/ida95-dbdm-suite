@@ -692,10 +692,9 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
             continue;
         }
 
-        // Skip completed PowerNodes (progress_pct >= 99.5f)
+        // Skip invalid PowerNodes (negative/NaN progress); completed generators (100%) remain visible
         if (cat == hud::NodeCategory::PowerNode &&
-            std::isfinite(src.progress_pct) &&
-            src.progress_pct >= 99.5f) {
+            (!std::isfinite(src.progress_pct) || src.progress_pct < 0.0f)) {
             continue;
         }
 
