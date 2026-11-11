@@ -80,6 +80,20 @@ struct KeyEventQueue {
 
 KeyEventQueue g_key_queue{};
 
+struct QueuedTouchEvent {
+    float raw_x{0.0f};
+    float raw_y{0.0f};
+    bool  is_down{false};
+};
+
+struct TouchEventQueue {
+    pthread_mutex_t  mutex = PTHREAD_MUTEX_INITIALIZER;
+    QueuedTouchEvent events[64]{};
+    std::size_t      count{0};
+};
+
+TouchEventQueue g_touch_queue{};
+
 inline constexpr float kNearClipPlaneUnits = 1.0f;
 
 [[nodiscard]] constexpr float deg_to_rad(float degrees) noexcept {
@@ -590,7 +604,7 @@ void render_hud_frame(float width, float height) noexcept {
 
     std::size_t visible_markers_rendered = 0;
 
-    // 1. Minimalist Text + Directional Tracer Line + Math3D 8-Corner Upright Bounding Box Pipeline
+    // 1. Minimalist Outlined Bounding Box (1.5px stroke, min 14x28px, no fill/lines/skeletons) + Label Pipeline
     if (draw_markers && match_live_snapshot && count_snapshot > 0) {
         ImDrawList* bg_draw_list = ImGui::GetBackgroundDrawList();
 
@@ -598,27 +612,13 @@ void render_hud_frame(float width, float height) noexcept {
         const ImU32 col_antagonist   = IM_COL32(255, 42, 42, 255);   // Red #FF2A2A
         const ImU32 col_teammate     = IM_COL32(0, 229, 255, 255);   // Cyan/Blue #00E5FF
         const ImU32 col_power_node   = IM_COL32(46, 204, 113, 255);  // Green #2ECC71
-        const ImU32 col_power_tracer = IM_COL32(46, 204, 113, 110);  // Subtle Green tracer
         const ImU32 col_shrine       = IM_COL32(241, 196, 15, 255);  // Yellow #F1C40F
         const ImU32 col_barrier      = IM_COL32(255, 241, 118, 255); // Light Yellow/Gold #FFF176
         const ImU32 col_container    = IM_COL32(255, 152, 0, 255);   // Orange #FF9800
         const ImU32 col_portal       = IM_COL32(224, 64, 251, 255);  // Purple #E040FB
         const ImU32 col_special_prop = IM_COL32(180, 210, 240, 230); // Subtle Light Blue
 
-        const ImVec2 screen_bottom_center{width * 0.5f, height};
-        bool         antagonist_rendered = false;
-
-        // Pre-allocated static buffers for Math3D pipeline batching (kMaxSceneNodes = 256)
-        static std::array<math3d::ActorHudDescriptor, kMaxSceneNodes> s_math3d_actors{};
-        static std::array<std::array<char, 128>, kMaxSceneNodes>      s_math3d_labels{};
-        std::size_t math3d_actor_count = 0;
-
-        const math3d::CameraState math_cam{
-            math3d::Vec3{cam_snapshot.location.x, cam_snapshot.location.y, cam_snapshot.location.z},
-            math3d::EulerAngles{cam_snapshot.rotation.pitch, cam_snapshot.rotation.yaw, cam_snapshot.rotation.roll},
-            cam_snapshot.fov,
-            kNearClipPlaneUnits
-        };
+        bool antagonist_rendered = false;
 
         for (std::size_t i = 0; i < count_snapshot; ++i) {
             const SceneNode& node = s_nodes_snapshot[i];
@@ -654,76 +654,36 @@ void render_hud_frame(float width, float height) noexcept {
 
             const int dist_int = static_cast<int>(std::lround(std::max(0.0f, node.distance_m)));
 
-            // ----------------------------------------------------------------
-            // Category A: Antagonist (#FF2A2A) & Teammate (#00E5FF)
-            // Delegated to math3d::integrate_math3d_into_existing_hud(...)
-            // ----------------------------------------------------------------
-            if (cat == NodeCategory::Antagonist || cat == NodeCategory::Teammate) {
-                if (math3d_actor_count < kMaxSceneNodes) {
-                    const bool  is_antagonist = (cat == NodeCategory::Antagonist);
-                    const ImU32 primary_col   = is_antagonist ? col_antagonist : col_teammate;
+            ImU32 primary_col = col_special_prop;
+            char  tag[128]{};
 
-                    auto& label_buf = s_math3d_labels[math3d_actor_count];
-                    if (is_antagonist) {
-                        std::snprintf(label_buf.data(), label_buf.size(), "assassino [%dm]", dist_int);
-                    } else {
-                        const bool has_custom_label =
-                            (node.label[0] != '\0' &&
-                             std::strcmp(node.label, "Survivor") != 0 &&
-                             std::strcmp(node.label, "Sobrevivente") != 0);
-                        const char* display_name = has_custom_label ? node.label : "sobrevivente";
-                        std::snprintf(label_buf.data(), label_buf.size(), "%s [%dm]", display_name, dist_int);
-                    }
-
-                    math3d::ActorHudDescriptor& desc = s_math3d_actors[math3d_actor_count++];
-                    desc.actor_pos   = math3d::Vec3{node.world_pos.x, node.world_pos.y, node.world_pos.z};
-                    desc.yaw_deg     = node.yaw_deg;
-                    desc.label       = label_buf.data();
-                    desc.color       = primary_col;
-                    desc.half_width  = kCapsuleHalfWidthCm;
-                    desc.half_height = kCapsuleHalfHeightCm;
-                    desc.draw_tracer = true;
-                    ++visible_markers_rendered;
-                }
-                continue;
-            }
-
-            // ----------------------------------------------------------------
-            // Category B: PowerNode / Generator (Green #2ECC71)
-            // Auto-hide completed nodes (progress_pct >= 99.5f); clean text + subtle tracer
-            // ----------------------------------------------------------------
-            if (cat == NodeCategory::PowerNode) {
+            if (cat == NodeCategory::Antagonist) {
+                primary_col = col_antagonist;
+                std::snprintf(tag, sizeof(tag), "assassino [%dm]", dist_int);
+            } else if (cat == NodeCategory::Teammate) {
+                primary_col = col_teammate;
+                const bool has_custom_label =
+                    (node.label[0] != '\0' &&
+                     std::strcmp(node.label, "Survivor") != 0 &&
+                     std::strcmp(node.label, "Sobrevivente") != 0);
+                const char* display_name = has_custom_label ? node.label : "sobrevivente";
+                std::snprintf(tag, sizeof(tag), "%s [%dm]", display_name, dist_int);
+            } else if (cat == NodeCategory::PowerNode) {
                 if (std::isfinite(node.progress_pct) && node.progress_pct >= 99.5f) {
                     continue;
                 }
-
-                ImVec2 screen_pos{};
-                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                    const float clamped_pct = std::clamp(
-                        std::isfinite(node.progress_pct) && node.progress_pct >= 0.0f ? node.progress_pct : 0.0f,
-                        0.0f,
-                        100.0f);
-
-                    bg_draw_list->AddLine(screen_bottom_center, screen_pos, col_power_tracer, 1.0f);
-
-                    char tag[128]{};
-                    std::snprintf(
-                        tag,
-                        sizeof(tag),
-                        "gerador %.0f%% [%dm]",
-                        static_cast<double>(clamped_pct),
-                        dist_int);
-                    draw_centered_label_below(bg_draw_list, screen_pos, col_power_node, tag);
-                    ++visible_markers_rendered;
-                }
-                continue;
-            }
-
-            // ----------------------------------------------------------------
-            // Category C: Shrine / Totem (Yellow #F1C40F)
-            // Auto-hide if inactive (progress_pct < 0.0f or destroyed); clean Yellow text only
-            // ----------------------------------------------------------------
-            if (cat == NodeCategory::Shrine) {
+                primary_col = col_power_node;
+                const float clamped_pct = std::clamp(
+                    std::isfinite(node.progress_pct) && node.progress_pct >= 0.0f ? node.progress_pct : 0.0f,
+                    0.0f,
+                    100.0f);
+                std::snprintf(
+                    tag,
+                    sizeof(tag),
+                    "gerador %.0f%% [%dm]",
+                    static_cast<double>(clamped_pct),
+                    dist_int);
+            } else if (cat == NodeCategory::Shrine) {
                 if (!std::isfinite(node.progress_pct) ||
                     node.progress_pct < 0.0f ||
                     icontains_label(node.label, "Destroyed") ||
@@ -731,22 +691,9 @@ void render_hud_frame(float width, float height) noexcept {
                     icontains_label(node.label, "Broken")) {
                     continue;
                 }
-
-                ImVec2 screen_pos{};
-                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                    char tag[96]{};
-                    std::snprintf(tag, sizeof(tag), "totem [%dm]", dist_int);
-                    draw_centered_label_below(bg_draw_list, screen_pos, col_shrine, tag);
-                    ++visible_markers_rendered;
-                }
-                continue;
-            }
-
-            // ----------------------------------------------------------------
-            // Category D: Barrier / Active Pallet Only (Light Yellow/Gold #FFF176)
-            // Windows/Vaults and broken/fallen/illusionary pallets are never rendered
-            // ----------------------------------------------------------------
-            if (cat == NodeCategory::Barrier) {
+                primary_col = col_shrine;
+                std::snprintf(tag, sizeof(tag), "totem [%dm]", dist_int);
+            } else if (cat == NodeCategory::Barrier) {
                 if (!std::isfinite(node.progress_pct) ||
                     node.progress_pct < 0.0f ||
                     icontains_label(node.label, "Window") ||
@@ -759,74 +706,66 @@ void render_hud_frame(float width, float height) noexcept {
                     icontains_label(node.label, "Fake")) {
                     continue;
                 }
+                primary_col = col_barrier;
+                std::snprintf(tag, sizeof(tag), "pallet [%dm]", dist_int);
+            } else if (cat == NodeCategory::Container) {
+                primary_col = col_container;
+                std::snprintf(tag, sizeof(tag), "bau [%dm]", dist_int);
+            } else if (cat == NodeCategory::Portal) {
+                primary_col = col_portal;
+                const bool is_hatch = icontains_label(node.label, "Hatch") ||
+                                      icontains_label(node.label, "Alcapao") ||
+                                      icontains_label(node.label, "Alçapão");
+                std::snprintf(
+                    tag,
+                    sizeof(tag),
+                    "%s [%dm]",
+                    is_hatch ? "alcapao" : "portao",
+                    dist_int);
+            } else {
+                primary_col = col_special_prop;
+                const char* prop_name = (node.label[0] != '\0') ? node.label : "objeto";
+                std::snprintf(tag, sizeof(tag), "%s [%dm]", prop_name, dist_int);
+            }
 
-                ImVec2 screen_pos{};
-                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                    char tag[96]{};
-                    std::snprintf(tag, sizeof(tag), "pallet [%dm]", dist_int);
-                    draw_centered_label_below(bg_draw_list, screen_pos, col_barrier, tag);
-                    ++visible_markers_rendered;
-                }
+            ImVec2 screen_center{};
+            if (!project_to_screen(node.world_pos, cam_snapshot, width, height, screen_center)) {
                 continue;
             }
 
-            // ----------------------------------------------------------------
-            // Category E: Container (Orange #FF9800) & Portal (Purple #E040FB)
-            // Clean compact text only: "bau [%dm]", "alcapao [%dm]", "portao [%dm]"
-            // ----------------------------------------------------------------
-            if (cat == NodeCategory::Container) {
-                ImVec2 screen_pos{};
-                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                    char tag[96]{};
-                    std::snprintf(tag, sizeof(tag), "bau [%dm]", dist_int);
-                    draw_centered_label_below(bg_draw_list, screen_pos, col_container, tag);
-                    ++visible_markers_rendered;
-                }
-                continue;
-            }
-
-            if (cat == NodeCategory::Portal) {
-                ImVec2 screen_pos{};
-                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                    const bool is_hatch = icontains_label(node.label, "Hatch") ||
-                                          icontains_label(node.label, "Alcapao") ||
-                                          icontains_label(node.label, "Alçapão");
-                    char tag[96]{};
-                    std::snprintf(
-                        tag,
-                        sizeof(tag),
-                        "%s [%dm]",
-                        is_hatch ? "alcapao" : "portao",
-                        dist_int);
-                    draw_centered_label_below(bg_draw_list, screen_pos, col_portal, tag);
-                    ++visible_markers_rendered;
-                }
-                continue;
-            }
-
-            // ----------------------------------------------------------------
-            // Category F: SpecialProp
-            // Clean compact text only (no 3D box)
-            // ----------------------------------------------------------------
-            {
-                ImVec2 screen_pos{};
-                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                    const char* prop_name = (node.label[0] != '\0') ? node.label : "objeto";
-                    char        tag[128]{};
-                    std::snprintf(tag, sizeof(tag), "%s [%dm]", prop_name, dist_int);
-                    draw_centered_label_below(bg_draw_list, screen_pos, col_special_prop, tag);
-                    ++visible_markers_rendered;
-                }
-            }
-        }
-
-        if (math3d_actor_count > 0) {
-            math3d::integrate_math3d_into_existing_hud(
-                std::span<const math3d::ActorHudDescriptor>{s_math3d_actors.data(), math3d_actor_count},
-                math_cam,
+            ImVec2 screen_foot = screen_center;
+            ImVec2 screen_head = screen_center;
+            const bool has_foot = project_to_screen(
+                Vec3{node.world_pos.x, node.world_pos.y, node.world_pos.z - kCapsuleHalfHeightCm},
+                cam_snapshot,
                 width,
-                height
-            );
+                height,
+                screen_foot);
+            const bool has_head = project_to_screen(
+                Vec3{node.world_pos.x, node.world_pos.y, node.world_pos.z + kCapsuleHalfHeightCm},
+                cam_snapshot,
+                width,
+                height,
+                screen_head);
+
+            const ImVec2 anchor_foot = has_foot ? screen_foot : screen_center;
+            const float raw_box_h = (has_foot && has_head)
+                ? std::abs(screen_foot.y - screen_head.y)
+                : ((width * 0.45f) / std::max(1.0f, node.distance_m));
+            const float box_h  = std::clamp(raw_box_h, 28.0f, 450.0f);
+            const float box_w  = std::max(14.0f, box_h * 0.5f);
+            const float half_w = box_w * 0.5f;
+
+            bg_draw_list->AddRect(
+                ImVec2(anchor_foot.x - half_w, anchor_foot.y - box_h),
+                ImVec2(anchor_foot.x + half_w, anchor_foot.y),
+                primary_col,
+                0.0f,
+                0,
+                1.5f);
+
+            draw_centered_label_below(bg_draw_list, anchor_foot, primary_col, tag);
+            ++visible_markers_rendered;
         }
     }
 
@@ -1077,12 +1016,36 @@ void on_egl_frame_swap(EGLDisplay dpy, EGLSurface surface) noexcept {
     io.DisplaySize             = ImVec2(f_width, f_height);
     io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 
-    // Synchronize physical-to-EGL touch scaling and feed latest mapped touch coordinates every frame
+    // Synchronize physical-to-EGL touch scaling and drain queued touch events into ImGuiIO
     {
         ScopedMutexLock touch_lock(&g_touch.mutex);
         update_touch_scaling_locked(f_width, f_height);
 
-        if (g_touch.has_event) {
+        ScopedMutexLock queue_lock(&g_touch_queue.mutex);
+        if (g_touch_queue.count > 0) {
+            for (std::size_t i = 0; i < g_touch_queue.count; ++i) {
+                const QueuedTouchEvent& ev = g_touch_queue.events[i];
+                const float mapped_x = (ev.raw_x - g_touch.offset_x) * g_touch.scale_x;
+                const float mapped_y = (ev.raw_y - g_touch.offset_y) * g_touch.scale_y;
+                g_touch.x = mapped_x;
+                g_touch.y = mapped_y;
+
+                io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+                io.AddMousePosEvent(mapped_x, mapped_y);
+                io.AddMouseButtonEvent(0, ev.is_down);
+
+                const bool inside_hud = point_in_rect(mapped_x, mapped_y, g_touch.win_pos, g_touch.win_size);
+                if (g_touch.captured_by_hud || inside_hud) {
+                    io.WantCaptureMouse = true;
+                }
+            }
+            g_touch_queue.count = 0;
+
+            if (g_touch.pending_tap_release) {
+                g_touch.is_down             = false;
+                g_touch.pending_tap_release = false;
+            }
+        } else if (g_touch.has_event) {
             g_touch.x = (g_touch.raw_x - g_touch.offset_x) * g_touch.scale_x;
             g_touch.y = (g_touch.raw_y - g_touch.offset_y) * g_touch.scale_y;
 
@@ -1214,14 +1177,13 @@ void on_touch_event(int action, float x, float y) noexcept {
         g_touch.is_down = false;
     }
 
-    if (g_imgui_initialized.load(std::memory_order_acquire)) {
-        ImGuiIO& io = ImGui::GetIO();
-        io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
-        io.AddMousePosEvent(mapped_x, mapped_y);
-        io.AddMouseButtonEvent(0, is_down);
-        if (g_touch.captured_by_hud || inside_hud) {
-            io.WantCaptureMouse = true;
-        }
+    ScopedMutexLock queue_lock(&g_touch_queue.mutex);
+    if (g_touch_queue.count < 64) {
+        g_touch_queue.events[g_touch_queue.count++] = QueuedTouchEvent{
+            x,
+            y,
+            is_down
+        };
     }
 }
 

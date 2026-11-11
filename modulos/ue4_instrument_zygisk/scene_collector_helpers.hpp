@@ -157,12 +157,12 @@ namespace detail_helpers {
     return hud::NodeCategory::SpecialProp;
 }
 
-// 2. Rejects NaN/Inf coordinates and unspawned origin templates near (0, 0, 0)
+// 2. Rejects NaN/Inf coordinates and exact uninitialized (0, 0, 0)
 [[nodiscard]] inline bool is_valid_world_coordinate(float x, float y, float z) noexcept {
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
         return false;
     }
-    if (std::abs(x) < 10.0f && std::abs(y) < 10.0f && std::abs(z) < 10.0f) {
+    if (x == 0.0f && y == 0.0f && z == 0.0f) {
         return false;
     }
     return true;
@@ -229,8 +229,8 @@ inline void compute_skeleton_fallback_joints(
 }
 
 // 4. Normalizes a raw generator repair float into a percentage in [0.0f, 100.0f].
-//    Supports direct percentage floats (0.0f..100.0f), normalized ratios (0.0f..1.0f),
-//    and UChargeableComponent charge units when max_charge (> 1.0f) is provided.
+//    Uses (raw_progress / max_charge) * 100.0f when max_charge is trustworthy, and only treats
+//    values <= 1.0f as a [0..1] ratio when max_charge explicitly confirms a unit scale (~1.0f).
 [[nodiscard]] inline float normalize_generator_progress_pct(
     float raw_progress,
     float max_charge = 0.0f) noexcept {
@@ -245,8 +245,8 @@ inline void compute_skeleton_fallback_joints(
         }
     }
 
-    if (raw_progress <= 1.0f) {
-        return std::clamp(raw_progress * 100.0f, 0.0f, 100.0f);
+    if (std::isfinite(max_charge) && max_charge >= 0.99f && max_charge <= 1.01f && raw_progress <= 1.05f) {
+        return std::clamp((raw_progress / max_charge) * 100.0f, 0.0f, 100.0f);
     }
 
     if (raw_progress <= 100.0f) {

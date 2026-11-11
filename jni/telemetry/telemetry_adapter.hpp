@@ -623,10 +623,17 @@ inline bool parse_gameplay_ipc_string(
     const float jump_Mult  = std::clamp(detail::sanitize_float(sync.jump_mult,       1.0f), 1.0f, 2.5f);
     const float time_Mult  = std::clamp(detail::sanitize_float(sync.time_scale_mult, 1.0f), 0.5f, 2.5f);
 
-    const float clamped_walk  = std::clamp(400.0f  * walk_Mult,  100.0f, 1200.0f);
-    const float clamped_accel = std::clamp(2048.0f * accel_Mult, 512.0f, 6144.0f);
-    const float clamped_jump  = std::clamp(420.0f  * jump_Mult,  200.0f, 1200.0f);
-    const float clamped_time  = std::clamp(1.0f    * time_Mult,  0.5f,   2.5f);
+    const float current_accel = (out_accel != nullptr && detail::is_valid_engine_base_value(*out_accel))
+        ? *out_accel
+        : 2048.0f;
+    const float current_jump  = (out_jump != nullptr && detail::is_valid_engine_base_value(*out_jump))
+        ? *out_jump
+        : 420.0f;
+
+    const float clamped_walk  = std::clamp(current_walk  * walk_Mult,  100.0f, 1800.0f);
+    const float clamped_accel = std::clamp(current_accel * accel_Mult, 200.0f, 8192.0f);
+    const float clamped_jump  = std::clamp(current_jump  * jump_Mult,  100.0f, 1600.0f);
+    const float clamped_time  = std::clamp(1.0f          * time_Mult,  0.5f,   2.5f);
 
     if (out_walk != nullptr) {
         *out_walk = clamped_walk;
@@ -682,51 +689,32 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
     std::size_t            out_custom_player_name_size  = kMaxLabelLen) noexcept {
 
     KinematicsSyncResult result{};
-    SceneTelemetryData&  data = get_telemetry_data();
-    detail::ScopedPthreadLock lock(&data.mutex);
-    GameplayManipulationConfig& gp_cfg = get_gameplay_config();
 
-    if (std::strncmp(data.label_filter, "@gp:", 4) == 0) {
-        (void)parse_gameplay_ipc_string(data.label_filter, data, gp_cfg);
-    }
-
-    // 1. Update camera state
-    data.current_camera.location = {
+    // 1. Sanitize camera state & validate active match state before acquiring lock
+    const Vec3 sanitized_cam_loc{
         detail::sanitize_float(cam_x, 0.0f),
         detail::sanitize_float(cam_y, 0.0f),
         detail::sanitize_float(cam_z, 0.0f)
     };
-    data.current_camera.rotation = {
+    const EulerAngles sanitized_cam_rot{
         detail::sanitize_float(pitch, 0.0f),
         detail::sanitize_float(yaw, 0.0f),
         detail::sanitize_float(roll, 0.0f)
     };
-    data.current_camera.fov = std::clamp(detail::sanitize_float(fov, 90.0f), 10.0f, 170.0f);
-
-    // 2. Validate active match state, handle 180-tick scene-transition cooldown, & filter/prioritize entities
-    static std::uint32_t s_transition_cooldown_ticks = 0;
+    const float sanitized_cam_fov = std::clamp(detail::sanitize_float(fov, 90.0f), 10.0f, 170.0f);
 
     const bool camera_valid =
         std::isfinite(cam_x) && std::isfinite(cam_y) && std::isfinite(cam_z) &&
-        (std::abs(data.current_camera.location.x) > 1.0f ||
-         std::abs(data.current_camera.location.y) > 1.0f ||
-         std::abs(data.current_camera.location.z) > 1.0f);
+        (std::abs(sanitized_cam_loc.x) > 1.0f ||
+         std::abs(sanitized_cam_loc.y) > 1.0f ||
+         std::abs(sanitized_cam_loc.z) > 1.0f);
 
     constexpr std::size_t kMaxScanEntities = 2048;
     const std::size_t raw_bounded = (detail::is_valid_user_ptr(entities) && entity_count > 0)
         ? std::min(entity_count, kMaxScanEntities)
         : 0;
 
-    if (raw_bounded == 0 || !camera_valid) {
-        s_transition_cooldown_ticks = 180;
-        data.node_count             = 0;
-        data.active_generators      = 0;
-        data.match_active           = false;
-        gp_cfg.force_escape         = false;
-    } else if (s_transition_cooldown_ticks > 0) {
-        --s_transition_cooldown_ticks;
-    }
-
+    // 2. Filter, sort, deduplicate, and compute skeleton joints into local buffer outside the lock
     struct PrioritizedCandidate {
         std::size_t       src_index{0};
         hud::NodeCategory category{hud::NodeCategory::SpecialProp};
@@ -754,7 +742,7 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
         const float sdist = std::max(0.0f, src.dist_m);
 
         if (std::abs(sx) > 500000.0f || std::abs(sy) > 500000.0f || std::abs(sz) > 500000.0f ||
-            sdist < 0.5f || sdist > 600.0f) {
+            sdist < 0.5f || sdist > 1000.0f) {
             continue;
         }
 
@@ -832,13 +820,12 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
             return a.dist_m < b.dist_m;
         });
 
+    const bool walk_speed_valid = detail::is_valid_engine_base_value(current_walk_speed);
     const bool is_match_live =
         camera_valid &&
-        raw_bounded > 0 &&
-        (generator_count >= 1 || objective_count >= 1 || character_count >= 1);
+        (walk_speed_valid || (raw_bounded > 0 && (generator_count >= 1 || objective_count >= 1 || character_count >= 1)));
 
-    data.match_active = is_match_live;
-
+    SceneNode   local_nodes[kMaxSceneNodes]{};
     std::size_t accepted_count = 0;
     if (is_match_live) {
         bool killer_added = false;
@@ -861,14 +848,14 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
                 killer_added = true;
             }
 
-            // Deduplicate identical entities at the exact same world coordinates (< 0.75m apart)
+            // Deduplicate identical entities at the exact same world coordinates (< 0.30m apart)
             bool is_duplicate = false;
             for (std::size_t j = 0; j < accepted_count; ++j) {
-                const float dx = data.nodes[j].world_pos.x - sx;
-                const float dy = data.nodes[j].world_pos.y - sy;
-                const float dz = data.nodes[j].world_pos.z - sz;
-                if ((dx * dx + dy * dy + dz * dz) < (75.0f * 75.0f) &&
-                    data.nodes[j].category == cat) {
+                const float dx = local_nodes[j].world_pos.x - sx;
+                const float dy = local_nodes[j].world_pos.y - sy;
+                const float dz = local_nodes[j].world_pos.z - sz;
+                if ((dx * dx + dy * dy + dz * dz) < (30.0f * 30.0f) &&
+                    local_nodes[j].category == cat) {
                     is_duplicate = true;
                     break;
                 }
@@ -877,38 +864,45 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
                 continue;
             }
 
-            SceneNode& dst   = data.nodes[accepted_count++];
+            SceneNode& dst   = local_nodes[accepted_count++];
             dst.world_pos    = {sx, sy, sz};
             dst.distance_m   = sdist;
             dst.category     = (src.name != nullptr) ? classify_node_category(src.name) : cat;
             dst.yaw_deg      = detail::sanitize_float(src.yaw_deg, 0.0f);
             dst.progress_pct = std::isfinite(src.progress_pct) ? src.progress_pct : 0.0f;
             dst.is_open      = src.is_open;
-            dst.has_skeleton = src.has_skeleton;
-
-            if (src.has_skeleton) {
-                for (std::size_t b = 0; b < kSkeletonJointCount; ++b) {
-                    dst.bone_joints[b] = {
-                        detail::sanitize_float(src.bone_joints[b].x, 0.0f),
-                        detail::sanitize_float(src.bone_joints[b].y, 0.0f),
-                        detail::sanitize_float(src.bone_joints[b].z, 0.0f)
-                    };
-                }
-            } else if (dst.category == hud::NodeCategory::Antagonist ||
-                       dst.category == hud::NodeCategory::Teammate) {
-                dst.has_skeleton = true;
-                compute_skeleton_fallback_joints(dst.world_pos, src.yaw_deg, dst.bone_joints);
-            } else {
-                for (std::size_t b = 0; b < kSkeletonJointCount; ++b) {
-                    dst.bone_joints[b] = {0.0f, 0.0f, 0.0f};
-                }
-            }
+            dst.has_skeleton = false;
 
             detail::copy_raw_string(dst.label, sizeof(dst.label), clean_label);
         }
     }
-    data.node_count        = accepted_count;
-    data.active_generators = static_cast<std::uint32_t>(generator_count);
+
+    // 3. Acquire lock only for swapping local_nodes and updating shared telemetry/kinematics state
+    SceneTelemetryData&         data   = get_telemetry_data();
+    detail::ScopedPthreadLock   lock(&data.mutex);
+    GameplayManipulationConfig& gp_cfg = get_gameplay_config();
+
+    if (std::strncmp(data.label_filter, "@gp:", 4) == 0) {
+        (void)parse_gameplay_ipc_string(data.label_filter, data, gp_cfg);
+    }
+
+    data.current_camera.location = sanitized_cam_loc;
+    data.current_camera.rotation = sanitized_cam_rot;
+    data.current_camera.fov      = sanitized_cam_fov;
+
+    if (!camera_valid) {
+        data.node_count        = 0;
+        data.active_generators = 0;
+        data.match_active      = false;
+        gp_cfg.force_escape    = false;
+    } else {
+        if (accepted_count > 0) {
+            std::memcpy(data.nodes, local_nodes, accepted_count * sizeof(SceneNode));
+        }
+        data.node_count        = accepted_count;
+        data.active_generators = static_cast<std::uint32_t>(generator_count);
+        data.match_active      = is_match_live;
+    }
     ++data.tick_seq;
 
     if (current_player_name && current_player_name[0] != '\0') {
@@ -957,11 +951,7 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
 
     // Strict safety guard: is_safe_to_apply is ONLY true when apply_custom_kinematics is enabled,
     // match is live, AND current_walk_speed is a finite number within [50.0f, 5000.0f].
-    const bool walk_speed_valid = detail::is_valid_engine_base_value(current_walk_speed);
-    if (is_match_live && walk_speed_valid && s_transition_cooldown_ticks > 0) {
-        s_transition_cooldown_ticks = 0;
-    }
-    const bool match_ready      = is_match_live && (s_transition_cooldown_ticks == 0);
+    const bool match_ready      = is_match_live;
     const bool safe_to_apply    =
         data.apply_custom_kinematics &&
         match_ready &&

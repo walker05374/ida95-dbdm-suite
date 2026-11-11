@@ -244,7 +244,10 @@ inline int32_t hook_AMotionEvent_getAction(const AInputEvent* motion_event) noex
     detail::extract_and_forward_motion_event(motion_event, action, x, y);
 
     if (hud::should_consume_touch(action, x, y)) {
-        return AMOTION_EVENT_ACTION_CANCEL;
+        const int32_t masked = action & AMOTION_EVENT_ACTION_MASK;
+        if (masked == AMOTION_EVENT_ACTION_DOWN || masked == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+            return AMOTION_EVENT_ACTION_CANCEL;
+        }
     }
     return action;
 }

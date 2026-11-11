@@ -105,9 +105,9 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t skeletal_mesh             = 0x0288;     // ACharacter::Mesh (USkeletalMeshComponent*, +0x288)
     uintptr_t character_movement        = 0x0290;     // ACharacter::CharacterMovement (UCharacterMovementComponent*, +0x290)
 
-    // APlayerCameraManager -> CameraCachePrivate (+0x1AE0 / +0x1AF0) -> POV
+    // APlayerCameraManager -> CameraCachePrivate (+0x1AE0 / +0x1AF0) -> POV (+0x10 inside FCameraCacheEntry)
     uintptr_t camera_cache_private      = 0x1AF0;     // FCameraCacheEntry (FClassParams @ 0x0F3B0910)
-    uintptr_t camera_cache_alt          = 0x1AE0;     // Alternate CameraCachePrivate / POV offset
+    uintptr_t camera_cache_alt          = 0x1AE0;     // Alternate FCameraCacheEntry base
     uintptr_t pov_location              = 0x1AF0 + 0x0010; // FMinimalViewInfo::Location (+0x1B00, FVector)
     uintptr_t pov_rotation              = 0x1AF0 + 0x001C; // FMinimalViewInfo::Rotation (+0x1B0C, FRotator)
     uintptr_t pov_fov                   = 0x1AF0 + 0x0028; // FMinimalViewInfo::FOV (+0x1B18, float)
@@ -160,16 +160,15 @@ struct INSTRUMENT_LOCAL EngineOffsets {
 // ============================================================================
 class INSTRUMENT_LOCAL GNamePoolResolver {
 public:
-    static constexpr uint32_t  kBlockBitShift      = 16U;
-    static constexpr uint32_t  kOffsetMask         = (1U << kBlockBitShift) - 1U;
-    static constexpr uint32_t  kMaxBlocks          = 8192U;
-    static constexpr size_t    kMaxNameLen         = 128U;
-    static constexpr uintptr_t kCurrentBlockOffset = 0x0038U; // FNameEntryAllocator::CurrentBlock (+0x38)
-    static constexpr uintptr_t kByteCursorOffset   = 0x003CU; // FNameEntryAllocator::CurrentByteCursor (+0x3C)
-    static constexpr uintptr_t kBlocksOffset       = 0x0040U; // FNameEntryAllocator::Blocks (+0x40)
-    static constexpr uint32_t  kStride             = 4U;      // WITH_CASE_PRESERVING_NAME = 1 (Stride = 4)
-    static constexpr uintptr_t kEntryHeaderOffset  = 0x0004U; // +0x00 ComparisonId (4B), +0x04 Header (2B)
-    static constexpr uintptr_t kEntryStringOffset  = 0x0006U; // +0x06 AnsiName[Len]
+    static constexpr uint32_t  kBlockBitShift            = 16U;
+    static constexpr uint32_t  kOffsetMask               = (1U << kBlockBitShift) - 1U;
+    static constexpr uint32_t  kMaxBlocks                = 8192U;
+    static constexpr size_t    kMaxNameLen               = 128U;
+    static constexpr uintptr_t kCurrentBlockOffset       = 0x0038U; // FNameEntryAllocator::CurrentBlock (+0x38)
+    static constexpr uintptr_t kByteCursorOffset         = 0x003CU; // FNameEntryAllocator::CurrentByteCursor (+0x3C)
+    static constexpr uintptr_t kBlocksOffset             = 0x0040U; // FNameEntryAllocator::Blocks (+0x40)
+    static constexpr uint32_t  kDefaultBlockBytes        = 65536U;  // Standard 64 KB FNamePool block (Stride = 2)
+    static constexpr uint32_t  kCasePreservingBlockBytes = 262144U; // WITH_CASE_PRESERVING_NAME = 1 (Stride = 4)
 
     explicit constexpr GNamePoolResolver(uintptr_t pool_base) noexcept
         : pool_base_(pool_base) {}
@@ -179,10 +178,47 @@ public:
             return false;
         }
         const uint32_t block_idx = comparison_index >> kBlockBitShift;
-        const uint32_t byte_off  = (comparison_index & kOffsetMask) * kStride;
         if (block_idx >= kMaxBlocks) {
             return false;
         }
+
+        // Detect once from Block[0] (EName(0) == "None") whether the pool uses standard 64 KB blocks
+        // (stride=2, header=+0x00, string=+0x02) or case-preserving 256 KB blocks (stride=4, header=+0x04, string=+0x06)
+        static uint32_t  s_detected_stride     = 0U;
+        static uint32_t  s_detected_block_size = kDefaultBlockBytes;
+        static uintptr_t s_detected_hdr_off    = 0x0000U;
+        static uintptr_t s_detected_str_off    = 0x0002U;
+
+        if (s_detected_stride == 0U) {
+            if (const auto blk0 = mem::read<uintptr_t>(pool_base_ + kBlocksOffset); blk0.has_value() && *blk0 != 0) {
+                char probe4[4]{};
+                std::span<uint8_t> s4{reinterpret_cast<uint8_t*>(probe4), sizeof(probe4)};
+                if (InProcessMemory::safe_read(*blk0 + 0x0006U, s4) == Status::Ok &&
+                    std::memcmp(probe4, "None", 4) == 0) {
+                    s_detected_stride     = 4U;
+                    s_detected_block_size = kCasePreservingBlockBytes;
+                    s_detected_hdr_off    = 0x0004U;
+                    s_detected_str_off    = 0x0006U;
+                } else if (InProcessMemory::safe_read(*blk0 + 0x0002U, s4) == Status::Ok &&
+                           std::memcmp(probe4, "None", 4) == 0) {
+                    s_detected_stride     = 2U;
+                    s_detected_block_size = kDefaultBlockBytes;
+                    s_detected_hdr_off    = 0x0000U;
+                    s_detected_str_off    = 0x0002U;
+                }
+            }
+        }
+
+        const uint32_t  stride     = (s_detected_stride != 0U) ? s_detected_stride : 2U;
+        const uint32_t  block_size = (s_detected_stride != 0U) ? s_detected_block_size : kDefaultBlockBytes;
+        const uintptr_t hdr_off    = (s_detected_stride != 0U) ? s_detected_hdr_off : 0x0000U;
+        const uintptr_t str_off    = (s_detected_stride != 0U) ? s_detected_str_off : 0x0002U;
+
+        const uint32_t byte_off = (comparison_index & kOffsetMask) * stride;
+        if (byte_off + str_off >= block_size) {
+            return false;
+        }
+
         const uintptr_t block_ptr_addr =
             pool_base_ + kBlocksOffset + (static_cast<uintptr_t>(block_idx) * sizeof(uintptr_t));
         const auto block_base = mem::read<uintptr_t>(block_ptr_addr);
@@ -190,21 +226,54 @@ public:
             return false;
         }
         const uintptr_t entry_addr = *block_base + byte_off;
-        const auto header = mem::read<uint16_t>(entry_addr + kEntryHeaderOffset);
+        const auto header = mem::read<uint16_t>(entry_addr + hdr_off);
         if (!header.has_value()) {
             return false;
         }
         const bool   is_wide = (*header & 1U) != 0;
         const size_t len     = static_cast<size_t>(*header >> 1U);
-        if (is_wide || len == 0 || len >= kMaxNameLen || len >= out_buffer.size()) {
+        if (len == 0 || len >= kMaxNameLen || len >= out_buffer.size()) {
             return false;
         }
-        std::span<uint8_t> str_slice{reinterpret_cast<uint8_t*>(out_buffer.data()), len};
-        if (InProcessMemory::safe_read(entry_addr + kEntryStringOffset, str_slice) != Status::Ok) {
+        const size_t entry_bytes = is_wide ? (len * sizeof(char16_t)) : len;
+        if (byte_off + str_off + entry_bytes > block_size) {
             return false;
         }
-        out_buffer[len] = '\0';
-        return true;
+        if (!is_wide) {
+            std::span<uint8_t> str_slice{reinterpret_cast<uint8_t*>(out_buffer.data()), len};
+            if (InProcessMemory::safe_read(entry_addr + str_off, str_slice) != Status::Ok) {
+                return false;
+            }
+            out_buffer[len] = '\0';
+            return true;
+        }
+
+        std::array<char16_t, kMaxNameLen> wide_buf{};
+        std::span<uint8_t> wide_slice{reinterpret_cast<uint8_t*>(wide_buf.data()), entry_bytes};
+        if (InProcessMemory::safe_read(entry_addr + str_off, wide_slice) != Status::Ok) {
+            return false;
+        }
+        size_t out_idx = 0;
+        for (size_t i = 0; i < len && out_idx + 1U < out_buffer.size(); ++i) {
+            const uint16_t ch = static_cast<uint16_t>(wide_buf[i]);
+            if (ch == 0U) {
+                break;
+            }
+            if (ch < 0x80U) {
+                out_buffer[out_idx++] = static_cast<char>(ch);
+            } else if (ch < 0x800U && out_idx + 2U < out_buffer.size()) {
+                out_buffer[out_idx++] = static_cast<char>(0xC0U | (ch >> 6U));
+                out_buffer[out_idx++] = static_cast<char>(0x80U | (ch & 0x3FU));
+            } else if (out_idx + 3U < out_buffer.size()) {
+                out_buffer[out_idx++] = static_cast<char>(0xE0U | (ch >> 12U));
+                out_buffer[out_idx++] = static_cast<char>(0x80U | ((ch >> 6U) & 0x3FU));
+                out_buffer[out_idx++] = static_cast<char>(0x80U | (ch & 0x3FU));
+            } else {
+                break;
+            }
+        }
+        out_buffer[out_idx] = '\0';
+        return out_idx > 0;
     }
 private:
     uintptr_t pool_base_{0};
@@ -363,27 +432,18 @@ public:
         return loc;
     }
 
-    // Reads character rotation yaw and USkeletalMeshComponent (+0x288) bone matrices,
-    // transforming local component-space bone transforms into absolute world space via
-    // hud::transform_bone_local_to_world. If bones are uninitialized or collapsed,
-    // falls back to dynamic upright capsule bounds (Z - 45.0f to Z + 45.0f).
-    static void read_character_skeleton_and_yaw(
+    // Reads character rotation yaw from RootComponent (+0x140 -> RelativeRotation.Yaw at +0x144).
+    static void read_character_yaw(
         uintptr_t actor,
-        uintptr_t guobjectarray_abs,
         const EngineOffsets& off,
-        const FVector& actor_world_pos,
-        float& out_yaw_deg,
-        bool& out_has_skeleton,
-        hud::Vec3 (&out_bones)[hud::kSkeletonJointCount]
+        float& out_yaw_deg
     ) noexcept {
-        out_yaw_deg      = 0.0f;
-        out_has_skeleton = false;
+        out_yaw_deg = 0.0f;
 
         if (!InProcessMemory::IsValidPtr(actor, 0x2A0U)) {
             return;
         }
 
-        // 1. Read rotation yaw from RootComponent (+0x140 -> RelativeRotation.Yaw at +0x144)
         if (const auto root_comp = mem::read<uintptr_t>(actor + off.root_component);
             root_comp.has_value() && InProcessMemory::IsValidPtr(*root_comp, 0x170U)) {
             if (const auto yaw_val = mem::read<float>(*root_comp + off.relative_rotation + 0x04U);
@@ -391,147 +451,6 @@ public:
                 out_yaw_deg = *yaw_val;
             }
         }
-
-        // 2. Probe ACharacter::Mesh (USkeletalMeshComponent* at +0x288 or +0x280)
-        struct FTransformRaw {
-            float qx, qy, qz, qw;
-            float tx, ty, tz, tpad;
-            float sx, sy, sz, spad;
-        };
-
-        const std::array<uintptr_t, 2> kMeshOffsets = {off.skeletal_mesh, 0x0280U};
-        for (uintptr_t mesh_off : kMeshOffsets) {
-            const auto mesh_ptr = mem::read<uintptr_t>(actor + mesh_off);
-            if (!mesh_ptr.has_value() || !validate_canonical_uobject(*mesh_ptr, 0x620U, guobjectarray_abs, off)) {
-                continue;
-            }
-
-            // Locate valid ComponentToWorld FTransform on USkeletalMeshComponent (+0x1C0/+0x1D0/+0x1E0)
-            hud::BoneTransform comp_to_world{};
-            bool has_valid_ctw = false;
-            static constexpr uintptr_t kCtwOffsets[] = {0x1C0U, 0x1D0U, 0x1E0U, 0x1B0U, 0x1F0U};
-            for (uintptr_t ctw_off : kCtwOffsets) {
-                if (const auto ctw = mem::read<FTransformRaw>(*mesh_ptr + ctw_off)) {
-                    const float qnorm = ctw->qx * ctw->qx + ctw->qy * ctw->qy + ctw->qz * ctw->qz + ctw->qw * ctw->qw;
-                    if (std::isfinite(qnorm) && qnorm >= 0.90f && qnorm <= 1.10f &&
-                        std::isfinite(ctw->tx) && std::isfinite(ctw->ty) && std::isfinite(ctw->tz) &&
-                        std::isfinite(ctw->sx) && std::abs(ctw->sx) >= 0.05f && std::abs(ctw->sx) <= 20.0f &&
-                        std::abs(ctw->tx - actor_world_pos.x) <= 250.0f &&
-                        std::abs(ctw->ty - actor_world_pos.y) <= 250.0f &&
-                        std::abs(ctw->tz - actor_world_pos.z) <= 250.0f)
-                    {
-                        comp_to_world.qx          = ctw->qx;
-                        comp_to_world.qy          = ctw->qy;
-                        comp_to_world.qz          = ctw->qz;
-                        comp_to_world.qw          = ctw->qw;
-                        comp_to_world.translation = {ctw->tx, ctw->ty, ctw->tz};
-                        comp_to_world.scale       = {ctw->sx, ctw->sy, ctw->sz};
-                        has_valid_ctw             = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!has_valid_ctw) {
-                continue;
-            }
-
-            // Probe CachedComponentSpaceTransforms / BoneSpaceTransforms TArray<FTransform>
-            static constexpr uintptr_t kBoneArrayOffsets[] = {0x4B0U, 0x4C0U, 0x590U, 0x5A0U, 0x5B0U, 0x5C8U};
-            for (uintptr_t arr_off : kBoneArrayOffsets) {
-                const auto bone_arr = mem::read<TArrayHeader>(*mesh_ptr + arr_off);
-                if (!bone_arr.has_value() ||
-                    bone_arr->count < 28 ||
-                    bone_arr->count > 256 ||
-                    bone_arr->max < bone_arr->count ||
-                    bone_arr->max > 512 ||
-                    !InProcessMemory::IsValidPtr(bone_arr->data_ptr, static_cast<size_t>(bone_arr->count) * sizeof(FTransformRaw)))
-                {
-                    continue;
-                }
-
-                // Standard UE4 humanoid bone index mapping ordered to match hud::BoneIndex:
-                // 0=Head, 1=Neck, 2=Spine, 3=Pelvis, 4=LShoulder, 5=RShoulder,
-                // 6=LElbow, 7=RElbow, 8=LHand, 9=RHand, 10=LKnee, 11=RKnee, 12=LFoot, 13=RFoot
-                static constexpr std::array<int32_t, hud::kSkeletonJointCount> kHumanoidBoneIndices = {
-                    6,  // 0: Head
-                    5,  // 1: Neck
-                    3,  // 2: Spine
-                    1,  // 3: Pelvis
-                    10, // 4: LShoulder
-                    15, // 5: RShoulder
-                    11, // 6: LElbow
-                    16, // 7: RElbow
-                    12, // 8: LHand
-                    17, // 9: RHand
-                    22, // 10: LKnee
-                    25, // 11: RKnee
-                    23, // 12: LFoot
-                    26  // 13: RFoot
-                };
-
-                const hud::Vec3 actor_vec{actor_world_pos.x, actor_world_pos.y, actor_world_pos.z};
-                bool  all_valid = true;
-                float min_z     =  1.0e9f;
-                float max_z     = -1.0e9f;
-
-                for (size_t b = 0; b < hud::kSkeletonJointCount; ++b) {
-                    const int32_t b_idx = kHumanoidBoneIndices[b];
-                    if (b_idx < 0 || b_idx >= bone_arr->count) {
-                        all_valid = false;
-                        break;
-                    }
-                    const auto b_tr = mem::read<FTransformRaw>(
-                        bone_arr->data_ptr + static_cast<uintptr_t>(b_idx) * sizeof(FTransformRaw));
-                    if (!b_tr.has_value() ||
-                        !std::isfinite(b_tr->tx) || !std::isfinite(b_tr->ty) || !std::isfinite(b_tr->tz))
-                    {
-                        all_valid = false;
-                        break;
-                    }
-
-                    const float b_qnorm = b_tr->qx * b_tr->qx + b_tr->qy * b_tr->qy + b_tr->qz * b_tr->qz + b_tr->qw * b_tr->qw;
-                    const float local_mag = std::abs(b_tr->tx) + std::abs(b_tr->ty) + std::abs(b_tr->tz);
-                    if (!std::isfinite(b_qnorm) || b_qnorm < 0.85f || b_qnorm > 1.15f ||
-                        (b != 3U && local_mag < 1.0f))
-                    {
-                        all_valid = false;
-                        break;
-                    }
-
-                    // Transform bone from local component space to absolute world space
-                    const hud::Vec3 local_bone{b_tr->tx, b_tr->ty, b_tr->tz};
-                    const hud::Vec3 world_bone = hud::transform_bone_local_to_world(local_bone, comp_to_world);
-                    if (!hud::is_valid_bone_world_pos(world_bone, actor_vec)) {
-                        all_valid = false;
-                        break;
-                    }
-                    out_bones[b] = world_bone;
-                    min_z = std::min(min_z, world_bone.z);
-                    max_z = std::max(max_z, world_bone.z);
-                }
-
-                // Require realistic upright vertical span and anatomical hierarchy (Head > Pelvis > Feet)
-                const float min_foot_z = std::min(out_bones[12].z, out_bones[13].z);
-                if (all_valid &&
-                    (max_z - min_z) >= 45.0f &&
-                    (max_z - min_z) <= 210.0f &&
-                    out_bones[0].z > out_bones[3].z + 15.0f &&
-                    out_bones[3].z > min_foot_z + 15.0f)
-                {
-                    out_has_skeleton = true;
-                    return;
-                }
-            }
-        }
-
-        // 3. Fallback: construct dynamic upright capsule-aligned joints (Z - 45.0f to Z + 45.0f) rotated by yaw_deg
-        hud::compute_skeleton_fallback_joints(
-            hud::Vec3{actor_world_pos.x, actor_world_pos.y, actor_world_pos.z},
-            out_yaw_deg,
-            out_bones
-        );
-        out_has_skeleton = true;
     }
 
     // Dynamically resolves UPlayerController -> AcknowledgedPawn -> UCharacterMovementComponent each frame
@@ -556,24 +475,10 @@ public:
             chain.acknowledged_pawn = fallback_pawn;
         }
         if (chain.acknowledged_pawn != 0) {
-            const std::array<uintptr_t, 2> kMoveOffsets = {off.character_movement, 0x0288U};
-            for (uintptr_t m_off : kMoveOffsets) {
-                const auto mc = mem::read<uintptr_t>(chain.acknowledged_pawn + m_off);
-                if (mc.has_value() && validate_canonical_uobject(*mc, 0x1B0U, guobjectarray_abs, off)) {
-                    const auto ws = mem::read<float>(*mc + off.max_walk_speed);
-                    if (ws.has_value() && std::isfinite(*ws) && *ws >= 50.0f && *ws <= 5000.0f) {
-                        chain.movement_component = *mc;
-                        chain.is_valid           = true;
-                        break;
-                    }
-                }
-            }
-            if (!chain.is_valid) {
-                if (const auto mc = mem::read<uintptr_t>(chain.acknowledged_pawn + off.character_movement);
-                    mc.has_value() && validate_canonical_uobject(*mc, 0x1B0U, guobjectarray_abs, off)) {
-                    chain.movement_component = *mc;
-                    chain.is_valid           = true;
-                }
+            const auto mc = mem::read<uintptr_t>(chain.acknowledged_pawn + off.character_movement);
+            if (mc.has_value() && validate_canonical_uobject(*mc, 0x1B0U, guobjectarray_abs, off)) {
+                chain.movement_component = *mc;
+                chain.is_valid           = true;
             }
         }
         return chain;
@@ -691,7 +596,7 @@ public:
         const float clamped_fov = std::clamp(target_fov, 80.0f, 120.0f);
         (void)mem::write_data<float>(cam_mgr + off.camera_default_fov, clamped_fov);
         (void)mem::write_data<float>(cam_mgr + off.camera_locked_fov,  clamped_fov);
-        const uintptr_t pov_fov_off = (matched_pov_off >= 0x1AE0U && matched_pov_off <= 0x1B00U)
+        const uintptr_t pov_fov_off = (matched_pov_off >= 0x1AF0U && matched_pov_off <= 0x1B00U)
             ? (matched_pov_off + 0x18U)
             : off.pov_fov;
         return mem::write_data<float>(cam_mgr + pov_fov_off, clamped_fov);
@@ -733,10 +638,15 @@ public:
                     if (!sc.has_value() || !validate_canonical_uobject(*sc, 0x180U, guobjectarray_abs, off)) {
                         continue;
                     }
+                    const float prev_start = mem::read<float>(*sc + off.skillcheck_success_start).value_or(zone_start);
+                    const float prev_len   = mem::read<float>(*sc + off.skillcheck_success_length).value_or(zone_length);
+                    const bool  newly_overridden =
+                        (std::abs(prev_start - zone_start) > 1e-3f) ||
+                        (std::abs(prev_len - zone_length) > 1e-3f);
                     (void)mem::write_data<float>(*sc + off.skillcheck_success_start,  zone_start);
                     (void)mem::write_data<float>(*sc + off.skillcheck_success_length, zone_length);
                     (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,   bonus_len);
-                    return true;
+                    return newly_overridden;
                 }
             }
         }
@@ -759,7 +669,12 @@ public:
                     static_cast<uint8_t>(hud::ImmobilizeState::None));
             }
         }
-        (void)mem::write_data<uint8_t>(local_pawn + off.camper_trap_immunity_flag, 1U);
+        if (const auto cur_flag = mem::read<uint8_t>(local_pawn + off.camper_trap_immunity_flag)) {
+            const uint8_t updated = static_cast<uint8_t>(*cur_flag | 0x01U);
+            if (updated != *cur_flag) {
+                (void)mem::write_data<uint8_t>(local_pawn + off.camper_trap_immunity_flag, updated);
+            }
+        }
     }
 
     static void disable_trap_actor_collision(
@@ -1097,20 +1012,26 @@ public:
             return 0.0f;
         }
 
-        // 1. Check if the interaction/chargeable offset on AGenerator holds a live UChargeableComponent* pointer
+        // 1. Check if the interaction/chargeable offset on AGenerator holds a live 8-byte aligned UChargeableComponent* pointer
         if (const auto maybe_comp = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
-            maybe_comp.has_value() &&
-            validate_canonical_uobject(*maybe_comp, off.chargeable_current_charge + sizeof(float) * 2U, guobjectarray_abs, off))
+            maybe_comp.has_value())
         {
-            if (const auto comp_chg = mem::read<float>(*maybe_comp + off.chargeable_current_charge);
-                comp_chg.has_value() && std::isfinite(*comp_chg) && *comp_chg >= 0.0f && *comp_chg <= 100.0f)
+            const uintptr_t untagged_comp = *maybe_comp & 0x00FFFFFFFFFFFFFFULL;
+            if ((untagged_comp & 0x7ULL) == 0ULL &&
+                untagged_comp >= 0x0000000100000000ULL &&
+                untagged_comp <= 0x00007FFFFFFFFFFFULL &&
+                validate_canonical_uobject(*maybe_comp, off.chargeable_current_charge + sizeof(float) * 2U, guobjectarray_abs, off))
             {
-                float max_chg = 0.0f;
-                if (const auto m = mem::read<float>(*maybe_comp + off.chargeable_current_charge + sizeof(float));
-                    m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
-                    max_chg = *m;
+                if (const auto comp_chg = mem::read<float>(*maybe_comp + off.chargeable_current_charge);
+                    comp_chg.has_value() && std::isfinite(*comp_chg) && *comp_chg >= 0.0f && *comp_chg <= 100.0f)
+                {
+                    float max_chg = 0.0f;
+                    if (const auto m = mem::read<float>(*maybe_comp + off.chargeable_current_charge + sizeof(float));
+                        m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
+                        max_chg = *m;
+                    }
+                    return hud::adapter::normalize_generator_progress_pct(*comp_chg, max_chg);
                 }
-                return hud::adapter::normalize_generator_progress_pct(*comp_chg, max_chg);
             }
         }
 
@@ -1250,11 +1171,7 @@ public:
                 }
 
                 const auto pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
-                if (!pos.has_value()) {
-                    continue;
-                }
-                // Reject unspawned origin templates at (0,0,0)
-                if (std::abs(pos->x) < 10.0f && std::abs(pos->y) < 10.0f && std::abs(pos->z) < 10.0f) {
+                if (!pos.has_value() || !hud::adapter::is_valid_world_coordinate(pos->x, pos->y, pos->z)) {
                     continue;
                 }
 
@@ -1299,16 +1216,9 @@ public:
                 snap.world_pos       = *pos;
                 snap.distance_meters = dist_m;
                 snap.progress_pct    = gen_pct;
+                snap.has_skeleton    = false;
                 if (prio == 1 || prio == 2) {
-                    read_character_skeleton_and_yaw(
-                        *actor_ptr,
-                        guobjectarray_abs,
-                        off,
-                        *pos,
-                        snap.yaw_deg,
-                        snap.has_skeleton,
-                        snap.bone_joints
-                    );
+                    read_character_yaw(*actor_ptr, off, snap.yaw_deg);
                 }
                 std::strncpy(snap.category_label, cat_label, sizeof(snap.category_label) - 1);
                 snap.category_label[sizeof(snap.category_label) - 1] = '\0';
@@ -1351,36 +1261,152 @@ public:
 };
 
 // ============================================================================
-// 4. LocalPlayerNameController (Bounded In-Place UTF-16 FString Reader & Override)
+// 4. LocalPlayerNameController (Bounded In-Place UTF-16 FString / FText Reader & Override)
 // ============================================================================
 class INSTRUMENT_LOCAL LocalPlayerNameController {
 public:
+    static constexpr std::array<uintptr_t, 3> kCandidateNameOffsets = {
+        0x0310U, // UE4.27 NetEase ADBDPlayerState::PlayerNamePrivate (primary)
+        0x0308U, // Alternate UE4.27 APlayerState::PlayerNamePrivate layout
+        0x0300U  // Base UE4.27 APlayerState::PlayerNamePrivate layout
+    };
+
+    [[nodiscard]] static bool is_valid_utf16_fstring(
+        const TArrayHeader& fstr,
+        std::span<char16_t> out_u16,
+        size_t* out_char_len = nullptr
+    ) noexcept {
+        if (fstr.data_ptr == 0 || fstr.count <= 1 || fstr.count > 64 ||
+            fstr.max < fstr.count || fstr.max > 256 || out_u16.size() < 2U) {
+            return false;
+        }
+        const size_t char_count = static_cast<size_t>(fstr.count) - 1U;
+        const size_t clamped    = std::min(char_count, out_u16.size() - 1U);
+        std::span<uint8_t> raw_slice{
+            reinterpret_cast<uint8_t*>(out_u16.data()),
+            (clamped + 1U) * sizeof(char16_t)
+        };
+        if (InProcessMemory::safe_read(fstr.data_ptr, raw_slice) != Status::Ok) {
+            return false;
+        }
+        for (size_t i = 0; i < clamped; ++i) {
+            const char16_t ch = out_u16[i];
+            if (ch < 0x0020U || (ch >= 0xD800U && ch <= 0xDFFFU) || ch == 0xFFFFU) {
+                return false;
+            }
+        }
+        out_u16[clamped] = u'\0';
+        if (out_char_len != nullptr) {
+            *out_char_len = clamped;
+        }
+        return clamped > 0;
+    }
+
     static bool read_local_name(
         uintptr_t player_state_addr,
         const EngineOffsets& off,
-        std::span<char> out_utf8
+        std::span<char> out_utf8,
+        uintptr_t* out_matched_offset = nullptr
     ) noexcept {
         if (player_state_addr == 0 || out_utf8.size() < 2U) {
             return false;
         }
-        const uintptr_t fstring_addr = player_state_addr + off.player_name_private;
-        const auto fstr = mem::read<TArrayHeader>(fstring_addr);
-        if (!fstr.has_value() || fstr->data_ptr == 0 || fstr->count <= 1) {
-            return false;
-        }
-        const size_t char_count = static_cast<size_t>(fstr->count) - 1U;
+
+        const std::array<uintptr_t, 3> offsets = {
+            off.player_name_private,
+            0x0308U,
+            0x0300U
+        };
+
         std::array<char16_t, 64> u16_buf{};
-        const size_t clamped = std::min({char_count, u16_buf.size() - 1U, out_utf8.size() - 1U});
-        std::span<uint8_t> raw_slice{reinterpret_cast<uint8_t*>(u16_buf.data()), clamped * sizeof(char16_t)};
-        if (InProcessMemory::safe_read(fstr->data_ptr, raw_slice) != Status::Ok) {
-            return false;
+        for (uintptr_t cand_off : offsets) {
+            const auto fstr = mem::read<TArrayHeader>(player_state_addr + cand_off);
+            if (!fstr.has_value()) {
+                continue;
+            }
+            size_t char_len = 0;
+            if (!is_valid_utf16_fstring(*fstr, u16_buf, &char_len)) {
+                continue;
+            }
+            const size_t clamped = std::min(char_len, out_utf8.size() - 1U);
+            for (size_t i = 0; i < clamped; ++i) {
+                const char16_t ch = u16_buf[i];
+                out_utf8[i] = (ch >= 0x20U && ch <= 0x7EU) ? static_cast<char>(ch) : '?';
+            }
+            out_utf8[clamped] = '\0';
+            if (out_matched_offset != nullptr) {
+                *out_matched_offset = cand_off;
+            }
+            return clamped > 0;
         }
-        for (size_t i = 0; i < clamped; ++i) {
-            const char16_t ch = u16_buf[i];
-            out_utf8[i] = (ch >= 0x20 && ch <= 0x7E) ? static_cast<char>(ch) : '?';
+        return false;
+    }
+
+    // Writes a UTF-16 string to an existing UE4 FString (TArray<char16_t>) without overflowing ArrayMax.
+    // If new_name fits in ArrayMax (len + 1 <= ArrayMax), writes in-place and updates ArrayNum = len + 1.
+    // If ArrayMax is smaller and running in-process, allocates a persistent char16_t buffer;
+    // when running out-of-process via process_vm_writev, clamps safely to ArrayMax - 1.
+    static Status write_fstring_u16_safe(
+        uintptr_t fstring_addr,
+        const TArrayHeader& fstr,
+        std::u16string_view new_name
+    ) noexcept {
+        if (fstring_addr == 0 || new_name.empty() || fstr.data_ptr == 0 || fstr.max <= 1) {
+            return Status::InvalidArgument;
         }
-        out_utf8[clamped] = '\0';
-        return clamped > 0;
+
+        uint8_t probe = 0;
+        if (InProcessMemory::safe_read(fstr.data_ptr, std::span<uint8_t>{&probe, 1}) != Status::Ok) {
+            return Status::UnmappedOrFault;
+        }
+
+        std::array<char16_t, 64> staging{};
+        const size_t max_staging_chars = staging.size() - 1U;
+        const size_t requested_len     = std::min(new_name.size(), max_staging_chars);
+        const size_t avail_in_place    = static_cast<size_t>(fstr.max) - 1U;
+
+        if (requested_len <= avail_in_place) {
+            std::memcpy(staging.data(), new_name.data(), requested_len * sizeof(char16_t));
+            staging[requested_len] = u'\0';
+            const size_t byte_len = (requested_len + 1U) * sizeof(char16_t);
+            std::span<const uint8_t> payload{reinterpret_cast<const uint8_t*>(staging.data()), byte_len};
+            const Status write_st = InProcessMemory::safe_write(fstr.data_ptr, payload);
+            if (write_st != Status::Ok) {
+                return write_st;
+            }
+            const int32_t new_count = static_cast<int32_t>(requested_len + 1U);
+            return mem::write_data<int32_t>(fstring_addr + offsetof(TArrayHeader, count), new_count);
+        }
+
+        // If ArrayMax is smaller than requested_len + 1 and we are executing in-process inside libUE4.so's address space,
+        // use a persistent aligned char16_t buffer so the full string is stored without overflowing ArrayMax.
+        if (InProcessMemory::effective_pid() == ::getpid()) {
+            alignas(16) static char16_t s_persistent_name_buf[64]{};
+            std::memcpy(s_persistent_name_buf, new_name.data(), requested_len * sizeof(char16_t));
+            s_persistent_name_buf[requested_len] = u'\0';
+
+            TArrayHeader updated_hdr{};
+            updated_hdr.data_ptr = reinterpret_cast<uintptr_t>(s_persistent_name_buf);
+            updated_hdr.count    = static_cast<int32_t>(requested_len + 1U);
+            updated_hdr.max      = static_cast<int32_t>(std::size(s_persistent_name_buf));
+            return mem::write_data<TArrayHeader>(fstring_addr, updated_hdr);
+        }
+
+        // Out-of-process fallback: strictly clamp to ArrayMax - 1 in-place
+        const size_t clamped_len = std::min(requested_len, avail_in_place);
+        if (clamped_len == 0) {
+            return Status::UnmappedOrFault;
+        }
+        std::memcpy(staging.data(), new_name.data(), clamped_len * sizeof(char16_t));
+        staging[clamped_len] = u'\0';
+        const size_t byte_len = (clamped_len + 1U) * sizeof(char16_t);
+        std::span<const uint8_t> payload{reinterpret_cast<const uint8_t*>(staging.data()), byte_len};
+        const Status write_st = InProcessMemory::safe_write(fstr.data_ptr, payload);
+        if (write_st != Status::Ok) {
+            return write_st;
+        }
+        const int32_t new_count = static_cast<int32_t>(clamped_len + 1U);
+        return mem::write_data<int32_t>(fstring_addr + offsetof(TArrayHeader, count), new_count);
     }
 
     static Status override_local_name(
@@ -1391,29 +1417,117 @@ public:
         if (player_state_addr == 0 || new_name.empty()) {
             return Status::InvalidArgument;
         }
-        const uintptr_t fstring_addr = player_state_addr + off.player_name_private;
-        const auto fstr = mem::read<TArrayHeader>(fstring_addr);
-        if (!fstr.has_value() || fstr->data_ptr == 0 || fstr->max <= 1) {
-            return Status::UnmappedOrFault;
+
+        // Track previous/original name on this APlayerState so we can also locate and update
+        // cached UI FString / FText buffers (e.g. OldNamePrivate, NetEase platform name, FText history)
+        static uintptr_t                s_tracked_ps   = 0;
+        static std::array<char16_t, 64> s_orig_u16{};
+        static size_t                   s_orig_u16_len = 0;
+
+        std::array<char16_t, 64> prev_u16{};
+        size_t                   prev_u16_len = 0;
+
+        const std::array<uintptr_t, 3> primary_offsets = {
+            off.player_name_private,
+            0x0308U,
+            0x0300U
+        };
+
+        Status primary_status = Status::UnmappedOrFault;
+        uintptr_t matched_primary_off = off.player_name_private;
+
+        for (uintptr_t cand_off : primary_offsets) {
+            const uintptr_t fstring_addr = player_state_addr + cand_off;
+            const auto fstr = mem::read<TArrayHeader>(fstring_addr);
+            if (!fstr.has_value()) {
+                continue;
+            }
+            std::array<char16_t, 64> cur_u16{};
+            size_t cur_len = 0;
+            if (!is_valid_utf16_fstring(*fstr, cur_u16, &cur_len)) {
+                continue;
+            }
+            if (prev_u16_len == 0) {
+                prev_u16     = cur_u16;
+                prev_u16_len = cur_len;
+                if (s_tracked_ps != player_state_addr || s_orig_u16_len == 0) {
+                    s_tracked_ps   = player_state_addr;
+                    s_orig_u16     = cur_u16;
+                    s_orig_u16_len = cur_len;
+                }
+            }
+            const Status st = write_fstring_u16_safe(fstring_addr, *fstr, new_name);
+            if (st == Status::Ok && primary_status != Status::Ok) {
+                primary_status      = Status::Ok;
+                matched_primary_off = cand_off;
+            }
         }
-        uint8_t probe = 0;
-        if (InProcessMemory::safe_read(fstr->data_ptr, std::span<uint8_t>{&probe, 1}) != Status::Ok) {
-            return Status::UnmappedOrFault;
+
+        if (primary_status != Status::Ok) {
+            return primary_status;
         }
-        const size_t max_chars   = static_cast<size_t>(fstr->max) - 1U;
-        const size_t desired_len = (new_name.size() < max_chars) ? new_name.size() : max_chars;
-        std::array<char16_t, 64> staging{};
-        const size_t clamped_len = (desired_len < (staging.size() - 1U)) ? desired_len : (staging.size() - 1U);
-        std::memcpy(staging.data(), new_name.data(), clamped_len * sizeof(char16_t));
-        staging[clamped_len] = u'\0';
-        const size_t byte_len = (clamped_len + 1U) * sizeof(char16_t);
-        std::span<const uint8_t> payload{reinterpret_cast<const uint8_t*>(staging.data()), byte_len};
-        const Status write_st = InProcessMemory::safe_write(fstr->data_ptr, payload);
-        if (write_st != Status::Ok) {
-            return write_st;
+
+        const std::u16string_view prev_view{prev_u16.data(), prev_u16_len};
+        const std::u16string_view orig_view{s_orig_u16.data(), s_orig_u16_len};
+
+        auto matches_cached_name = [&](std::u16string_view cand) noexcept -> bool {
+            if (cand.empty()) {
+                return false;
+            }
+            if (!prev_view.empty() && cand == prev_view) {
+                return true;
+            }
+            if (!orig_view.empty() && cand == orig_view) {
+                return true;
+            }
+            return false;
+        };
+
+        // Scan APlayerState (+0x0300 .. +0x0480) for secondary FString fields (e.g. OldNamePrivate at +0x328,
+        // NetEase account/platform nickname FStrings) and cached UI FText instances (ITextData -> FTextHistory)
+        for (uintptr_t scan_off = 0x0300U; scan_off <= 0x0480U; scan_off += sizeof(uintptr_t)) {
+            if (scan_off == matched_primary_off) {
+                continue;
+            }
+            const uintptr_t field_addr = player_state_addr + scan_off;
+            if (const auto cand_fstr = mem::read<TArrayHeader>(field_addr)) {
+                std::array<char16_t, 64> buf{};
+                size_t len = 0;
+                if (is_valid_utf16_fstring(*cand_fstr, BufferSpan(buf), &len)) {
+                    const std::u16string_view view{buf.data(), len};
+                    if (matches_cached_name(view) || scan_off == (matched_primary_off + 0x18U)) {
+                        (void)write_fstring_u16_safe(field_addr, *cand_fstr, new_name);
+                        continue;
+                    }
+                }
+            }
+
+            // Probe UE4 FText layout: { ITextData* Object (+0x00), FSharedReferencer (+0x08), uint32 Flags (+0x10) }
+            const auto text_data_ptr = mem::read<uintptr_t>(field_addr);
+            if (!text_data_ptr.has_value() || !InProcessMemory::IsValidPtr(*text_data_ptr, 0x40U)) {
+                continue;
+            }
+            for (uintptr_t td_off = 0x08U; td_off <= 0x30U; td_off += sizeof(uintptr_t)) {
+                const uintptr_t td_fstr_addr = *text_data_ptr + td_off;
+                if (const auto td_fstr = mem::read<TArrayHeader>(td_fstr_addr)) {
+                    std::array<char16_t, 64> buf{};
+                    size_t len = 0;
+                    if (is_valid_utf16_fstring(*td_fstr, BufferSpan(buf), &len)) {
+                        const std::u16string_view view{buf.data(), len};
+                        if (matches_cached_name(view)) {
+                            (void)write_fstring_u16_safe(td_fstr_addr, *td_fstr, new_name);
+                            // Bump FText Flags/Revision (+0x10) so Slate/UMG invalidates cached glyph runs
+                            if (const auto flags = mem::read<uint32_t>(field_addr + 0x10U)) {
+                                (void)mem::write_data<uint32_t>(field_addr + 0x10U, *flags | 0x1U);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
         }
-        const int32_t new_count = static_cast<int32_t>(clamped_len + 1U);
-        return mem::write_data<int32_t>(fstring_addr + offsetof(TArrayHeader, count), new_count);
+
+        return Status::Ok;
     }
 
     static Status override_local_name_utf8(
@@ -1431,6 +1545,12 @@ public:
         }
         u16_buf[len] = u'\0';
         return override_local_name(player_state_addr, off, std::u16string_view{u16_buf.data(), len});
+    }
+
+private:
+    template <size_t N>
+    [[nodiscard]] static constexpr std::span<char16_t> BufferSpan(std::array<char16_t, N>& arr) noexcept {
+        return std::span<char16_t>{arr.data(), arr.size()};
     }
 };
 } // namespace ue4
@@ -1573,32 +1693,24 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
             hud_data.apply_custom_kinematics = (val[0] == '1');
         } else if (std::strcmp(key, "walk_speed") == 0 || std::strcmp(key, "walk_speed_pct") == 0) {
             float v = 0.0f;
-            if (std::sscanf(val, "%f", &v) == 1 && v >= 50.0f && v <= 3000.0f) {
-                hud_data.walk_speed     = v;
-                hud_data.walk_speed_pct = (v <= 300.0f) ? std::clamp(v, 100.0f, 250.0f) : std::clamp((v / 600.0f) * 100.0f, 100.0f, 250.0f);
+            if (std::sscanf(val, "%f", &v) == 1 && std::isfinite(v)) {
+                hud_data.walk_speed_pct = std::clamp(v, 100.0f, 250.0f);
             }
         } else if (std::strcmp(key, "max_accel") == 0 || std::strcmp(key, "accel_pct") == 0) {
             float v = 0.0f;
-            if (std::sscanf(val, "%f", &v) == 1 && v >= 50.0f && v <= 8192.0f) {
-                hud_data.max_acceleration = v;
-                hud_data.accel_pct        = (v <= 300.0f) ? std::clamp(v, 100.0f, 300.0f) : std::clamp((v / 2048.0f) * 100.0f, 100.0f, 300.0f);
+            if (std::sscanf(val, "%f", &v) == 1 && std::isfinite(v)) {
+                hud_data.accel_pct = std::clamp(v, 100.0f, 300.0f);
             }
         } else if (std::strcmp(key, "jump_vel") == 0 || std::strcmp(key, "jump_pct") == 0) {
             float v = 0.0f;
-            if (std::sscanf(val, "%f", &v) == 1 && v >= 50.0f && v <= 2500.0f) {
-                hud_data.jump_velocity = v;
-                hud_data.jump_pct      = (v <= 300.0f) ? std::clamp(v, 100.0f, 250.0f) : std::clamp((v / 420.0f) * 100.0f, 100.0f, 250.0f);
+            if (std::sscanf(val, "%f", &v) == 1 && std::isfinite(v)) {
+                hud_data.jump_pct = std::clamp(v, 100.0f, 250.0f);
             }
         } else if (std::strcmp(key, "time_scale") == 0 || std::strcmp(key, "time_scale_pct") == 0) {
             float v = 0.0f;
-            if (std::sscanf(val, "%f", &v) == 1 && v >= 0.1f && v <= 250.0f) {
-                if (v >= 10.0f) {
-                    hud_data.time_scale_pct = std::clamp(v, 50.0f, 200.0f);
-                    hud_data.time_scale     = hud_data.time_scale_pct * 0.01f;
-                } else {
-                    hud_data.time_scale     = std::clamp(v, 0.5f, 2.0f);
-                    hud_data.time_scale_pct = hud_data.time_scale * 100.0f;
-                }
+            if (std::sscanf(val, "%f", &v) == 1 && std::isfinite(v)) {
+                hud_data.time_scale     = std::clamp(v, 0.5f, 2.0f);
+                hud_data.time_scale_pct = hud_data.time_scale * 100.0f;
             }
         } else if (std::strcmp(key, "apply_fov") == 0) {
             gp_cfg.apply_fov_override = (val[0] == '1');
@@ -1647,16 +1759,16 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
     }
 
     DIAG_LOGI(
-        "[IPC-CMD] Config synced from APK -> draw_markers=%d | max_dist=%.1f | filter=\"%s\" | override_name=%d (\"%s\") | apply_kinematics=%d (walk=%.1f, accel=%.1f, jump=%.1f, time=%.2f)",
+        "[IPC-CMD] Config synced from APK -> draw_markers=%d | max_dist=%.1f | filter=\"%s\" | override_name=%d (\"%s\") | apply_kinematics=%d (walk=%.1f%%, accel=%.1f%%, jump=%.1f%%, time=%.2f)",
         hud_data.draw_2d_node_markers ? 1 : 0,
         static_cast<double>(hud_data.max_render_distance_m),
         hud_data.label_filter,
         hud_data.apply_custom_player_name ? 1 : 0,
         hud_data.custom_player_name,
         hud_data.apply_custom_kinematics ? 1 : 0,
-        static_cast<double>(hud_data.walk_speed),
-        static_cast<double>(hud_data.max_acceleration),
-        static_cast<double>(hud_data.jump_velocity),
+        static_cast<double>(hud_data.walk_speed_pct),
+        static_cast<double>(hud_data.accel_pct),
+        static_cast<double>(hud_data.jump_pct),
         static_cast<double>(hud_data.time_scale)
     );
 
@@ -1664,7 +1776,7 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
     std::fclose(fp);
 }
 
-// Helper to probe CameraCachePrivate POV across candidate offsets (+0x1B00, +0x1AF0, +0x1AE0)
+// Helper to probe CameraCachePrivate POV across candidate offsets (+0x1B00, +0x1AF0 + 0x10, +0x1AE0 + 0x10)
 INSTRUMENT_LOCAL static bool read_camera_pov_flexible(
     uintptr_t        cam_mgr,
     const ue4::EngineOffsets& off,
@@ -1675,9 +1787,9 @@ INSTRUMENT_LOCAL static bool read_camera_pov_flexible(
         return false;
     }
     const std::array<uintptr_t, 3> candidates{
-        off.pov_location,            // 0x1B00 (CameraCachePrivate 0x1AF0 + 0x10)
-        off.camera_cache_private,    // 0x1AF0 (CameraCachePrivate 0x1AE0 + 0x10 or direct POV)
-        off.camera_cache_alt         // 0x1AE0
+        off.pov_location,
+        off.camera_cache_private + 0x10U,
+        off.camera_cache_alt + 0x10U
     };
     for (const uintptr_t base_off : candidates) {
         const auto loc = mem::read<ue4::FVector>(cam_mgr + base_off);
@@ -1714,6 +1826,18 @@ INSTRUMENT_LOCAL static void publish_shared_snapshot() noexcept {
 
 INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     poll_external_mod_menu_config();
+
+    hud::GameplayManipulationConfig tick_gp_cfg{};
+    {
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud::GameplayManipulationConfig& gp_cfg = hud::get_gameplay_config();
+        if (std::strncmp(hud_data.label_filter, "@gp:", 4) == 0) {
+            (void)hud::parse_gameplay_ipc_string(hud_data.label_filter, hud_data, gp_cfg);
+        }
+        tick_gp_cfg = gp_cfg;
+        pthread_mutex_unlock(&hud_data.mutex);
+    }
 
     const uintptr_t base = g_state.ue4_module.base_address;
     if (base == 0) {
@@ -1810,6 +1934,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             static_cast<int>(level_actor_count),
             static_cast<unsigned long long>(game_instance.value_or(0ULL))
         );
+    } else if (s_teardown_write_lock_ticks > 0U) {
+        --s_teardown_write_lock_ticks;
     }
 
     // Discover all loaded ULevel* in UWorld (PersistentLevel + streaming sublevels via UWorld::Levels / StreamingLevels)
@@ -2137,17 +2263,13 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                                 nearest_gen_dist_sq = dsq;
                                 nearest_gen_pct     = gen_pct;
                             }
-                            // When local player is repairing within interaction radius (<= 3.5m)
-                            if (dsq <= (350.0f * 350.0f)) {
-                                ++s_skillchecks_handled;
-                            }
                         }
                     }
                 }
             }
 
             // Trap Immunity: disable overlap collision on nearby BearTrap / Trap actors when enabled
-            if (hud::get_gameplay_config().trap_immunity &&
+            if (tick_gp_cfg.trap_immunity &&
                 (hud::detail::icontains_str(scan_name.data(), "BearTrap") ||
                  hud::detail::icontains_str(cls_name.data(), "BearTrap"))) {
                 ue4::SpatialAndKinematicPipeline::disable_trap_actor_collision(*a_ptr, guobjectarray_abs, off);
@@ -2164,6 +2286,13 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     }
 
     // Read current kinematic state if local_pawn / UCharacterMovementComponent is resolved
+    static uintptr_t s_base_kin_pawn       = 0;
+    static float     s_base_walk_speed     = 600.0f;
+    static float     s_base_max_accel      = 2048.0f;
+    static float     s_base_jump_z         = 420.0f;
+    static float     s_base_time_scale     = 1.0f;
+    static bool      s_kinematics_was_active = false;
+
     if (local_pawn != 0) {
         if (const auto td = mem::read<float>(local_pawn + off.custom_time_dilation)) {
             if (std::isfinite(*td)) {
@@ -2181,6 +2310,17 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 if (std::isfinite(*jz)) cur_jump_z = *jz;
             }
         }
+
+        if (local_pawn != s_base_kin_pawn || !s_kinematics_was_active) {
+            s_base_kin_pawn   = local_pawn;
+            s_base_walk_speed = cur_walk_speed;
+            s_base_max_accel  = cur_max_accel;
+            s_base_jump_z     = cur_jump_z;
+            s_base_time_scale = cur_time_scale;
+        }
+    } else {
+        s_base_kin_pawn         = 0;
+        s_kinematics_was_active = false;
     }
 
     if (!has_valid_camera && local_pawn != 0) {
@@ -2230,9 +2370,9 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 s_snapshots_pool[i].yaw_deg,
                 s_snapshots_pool[i].distance_meters,
                 s_snapshots_pool[i].progress_pct,
-                s_snapshots_pool[i].has_skeleton,
+                false,
                 s_snapshots_pool[i].category_label,
-                s_snapshots_pool[i].has_skeleton ? s_snapshots_pool[i].bone_joints : nullptr
+                nullptr
             );
         }
     }
@@ -2256,10 +2396,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         cam_view.fov,
         tick_pool.samples.data(),
         tick_pool.active_count,
-        cur_walk_speed,
-        cur_max_accel,
-        cur_jump_z,
-        cur_time_scale,
+        s_base_walk_speed,
+        s_base_max_accel,
+        s_base_jump_z,
+        s_base_time_scale,
         &should_apply_kinematics,
         &target_walk_speed,
         &target_accel,
@@ -2288,16 +2428,11 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         pthread_mutex_unlock(&hud_data.mutex);
     }
 
-    if (collected_count == 0 || !final_match_active) {
-        s_teardown_write_lock_ticks = 180U;
-    } else if (s_teardown_write_lock_ticks > 0U) {
-        --s_teardown_write_lock_ticks;
-    }
-
-    const bool write_safe = final_match_active && (s_teardown_write_lock_ticks == 0U);
+    const bool write_safe = (!is_lobby_level && local_pawn != 0) && (s_teardown_write_lock_ticks == 0U);
 
     // Execute Item 3: Player Name Override + Read-back Verification Log
-    if (write_safe && should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
+    // Works in both Lobby and Active Match whenever APlayerState is a verified live UObject
+    if (should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
         if (ue4::SpatialAndKinematicPipeline::validate_canonical_uobject(local_player_st, 0x330U, guobjectarray_abs, off)) {
             const Status name_st = ue4::LocalPlayerNameController::override_local_name_utf8(
                 local_player_st,
@@ -2305,7 +2440,13 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 target_player_name.data()
             );
             std::array<char, 64> readback_name{};
-            (void)ue4::LocalPlayerNameController::read_local_name(local_player_st, off, readback_name);
+            uintptr_t matched_name_off = off.player_name_private;
+            (void)ue4::LocalPlayerNameController::read_local_name(
+                local_player_st,
+                off,
+                readback_name,
+                &matched_name_off
+            );
             static char s_last_logged_name[64]{};
             static uint32_t s_name_log_tick = 0;
             if (std::strcmp(s_last_logged_name, readback_name.data()) != 0 || (++s_name_log_tick % 120U) == 1U) {
@@ -2315,12 +2456,14 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                     "[NAME-OVERRIDE] Status=%d on APlayerState=0x%llX (+0x%llX) | Requested=\"%s\" -> Readback=\"%s\"",
                     static_cast<int>(name_st),
                     static_cast<unsigned long long>(local_player_st),
-                    static_cast<unsigned long long>(off.player_name_private),
+                    static_cast<unsigned long long>(matched_name_off),
                     target_player_name.data(),
                     readback_name.data()
                 );
             }
             if (readback_name[0] != '\0') {
+                std::strncpy(current_player_name.data(), readback_name.data(), current_player_name.size() - 1);
+                current_player_name[current_player_name.size() - 1] = '\0';
                 hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
                 pthread_mutex_lock(&hud_data.mutex);
                 std::strncpy(hud_data.in_game_player_name, readback_name.data(), hud::kMaxLabelLen - 1);
@@ -2330,9 +2473,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
-    // Execute Item 2: Persistent Character Movement Component Hook (Kinematics Override + Continuous Dirty Flag)
+    // Execute Item 2: Persistent Character Movement Component Hook (Kinematics Override + Baseline Restore)
     if (write_safe && should_apply_kinematics && (local_pc != 0 || local_pawn != 0)) {
-        (void)ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
+        static uintptr_t s_last_kin_err_pawn = 0;
+        const Status kin_st = ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
             local_pc,
             local_pawn,
             guobjectarray_abs,
@@ -2343,19 +2487,62 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             target_time_scale,
             sync_res.movement_dirty_flag
         );
+        if (kin_st != Status::Ok && local_pawn != s_last_kin_err_pawn) {
+            s_last_kin_err_pawn = local_pawn;
+            DIAG_LOGE(
+                "[WRITE-ERR] apply_kinematic_limits failed (Status=%d) on PC=0x%llX Pawn=0x%llX",
+                static_cast<int>(kin_st),
+                static_cast<unsigned long long>(local_pc),
+                static_cast<unsigned long long>(local_pawn));
+        } else if (kin_st == Status::Ok) {
+            s_last_kin_err_pawn     = 0;
+            s_kinematics_was_active = true;
+        }
+    } else if (write_safe && !should_apply_kinematics && s_kinematics_was_active && (local_pc != 0 || local_pawn != 0)) {
+        const Status restore_st = ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
+            local_pc,
+            local_pawn,
+            guobjectarray_abs,
+            off,
+            s_base_walk_speed,
+            s_base_max_accel,
+            s_base_jump_z,
+            s_base_time_scale,
+            false
+        );
+        if (restore_st != Status::Ok) {
+            DIAG_LOGE(
+                "[WRITE-ERR] baseline restore apply_kinematic_limits failed (Status=%d) on Pawn=0x%llX",
+                static_cast<int>(restore_st),
+                static_cast<unsigned long long>(local_pawn));
+        } else {
+            s_kinematics_was_active = false;
+        }
+    } else if (!write_safe) {
+        s_kinematics_was_active = false;
     }
 
     // Execute Advanced Feature 2: Field of View (FOV) Changer (APlayerCameraManager::DefaultFOV +0x248)
     float clamped_fov_target = cam_view.fov;
     if (local_cam_mgr != 0 && hud::compute_clamped_fov_target(sync_res, cam_view.fov, &clamped_fov_target)) {
-        (void)ue4::SpatialAndKinematicPipeline::apply_fov_override(
+        static uintptr_t s_last_fov_err_mgr = 0;
+        const Status fov_st = ue4::SpatialAndKinematicPipeline::apply_fov_override(
             local_cam_mgr,
             matched_pov_off,
             guobjectarray_abs,
             off,
             clamped_fov_target
         );
-        cam_view.fov = clamped_fov_target;
+        if (fov_st != Status::Ok && local_cam_mgr != s_last_fov_err_mgr) {
+            s_last_fov_err_mgr = local_cam_mgr;
+            DIAG_LOGE(
+                "[WRITE-ERR] apply_fov_override failed (Status=%d) on CamMgr=0x%llX",
+                static_cast<int>(fov_st),
+                static_cast<unsigned long long>(local_cam_mgr));
+        } else if (fov_st == Status::Ok) {
+            s_last_fov_err_mgr = 0;
+            cam_view.fov       = clamped_fov_target;
+        }
     }
 
     // Execute Advanced Feature 3: Auto Skillcheck & Trap Immunity
@@ -2371,7 +2558,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     // Execute Advanced Feature 4: Fly Cheat & Force Escape
     static bool s_was_flying = false;
     if (write_safe && (local_pc != 0 || local_pawn != 0) && (sync_res.fly_cheat_enabled || s_was_flying)) {
-        (void)ue4::SpatialAndKinematicPipeline::apply_fly_mode(
+        static uintptr_t s_last_fly_err_pawn = 0;
+        const Status fly_st = ue4::SpatialAndKinematicPipeline::apply_fly_mode(
             local_pc,
             local_pawn,
             guobjectarray_abs,
@@ -2379,6 +2567,15 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             sync_res.fly_cheat_enabled,
             target_walk_speed
         );
+        if (fly_st != Status::Ok && local_pawn != s_last_fly_err_pawn) {
+            s_last_fly_err_pawn = local_pawn;
+            DIAG_LOGE(
+                "[WRITE-ERR] apply_fly_mode failed (Status=%d) on Pawn=0x%llX",
+                static_cast<int>(fly_st),
+                static_cast<unsigned long long>(local_pawn));
+        } else if (fly_st == Status::Ok) {
+            s_last_fly_err_pawn = 0;
+        }
         s_was_flying = sync_res.fly_cheat_enabled;
     } else if (!write_safe) {
         s_was_flying = false;
@@ -2392,32 +2589,59 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 break;
             }
         }
-        (void)ue4::SpatialAndKinematicPipeline::apply_force_escape(
+        const Status esc_st = ue4::SpatialAndKinematicPipeline::apply_force_escape(
             local_pawn,
             local_player_st,
             escape_pos,
             guobjectarray_abs,
             off
         );
+        if (esc_st != Status::Ok) {
+            DIAG_LOGE(
+                "[WRITE-ERR] apply_force_escape failed (Status=%d) on Pawn=0x%llX PS=0x%llX",
+                static_cast<int>(esc_st),
+                static_cast<unsigned long long>(local_pawn),
+                static_cast<unsigned long long>(local_player_st));
+        }
         hud::set_force_escape(false);
     }
 
     // Execute Advanced Feature 5: Immobilize State & Player Role Setters
     if (write_safe && sync_res.should_apply_immobilize && local_pawn != 0) {
-        (void)ue4::SpatialAndKinematicPipeline::apply_immobilize_state(
+        static uintptr_t s_last_imm_err_pawn = 0;
+        const Status imm_st = ue4::SpatialAndKinematicPipeline::apply_immobilize_state(
             local_pawn,
             guobjectarray_abs,
             off,
             sync_res.immobilize_state
         );
+        if (imm_st != Status::Ok && local_pawn != s_last_imm_err_pawn) {
+            s_last_imm_err_pawn = local_pawn;
+            DIAG_LOGE(
+                "[WRITE-ERR] apply_immobilize_state failed (Status=%d) on Pawn=0x%llX",
+                static_cast<int>(imm_st),
+                static_cast<unsigned long long>(local_pawn));
+        } else if (imm_st == Status::Ok) {
+            s_last_imm_err_pawn = 0;
+        }
     }
     if (write_safe && sync_res.should_apply_role && local_player_st != 0) {
-        (void)ue4::SpatialAndKinematicPipeline::apply_player_role(
+        static uintptr_t s_last_role_err_ps = 0;
+        const Status role_st = ue4::SpatialAndKinematicPipeline::apply_player_role(
             local_player_st,
             guobjectarray_abs,
             off,
             sync_res.player_role
         );
+        if (role_st != Status::Ok && local_player_st != s_last_role_err_ps) {
+            s_last_role_err_ps = local_player_st;
+            DIAG_LOGE(
+                "[WRITE-ERR] apply_player_role failed (Status=%d) on PS=0x%llX",
+                static_cast<int>(role_st),
+                static_cast<unsigned long long>(local_player_st));
+        } else if (role_st == Status::Ok) {
+            s_last_role_err_ps = 0;
+        }
     }
 
     // Periodic Telemetry Summary Log (Items 1 & 4) every ~120 ticks (~2 seconds)
@@ -2977,8 +3201,8 @@ Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus(JNIEnv* env, jclass /*c
 }
 
 // Polls the headless Zygisk backend via IPC, projects live 3D entities into 2D screen space,
-// and writes [screen_x, screen_y, distance_m, category_id] (4 floats per entity) into out_packed.
-// Category IDs: 1 = Killer, 2 = Survivor, 3 = Generator, 4 = Hatch, 5 = Chest, 6 = Totem.
+// and writes [screen_x, screen_y, distance_m, category_id, extra] (5 floats per entity) into out_packed.
+// Category IDs: 1 = Killer, 2 = Survivor, 3 = Generator, 4 = Portal, 5 = Chest, 6 = Totem, 7 = Pallet, 9 = SpecialProp.
 INSTRUMENT_C_EXPORT jint JNICALL
 Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
     JNIEnv*     env,
@@ -2987,12 +3211,14 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
     jfloat      screen_height,
     jfloatArray out_packed) {
 
+    constexpr int kStride = 5;
+
     if (!out_packed || screen_width <= 1.0f || screen_height <= 1.0f) {
         return 0;
     }
 
     const jsize arr_len = env->GetArrayLength(out_packed);
-    if (arr_len < 4) {
+    if (arr_len < kStride) {
         return 0;
     }
 
@@ -3041,18 +3267,41 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
 
     const std::size_t max_out_nodes = std::min<std::size_t>(
         hud::kMaxSceneNodes,
-        static_cast<std::size_t>(arr_len / 4));
-    const std::size_t node_limit = std::min<std::size_t>(snap.node_count, hud::kMaxSceneNodes);
+        static_cast<std::size_t>(arr_len / kStride));
+    const std::size_t wn_count   = std::min<std::size_t>(snap.node_count, hud::kMaxSceneNodes);
+    const std::size_t filter_len = hud::detail_ipc::safe_len(filter_buf);
 
-    float packed[hud::kMaxSceneNodes * 4]{};
+    float packed[hud::kMaxSceneNodes * 5]{};
     jint  out_count = 0;
 
-    for (std::size_t i = 0; i < node_limit && static_cast<std::size_t>(out_count) < max_out_nodes; ++i) {
-        const ipc::WireNode& wn = snap.nodes[i];
-        if (!std::isfinite(wn.distance_m) || wn.distance_m > max_dist_m) {
+    for (std::size_t i = 0; i < wn_count && static_cast<std::size_t>(out_count) < max_out_nodes; ++i) {
+        const auto& wn = snap.nodes[i];
+        if (!std::isfinite(wn.x) || !std::isfinite(wn.distance_m) || wn.distance_m > max_dist_m) {
             continue;
         }
-        if (!hud::detail::icontains_str(wn.label, filter_buf)) {
+
+        float cat_id = 0.0f;
+        switch (hud::adapter::classify_node_category(wn.label)) {
+            case hud::NodeCategory::Antagonist:  if (!show_antagonist)    continue; cat_id = 1.0f; break;
+            case hud::NodeCategory::Teammate:    if (!show_teammates)     continue; cat_id = 2.0f; break;
+            case hud::NodeCategory::PowerNode:   if (!show_power_nodes)   continue;
+                                                 if (hud::adapter::should_hide_generator(wn.progress_pct)) continue;
+                                                 cat_id = 3.0f; break;
+            case hud::NodeCategory::Portal:      if (!show_portals)       continue; cat_id = 4.0f; break;
+            case hud::NodeCategory::Container:   if (!show_containers)    continue; cat_id = 5.0f; break;
+            case hud::NodeCategory::Shrine:      if (!show_shrines)       continue;
+                                                 if (!hud::adapter::is_totem_active(wn.progress_pct, wn.label)) continue;
+                                                 cat_id = 6.0f; break;
+            case hud::NodeCategory::Barrier:     if (!show_barriers)      continue; cat_id = 7.0f; break;
+            case hud::NodeCategory::SpecialProp: if (!show_special_props) continue; cat_id = 9.0f; break;
+            default: continue;
+        }
+        if (wn.label[0] == '\0' ||
+            std::strcmp(wn.label, "Unknown") == 0 ||
+            hud::adapter::detail::is_ignored_auxiliary_actor(wn.label)) {
+            continue;
+        }
+        if (filter_len > 0 && !hud::detail_ipc::icontains_str(wn.label, filter_buf)) {
             continue;
         }
 
@@ -3068,99 +3317,49 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
             continue;
         }
 
-        float cat_id = 0.0f;
-        if (std::strcmp(wn.label, "Killer") == 0 || std::strcmp(wn.label, "Assassino") == 0) {
-            if (!show_antagonist) continue;
-            cat_id = 1.0f;
-        } else if (std::strcmp(wn.label, "Survivor") == 0 || std::strcmp(wn.label, "Sobrevivente") == 0) {
-            if (!show_teammates) continue;
-            cat_id = 2.0f;
-        } else if (std::strcmp(wn.label, "Generator") == 0 ||
-                   std::strcmp(wn.label, "Gerador") == 0   ||
-                   hud::adapter::classify_node_category(wn.label) == hud::NodeCategory::PowerNode) {
-            if (!show_power_nodes) continue;
-            if (hud::adapter::should_hide_generator(wn.progress_pct)) {
-                continue;
-            }
-            const float clamped_pct = std::clamp(wn.progress_pct, 0.0f, 99.0f);
-            cat_id = 3.0f + clamped_pct * 0.001f;
-        } else if (std::strcmp(wn.label, "Hatch") == 0 || std::strcmp(wn.label, "Alçapão") == 0) {
-            if (!show_portals) continue;
-            cat_id = 4.0f;
-        } else if (std::strcmp(wn.label, "Chest") == 0 || std::strcmp(wn.label, "Baú") == 0) {
-            if (!show_containers) continue;
-            cat_id = 5.0f;
-        } else if (std::strcmp(wn.label, "Totem") == 0 ||
-                   hud::adapter::classify_node_category(wn.label) == hud::NodeCategory::Shrine) {
-            if (!show_shrines) continue;
-            if (!hud::adapter::is_totem_active(wn.progress_pct, wn.label)) {
-                continue;
-            }
-            cat_id = 6.0f;
-        } else if (std::strcmp(wn.label, "Pallet") == 0) {
-            if (!show_barriers) continue;
-            cat_id = 7.0f;
-        } else if (std::strcmp(wn.label, "Hook") == 0 || std::strcmp(wn.label, "Gancho") == 0) {
-            if (!show_special_props) continue;
-            cat_id = 9.0f;
-        } else if (std::strcmp(wn.label, "ExitGate") == 0 || std::strcmp(wn.label, "Portão de Saída") == 0) {
-            if (!show_portals) continue;
-            cat_id = 10.0f;
-        } else {
-            continue;
+        float foot_sx = sx;
+        float foot_sy = sy;
+        float head_sx = sx;
+        float head_sy = sy;
+        const bool has_foot = runtime::project_world_to_overlay_screen(
+            hud::Vec3{wn.x, wn.y, wn.z - hud::kCapsuleHalfHeightCm},
+            cam,
+            static_cast<float>(screen_width),
+            static_cast<float>(screen_height),
+            foot_sx,
+            foot_sy,
+            0.0f);
+        const bool has_head = runtime::project_world_to_overlay_screen(
+            hud::Vec3{wn.x, wn.y, wn.z + hud::kCapsuleHalfHeightCm},
+            cam,
+            static_cast<float>(screen_width),
+            static_cast<float>(screen_height),
+            head_sx,
+            head_sy,
+            0.0f);
+        if (has_foot) {
+            sx = foot_sx;
+            sy = foot_sy;
         }
+        const float proj_height = (has_foot && has_head)
+            ? std::clamp(std::abs(foot_sy - head_sy), 28.0f, 450.0f)
+            : std::clamp((static_cast<float>(screen_width) * 0.45f) / std::max(1.0f, wn.distance_m), 28.0f, 450.0f);
 
-        // For Killer (1) and Survivor (2), project the character's 3D root foot coordinate (Z - 45.0f)
-        // as (sx, sy) and encode the 3D-projected capsule height (|foot_sy - head_sy|) in cat_id
-        // so the 2D overlay locks onto the character's exact 3D capsule bounds and foot anchor.
-        if (cat_id == 1.0f || cat_id == 2.0f) {
-            float foot_sx = sx;
-            float foot_sy = sy;
-            float head_sx = sx;
-            float head_sy = sy;
-            const bool has_foot = runtime::project_world_to_overlay_screen(
-                hud::Vec3{wn.x, wn.y, wn.z - hud::kCapsuleHalfHeightCm},
-                cam,
-                static_cast<float>(screen_width),
-                static_cast<float>(screen_height),
-                foot_sx,
-                foot_sy,
-                0.0f);
-            const bool has_head = runtime::project_world_to_overlay_screen(
-                hud::Vec3{wn.x, wn.y, wn.z + hud::kCapsuleHalfHeightCm},
-                cam,
-                static_cast<float>(screen_width),
-                static_cast<float>(screen_height),
-                head_sx,
-                head_sy,
-                0.0f);
-            if (has_foot) {
-                sx = foot_sx;
-                sy = foot_sy;
-            }
-            float proj_height_px = 0.0f;
-            if (has_foot && has_head) {
-                proj_height_px = std::clamp(std::abs(foot_sy - head_sy), 18.0f, 450.0f);
-            } else {
-                proj_height_px = std::clamp(1800.0f / std::max(5.0f, wn.distance_m), 18.0f, 320.0f);
-            }
-            cat_id += proj_height_px * 0.0001f;
-        }
-
-        const std::size_t base_idx = static_cast<std::size_t>(out_count) * 4U;
-        packed[base_idx + 0] = sx;
-        packed[base_idx + 1] = sy;
-        packed[base_idx + 2] = wn.distance_m;
-        packed[base_idx + 3] = cat_id;
+        float* base = packed + (static_cast<std::size_t>(out_count) * static_cast<std::size_t>(kStride));
+        base[0] = sx;
+        base[1] = sy;
+        base[2] = wn.distance_m;
+        base[3] = cat_id;
+        base[4] = (cat_id == 3.0f) ? std::clamp(wn.progress_pct, 0.0f, 100.0f) : proj_height;
         ++out_count;
     }
 
     if (out_count > 0) {
-        env->SetFloatArrayRegion(out_packed, 0, out_count * 4, packed);
+        env->SetFloatArrayRegion(out_packed, 0, static_cast<jsize>(out_count * kStride), packed);
         static std::uint32_t s_overlay_log_tick = 0;
         if ((++s_overlay_log_tick % 120U) == 1U) {
             DIAG_LOGI(
-                "[OVERLAY-RENDER] Projected %d / %u 2D markers onto %.0fx%.0f canvas | FirstMarker=(%.1f, %.1f) dist=%.1fm cat=%.0f",
+                "[OVERLAY-RENDER] Projected %d / %u 2D markers onto %.0fx%.0f canvas | FirstMarker=(%.1f, %.1f) dist=%.1fm cat=%.0f extra=%.1f",
                 static_cast<int>(out_count),
                 static_cast<unsigned>(snap.node_count),
                 static_cast<double>(screen_width),
@@ -3168,7 +3367,8 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
                 static_cast<double>(packed[0]),
                 static_cast<double>(packed[1]),
                 static_cast<double>(packed[2]),
-                static_cast<double>(packed[3])
+                static_cast<double>(packed[3]),
+                static_cast<double>(packed[4])
             );
         }
     }

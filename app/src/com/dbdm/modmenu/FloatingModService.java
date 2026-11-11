@@ -131,23 +131,20 @@ public final class FloatingModService extends Service {
     private String  immobilizeState = "off";
     private String  playerRole      = "none";
 
-    // Camada de Overlay Minimalista (Texto + Linha Guia 1.5dp + Esqueleto Fino, PT-BR)
+    // Camada de Overlay Minimalista (Caixa Delimitadora 1.5px Contorno + Texto, PT-BR)
     private final class AuraEspOverlayView extends View {
-        private final float[] packedMarkers = new float[256 * 4];
+        private static final int MARKER_STRIDE = 5;
+        private final float[] packedMarkers = new float[256 * MARKER_STRIDE];
         private int activeMarkerCount = 0;
 
-        private final Paint tracerPaint     = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint skeletonPaint   = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint boxPaint        = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textShadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint textPaint       = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         AuraEspOverlayView(Context ctx) {
             super(ctx);
-            tracerPaint.setStyle(Paint.Style.STROKE);
-            tracerPaint.setStrokeWidth(dpF(1.5f));
-
-            skeletonPaint.setStyle(Paint.Style.STROKE);
-            skeletonPaint.setStrokeWidth(dpF(1.5f));
+            boxPaint.setStyle(Paint.Style.STROKE);
+            boxPaint.setStrokeWidth(1.5f);
 
             textShadowPaint.setColor(Color.argb(230, 0, 0, 0));
             textShadowPaint.setTextSize(dpF(10.5f));
@@ -185,72 +182,31 @@ public final class FloatingModService extends Service {
                 case 1:  return showAntagonist;   // Assassino
                 case 2:  return showTeammates;    // Sobreviventes
                 case 3:  return showPowerNodes;   // Geradores
-                case 4:  return showPortals;      // Alçapão
+                case 4:  return showPortals;      // Alçapão / Portão
                 case 5:  return showContainers;   // Baús
                 case 6:  return showShrines;      // Totens
                 case 7:  return showBarriers;     // Pallets (Sem janelas)
                 case 9:  return showSpecialProps; // Ganchos / Objetos Especiais
-                case 10: return showPortals;      // Portão de Saída
                 default: return false;
             }
         }
 
-        // Desenha o esqueleto 3D dinâmico + caixa delimitadora vertical ancorados na base do pé (footX, footY)
-        // com altura proporcional à projeção 3D da cápsula do personagem (Z - 45cm até Z + 45cm)
-        private void drawCharacterSkeletonAndBounds(
+        // Desenha um único retângulo por ator (apenas contorno de 1.5px, cor da categoria, sem preenchimento/gradiente/sombra)
+        // dimensionado pela caixa delimitadora projetada e limitado ao mínimo de 14x28px.
+        private void drawActorBoundingBox(
             Canvas canvas,
             float footX,
             float footY,
-            float heightPx,
+            float projHeightPx,
             int color
         ) {
-            final float h         = Math.max(dpF(18.0f), Math.min(dpF(340.0f), heightPx));
-            final float topY      = footY - h;
-            final float halfW     = h * 0.28f;
+            final float boxH  = Math.max(28.0f, Math.min(450.0f, projHeightPx));
+            final float boxW  = Math.max(14.0f, boxH * 0.5f);
+            final float halfW = boxW * 0.5f;
+            final float topY  = footY - boxH;
 
-            // Caixa delimitadora vertical dinâmica ancorada na cápsula (Z - 45cm .. Z + 45cm)
-            final int boxColor = Color.argb(135, Color.red(color), Color.green(color), Color.blue(color));
-            skeletonPaint.setColor(boxColor);
-            canvas.drawRect(footX - halfW, topY, footX + halfW, footY, skeletonPaint);
-
-            // Articulações do esqueleto escaladas proporcionalmente à cápsula 3D projetada
-            skeletonPaint.setColor(color);
-            final float headR     = Math.max(dpF(2.0f), h * 0.085f);
-            final float headY     = topY + headR * 1.15f;
-            final float neckY     = topY + h * 0.19f;
-            final float spineY    = topY + h * 0.36f;
-            final float pelvisY   = topY + h * 0.52f;
-            final float kneeY     = topY + h * 0.76f;
-
-            final float shoulderX = h * 0.19f;
-            final float elbowX    = h * 0.26f;
-            final float elbowY    = topY + h * 0.35f;
-            final float handX     = h * 0.29f;
-            final float handY     = topY + h * 0.52f;
-            final float kneeX     = h * 0.11f;
-            final float ankleX    = h * 0.13f;
-
-            // Cabeça e Coluna (Head -> Neck -> Spine -> Pelvis)
-            canvas.drawCircle(footX, headY, headR, skeletonPaint);
-            canvas.drawLine(footX, headY + headR, footX, neckY, skeletonPaint);
-            canvas.drawLine(footX, neckY, footX, spineY, skeletonPaint);
-            canvas.drawLine(footX, spineY, footX, pelvisY, skeletonPaint);
-
-            // Braço Esquerdo e Direito
-            canvas.drawLine(footX, neckY, footX - shoulderX, neckY + h * 0.03f, skeletonPaint);
-            canvas.drawLine(footX - shoulderX, neckY + h * 0.03f, footX - elbowX, elbowY, skeletonPaint);
-            canvas.drawLine(footX - elbowX, elbowY, footX - handX, handY, skeletonPaint);
-
-            canvas.drawLine(footX, neckY, footX + shoulderX, neckY + h * 0.03f, skeletonPaint);
-            canvas.drawLine(footX + shoulderX, neckY + h * 0.03f, footX + elbowX, elbowY, skeletonPaint);
-            canvas.drawLine(footX + elbowX, elbowY, footX + handX, handY, skeletonPaint);
-
-            // Perna Esquerda e Direita terminando exatamente na base (footY)
-            canvas.drawLine(footX, pelvisY, footX - kneeX, kneeY, skeletonPaint);
-            canvas.drawLine(footX - kneeX, kneeY, footX - ankleX, footY, skeletonPaint);
-
-            canvas.drawLine(footX, pelvisY, footX + kneeX, kneeY, skeletonPaint);
-            canvas.drawLine(footX + kneeX, kneeY, footX + ankleX, footY, skeletonPaint);
+            boxPaint.setColor(color);
+            canvas.drawRect(footX - halfW, topY, footX + halfW, footY, boxPaint);
         }
 
         @Override
@@ -261,106 +217,88 @@ public final class FloatingModService extends Service {
             }
 
             final float canvasW = (float) getWidth();
-            final float canvasH = (float) getHeight();
-            final float bottomCenterX = canvasW * 0.5f;
-            final float bottomCenterY = canvasH;
             boolean killerRendered = false;
 
             for (int i = 0; i < activeMarkerCount; ++i) {
-                final int base       = i * 4;
+                final int base       = i * MARKER_STRIDE;
                 final float sx       = packedMarkers[base];
                 final float sy       = packedMarkers[base + 1];
                 final float distM    = packedMarkers[base + 2];
-                final float rawCat   = packedMarkers[base + 3];
-                final int catId      = (int) (rawCat + 0.00005f);
+                final int catId      = Math.round(packedMarkers[base + 3]);
+                final float extra    = packedMarkers[base + 4];
 
                 if (distM > maxDist || !isCategoryVisible(catId)) {
                     continue;
                 }
 
                 final int distInt = Math.max(0, Math.round(distM));
-                final float decodedHeightPx = (rawCat - (float) catId) * 10000.0f;
-                final float projHeightPx = (decodedHeightPx >= 12.0f && decodedHeightPx <= 500.0f)
-                    ? decodedHeightPx
-                    : Math.max(dpF(22.0f), Math.min(dpF(220.0f), dpF(950.0f) / Math.max(5.0f, distM)));
+                final float fallbackHeightPx = (canvasW * 0.45f) / Math.max(1.0f, distM);
+                final float projHeightPx = (catId != 3 && extra >= 10.0f && extra <= 500.0f)
+                    ? extra
+                    : fallbackHeightPx;
 
                 String tag;
                 int colPrimary;
-                float textY;
 
                 switch (catId) {
-                    case 1: { // Assassino (Vermelho #FF2A2A: Linha Guia 1.5dp + Esqueleto 3D + "assassino [%dm]")
+                    case 1: { // Assassino (Vermelho #FF2A2A)
                         if (killerRendered) {
                             continue;
                         }
                         killerRendered = true;
                         colPrimary = Color.rgb(255, 42, 42);
-                        drawCharacterSkeletonAndBounds(canvas, sx, sy, projHeightPx, colPrimary);
-                        tracerPaint.setColor(Color.argb(220, 255, 42, 42));
-                        canvas.drawLine(bottomCenterX, bottomCenterY, sx, sy, tracerPaint);
                         tag = String.format(Locale.US, "assassino [%dm]", distInt);
-                        textY = sy + dpF(12.0f);
                         break;
                     }
 
-                    case 2: { // Sobrevivente (Ciano #00E5FF: Linha Guia 1.5dp + Esqueleto 3D + "sobrevivente [%dm]")
+                    case 2: { // Sobrevivente (Ciano #00E5FF)
                         colPrimary = Color.rgb(0, 229, 255);
-                        drawCharacterSkeletonAndBounds(canvas, sx, sy, projHeightPx, colPrimary);
-                        tracerPaint.setColor(Color.argb(195, 0, 229, 255));
-                        canvas.drawLine(bottomCenterX, bottomCenterY, sx, sy, tracerPaint);
                         tag = String.format(Locale.US, "sobrevivente [%dm]", distInt);
-                        textY = sy + dpF(12.0f);
                         break;
                     }
 
-                    case 3: { // Gerador (Verde #2ECC71: Somente Texto "gerador %.0f%% [%dm]")
+                    case 3: { // Gerador (Verde #2ECC71)
+                        if (extra >= 99.5f) {
+                            continue;
+                        }
                         colPrimary = Color.rgb(46, 204, 113);
-                        final int genPct = Math.max(0, Math.min(99, Math.round((rawCat - 3.0f) * 1000.0f)));
+                        final int genPct = Math.max(0, Math.min(99, Math.round(extra)));
                         tag = String.format(Locale.US, "gerador %d%% [%dm]", genPct, distInt);
-                        textY = sy + dpF(4.0f);
                         break;
                     }
 
-                    case 4: // Alçapão (Roxo #E040FB: Somente Texto "alcapao [%dm]")
+                    case 4: // Alçapão / Portão (Roxo #E040FB)
                         colPrimary = Color.rgb(224, 64, 251);
                         tag = String.format(Locale.US, "alcapao [%dm]", distInt);
-                        textY = sy + dpF(4.0f);
                         break;
 
-                    case 5: // Baú (Laranja #FF9800: Somente Texto "bau [%dm]")
+                    case 5: // Baú (Laranja #FF9800)
                         colPrimary = Color.rgb(255, 152, 0);
                         tag = String.format(Locale.US, "bau [%dm]", distInt);
-                        textY = sy + dpF(4.0f);
                         break;
 
-                    case 6: // Totem (Amarelo #F1C40F: Somente Texto "totem [%dm]")
+                    case 6: // Totem (Amarelo #F1C40F)
                         colPrimary = Color.rgb(241, 196, 15);
                         tag = String.format(Locale.US, "totem [%dm]", distInt);
-                        textY = sy + dpF(4.0f);
                         break;
 
-                    case 7: // Pallet (Amarelo Claro #FFF176: Somente Texto "pallet [%dm]")
+                    case 7: // Pallet (Amarelo Claro #FFF176)
                         colPrimary = Color.rgb(255, 241, 118);
                         tag = String.format(Locale.US, "pallet [%dm]", distInt);
-                        textY = sy + dpF(4.0f);
                         break;
 
-                    case 9: // Objeto Especial / Gancho
+                    case 9: // Objeto Especial / Gancho (#78C8FF)
                         colPrimary = Color.rgb(120, 200, 255);
                         tag = String.format(Locale.US, "gancho [%dm]", distInt);
-                        textY = sy + dpF(4.0f);
-                        break;
-
-                    case 10: // Portão de Saída (Roxo #E040FB: Somente Texto "portao [%dm]")
-                        colPrimary = Color.rgb(224, 64, 251);
-                        tag = String.format(Locale.US, "portao [%dm]", distInt);
-                        textY = sy + dpF(4.0f);
                         break;
 
                     default:
                         continue;
                 }
 
+                drawActorBoundingBox(canvas, sx, sy, projHeightPx, colPrimary);
+
+                final float textY = sy + dpF(12.0f);
                 canvas.drawText(tag, sx + 1.2f, textY + 1.2f, textShadowPaint);
                 textPaint.setColor(colPrimary);
                 canvas.drawText(tag, sx, textY, textPaint);
@@ -649,7 +587,7 @@ public final class FloatingModService extends Service {
                 walkSpeedPct,
                 accelPct,
                 jumpPct,
-                timeScalePct
+                timeScale
             );
         } catch (Throwable ignored) {
         }
