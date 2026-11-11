@@ -182,11 +182,12 @@ public final class FloatingModService extends Service {
                 case 1:  return showAntagonist;   // Assassino
                 case 2:  return showTeammates;    // Sobreviventes
                 case 3:  return showPowerNodes;   // Geradores
-                case 4:  return showPortals;      // Alçapão / Portão
+                case 4:  return showPortals;      // Alçapão
                 case 5:  return showContainers;   // Baús
                 case 6:  return showShrines;      // Totens
                 case 7:  return showBarriers;     // Pallets (Sem janelas)
-                case 9:  return showSpecialProps; // Ganchos / Objetos Especiais
+                case 8:  return showPortals;      // Portão de Saída
+                case 9:  return showSpecialProps; // Ganchos
                 default: return false;
             }
         }
@@ -287,7 +288,12 @@ public final class FloatingModService extends Service {
                         tag = String.format(Locale.US, "pallet [%dm]", distInt);
                         break;
 
-                    case 9: // Objeto Especial / Gancho (#78C8FF)
+                    case 8: // Portão de Saída (Roxo #E040FB)
+                        colPrimary = Color.rgb(224, 64, 251);
+                        tag = String.format(Locale.US, "portao [%dm]", distInt);
+                        break;
+
+                    case 9: // Gancho (#78C8FF)
                         colPrimary = Color.rgb(120, 200, 255);
                         tag = String.format(Locale.US, "gancho [%dm]", distInt);
                         break;

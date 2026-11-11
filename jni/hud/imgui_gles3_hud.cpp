@@ -219,7 +219,7 @@ inline void draw_centered_label_below(
     draw_list->AddText(pos, text_color, text);
 }
 
-// Resolves effective NodeCategory from node.category and/or node.label
+// Resolves effective NodeCategory from node.category and/or node.label without cross-category fallback
 [[nodiscard]] inline NodeCategory resolve_node_category(const SceneNode& node) noexcept {
     if (icontains_label(node.label, "Killer") ||
         icontains_label(node.label, "Slasher") ||
@@ -250,13 +250,21 @@ inline void draw_centered_label_below(
         return NodeCategory::Barrier;
     }
     if (icontains_label(node.label, "Hatch") ||
-        icontains_label(node.label, "ExitGate") ||
-        icontains_label(node.label, "EscapeDoor") ||
         icontains_label(node.label, "Alcapao") ||
-        icontains_label(node.label, "Alçapão") ||
+        icontains_label(node.label, "Alçapão")) {
+        return NodeCategory::Portal;
+    }
+    if (icontains_label(node.label, "ExitGate") ||
+        icontains_label(node.label, "EscapeDoor") ||
         icontains_label(node.label, "Portao") ||
         icontains_label(node.label, "Portão")) {
-        return NodeCategory::Portal;
+        return NodeCategory::ExitGate;
+    }
+    if (icontains_label(node.label, "Hook") ||
+        icontains_label(node.label, "MeatLocker") ||
+        icontains_label(node.label, "SmallMeatLocker") ||
+        icontains_label(node.label, "Gancho")) {
+        return NodeCategory::SpecialProp;
     }
     return node.category;
 }
@@ -639,7 +647,9 @@ void render_hud_frame(float width, float height) noexcept {
                 case NodeCategory::Container:   category_enabled = show_containers;    break;
                 case NodeCategory::Barrier:     category_enabled = show_barriers;      break;
                 case NodeCategory::Portal:      category_enabled = show_portals;       break;
+                case NodeCategory::ExitGate:    category_enabled = show_portals;       break;
                 case NodeCategory::SpecialProp: category_enabled = show_special_props; break;
+                case NodeCategory::Unknown:     category_enabled = false;              break;
             }
             if (!category_enabled) {
                 continue;
@@ -713,19 +723,15 @@ void render_hud_frame(float width, float height) noexcept {
                 std::snprintf(tag, sizeof(tag), "bau [%dm]", dist_int);
             } else if (cat == NodeCategory::Portal) {
                 primary_col = col_portal;
-                const bool is_hatch = icontains_label(node.label, "Hatch") ||
-                                      icontains_label(node.label, "Alcapao") ||
-                                      icontains_label(node.label, "Alçapão");
-                std::snprintf(
-                    tag,
-                    sizeof(tag),
-                    "%s [%dm]",
-                    is_hatch ? "alcapao" : "portao",
-                    dist_int);
-            } else {
+                std::snprintf(tag, sizeof(tag), "alcapao [%dm]", dist_int);
+            } else if (cat == NodeCategory::ExitGate) {
+                primary_col = col_portal;
+                std::snprintf(tag, sizeof(tag), "portao [%dm]", dist_int);
+            } else if (cat == NodeCategory::SpecialProp) {
                 primary_col = col_special_prop;
-                const char* prop_name = (node.label[0] != '\0') ? node.label : "objeto";
-                std::snprintf(tag, sizeof(tag), "%s [%dm]", prop_name, dist_int);
+                std::snprintf(tag, sizeof(tag), "gancho [%dm]", dist_int);
+            } else {
+                continue;
             }
 
             ImVec2 screen_center{};

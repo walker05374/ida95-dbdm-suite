@@ -74,7 +74,7 @@ struct RawEntitySample {
     float             z{0.0f};
     float             dist_m{0.0f};
     const char*       name{nullptr};
-    hud::NodeCategory category{hud::NodeCategory::SpecialProp};
+    hud::NodeCategory category{hud::NodeCategory::Unknown};
     float             yaw_deg{0.0f};
     float             progress_pct{0.0f};
     bool              is_open{false};
@@ -313,132 +313,67 @@ inline void copy_raw_string(char* dest, std::size_t max_len, const char* src) no
         case hud::NodeCategory::Teammate:    return 1;
         case hud::NodeCategory::PowerNode:   return 2;
         case hud::NodeCategory::Portal:      return 3;
+        case hud::NodeCategory::ExitGate:    return 3;
         case hud::NodeCategory::Shrine:      return 4;
         case hud::NodeCategory::Container:   return 5;
         case hud::NodeCategory::Barrier:     return 6;
         case hud::NodeCategory::SpecialProp: return 7;
+        case hud::NodeCategory::Unknown:     return 99;
     }
-    return 7;
+    return 99;
 }
 
-// Classifies actor name and resolves both clean label and NodeCategory
+// Classifies actor name and resolves both clean canonical label and NodeCategory with zero cross-category fallback
 inline void classify_sample(
     const RawEntitySample& src,
     hud::NodeCategory&     out_category,
     char                   (&out_label)[kMaxLabelLen]) noexcept {
 
-    out_category = (src.name != nullptr) ? classify_node_category(src.name) : src.category;
-
     if (!is_valid_user_ptr(src.name) || src.name[0] == '\0') {
+        out_category = src.category;
         switch (src.category) {
-            case hud::NodeCategory::Antagonist:  copy_raw_string(out_label, kMaxLabelLen, "Assassino");       return;
-            case hud::NodeCategory::Teammate:    copy_raw_string(out_label, kMaxLabelLen, "Sobrevivente");    return;
-            case hud::NodeCategory::PowerNode:   copy_raw_string(out_label, kMaxLabelLen, "Gerador");         return;
-            case hud::NodeCategory::Shrine:      copy_raw_string(out_label, kMaxLabelLen, "Totem");           return;
-            case hud::NodeCategory::Container:   copy_raw_string(out_label, kMaxLabelLen, "Baú");             return;
-            case hud::NodeCategory::Barrier:     copy_raw_string(out_label, kMaxLabelLen, "Pallet");          return;
-            case hud::NodeCategory::Portal:      copy_raw_string(out_label, kMaxLabelLen, "Portão de Saída"); return;
-            case hud::NodeCategory::SpecialProp: copy_raw_string(out_label, kMaxLabelLen, "Objeto Especial"); return;
+            case hud::NodeCategory::Antagonist:  copy_raw_string(out_label, kMaxLabelLen, "Killer");    return;
+            case hud::NodeCategory::Teammate:    copy_raw_string(out_label, kMaxLabelLen, "Survivor");  return;
+            case hud::NodeCategory::PowerNode:   copy_raw_string(out_label, kMaxLabelLen, "Generator"); return;
+            case hud::NodeCategory::Shrine:      copy_raw_string(out_label, kMaxLabelLen, "Totem");     return;
+            case hud::NodeCategory::Container:   copy_raw_string(out_label, kMaxLabelLen, "Chest");     return;
+            case hud::NodeCategory::Barrier:     copy_raw_string(out_label, kMaxLabelLen, "Pallet");    return;
+            case hud::NodeCategory::Portal:      copy_raw_string(out_label, kMaxLabelLen, "Hatch");     return;
+            case hud::NodeCategory::ExitGate:    copy_raw_string(out_label, kMaxLabelLen, "ExitGate");  return;
+            case hud::NodeCategory::SpecialProp: copy_raw_string(out_label, kMaxLabelLen, "Hook");      return;
+            case hud::NodeCategory::Unknown:
+            default:
+                out_category = hud::NodeCategory::Unknown;
+                copy_raw_string(out_label, kMaxLabelLen, "Unknown");
+                return;
         }
     }
 
     if (is_ignored_auxiliary_actor(src.name)) {
+        out_category = hud::NodeCategory::Unknown;
         copy_raw_string(out_label, kMaxLabelLen, "Unknown");
         return;
     }
 
-    const char* raw_name = src.name;
+    const hud::NodeCategory resolved = classify_node_category(src.name);
+    out_category = (resolved != hud::NodeCategory::Unknown) ? resolved : src.category;
 
-    if (classify_node_category(raw_name) == hud::NodeCategory::Antagonist &&
-        !icontains_str(raw_name, "Trap") &&
-        !icontains_str(raw_name, "Projectile") &&
-        !icontains_str(raw_name, "Power") &&
-        !icontains_str(raw_name, "Stalker")) {
-        out_category = hud::NodeCategory::Antagonist;
-        copy_raw_string(out_label, kMaxLabelLen,
-                        (std::strcmp(raw_name, "Killer") == 0) ? "Assassino" : raw_name);
-        return;
+    switch (out_category) {
+        case hud::NodeCategory::Antagonist:  copy_raw_string(out_label, kMaxLabelLen, "Killer");    return;
+        case hud::NodeCategory::Teammate:    copy_raw_string(out_label, kMaxLabelLen, "Survivor");  return;
+        case hud::NodeCategory::PowerNode:   copy_raw_string(out_label, kMaxLabelLen, "Generator"); return;
+        case hud::NodeCategory::Shrine:      copy_raw_string(out_label, kMaxLabelLen, "Totem");     return;
+        case hud::NodeCategory::Container:   copy_raw_string(out_label, kMaxLabelLen, "Chest");     return;
+        case hud::NodeCategory::Barrier:     copy_raw_string(out_label, kMaxLabelLen, "Pallet");    return;
+        case hud::NodeCategory::Portal:      copy_raw_string(out_label, kMaxLabelLen, "Hatch");     return;
+        case hud::NodeCategory::ExitGate:    copy_raw_string(out_label, kMaxLabelLen, "ExitGate");  return;
+        case hud::NodeCategory::SpecialProp: copy_raw_string(out_label, kMaxLabelLen, "Hook");      return;
+        case hud::NodeCategory::Unknown:
+        default:
+            out_category = hud::NodeCategory::Unknown;
+            copy_raw_string(out_label, kMaxLabelLen, "Unknown");
+            return;
     }
-
-    if (std::strcmp(raw_name, "Survivor") == 0 ||
-        std::strcmp(raw_name, "Sobrevivente") == 0 ||
-        icontains_str(raw_name, "Camper") ||
-        icontains_str(raw_name, "Survivor")) {
-        out_category = hud::NodeCategory::Teammate;
-        copy_raw_string(out_label, kMaxLabelLen,
-                        (std::strcmp(raw_name, "Survivor") == 0) ? "Sobrevivente" : raw_name);
-        return;
-    }
-
-    if (std::strcmp(raw_name, "Generator") == 0 ||
-        std::strcmp(raw_name, "Gerador") == 0 ||
-        icontains_str(raw_name, "Generator")) {
-        out_category = hud::NodeCategory::PowerNode;
-        copy_raw_string(out_label, kMaxLabelLen, "Gerador");
-        return;
-    }
-
-    if (std::strcmp(raw_name, "Totem") == 0 ||
-        icontains_str(raw_name, "Totem") ||
-        icontains_str(raw_name, "HexSpawner")) {
-        out_category = hud::NodeCategory::Shrine;
-        copy_raw_string(out_label, kMaxLabelLen, "Totem");
-        return;
-    }
-
-    if (std::strcmp(raw_name, "Chest") == 0 ||
-        std::strcmp(raw_name, "Baú") == 0 ||
-        icontains_str(raw_name, "Chest") ||
-        icontains_str(raw_name, "Searchable")) {
-        out_category = hud::NodeCategory::Container;
-        copy_raw_string(out_label, kMaxLabelLen, "Baú");
-        return;
-    }
-
-    if (std::strcmp(raw_name, "Pallet") == 0 ||
-        icontains_str(raw_name, "Bookshelf") ||
-        icontains_str(raw_name, "Pallet")) {
-        out_category = hud::NodeCategory::Barrier;
-        copy_raw_string(out_label, kMaxLabelLen, "Pallet");
-        return;
-    }
-
-    if (std::strcmp(raw_name, "Hatch") == 0 ||
-        std::strcmp(raw_name, "Alçapão") == 0 ||
-        icontains_str(raw_name, "Hatch")) {
-        out_category = hud::NodeCategory::Portal;
-        copy_raw_string(out_label, kMaxLabelLen, "Alçapão");
-        return;
-    }
-
-    if (std::strcmp(raw_name, "ExitGate") == 0 ||
-        std::strcmp(raw_name, "Portão de Saída") == 0 ||
-        icontains_str(raw_name, "EscapeDoor") ||
-        icontains_str(raw_name, "ExitGate")) {
-        out_category = hud::NodeCategory::Portal;
-        copy_raw_string(out_label, kMaxLabelLen, "Portão de Saída");
-        return;
-    }
-
-    if (std::strcmp(raw_name, "Hook") == 0 ||
-        std::strcmp(raw_name, "Gancho") == 0 ||
-        icontains_str(raw_name, "SmallMeatLocker") ||
-        icontains_str(raw_name, "MeatLocker") ||
-        icontains_str(raw_name, "MeatHook") ||
-        icontains_str(raw_name, "Hook")) {
-        out_category = hud::NodeCategory::SpecialProp;
-        copy_raw_string(out_label, kMaxLabelLen, "Gancho");
-        return;
-    }
-
-    // If caller explicitly set a category other than SpecialProp, preserve it and its custom label
-    if (src.category != hud::NodeCategory::SpecialProp) {
-        out_category = src.category;
-        copy_raw_string(out_label, kMaxLabelLen, raw_name);
-        return;
-    }
-
-    copy_raw_string(out_label, kMaxLabelLen, raw_name);
 }
 
 } // namespace detail
@@ -750,7 +685,8 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
         char              clean_label[kMaxLabelLen]{};
         detail::classify_sample(src, cat, clean_label);
 
-        if (std::strcmp(clean_label, "Unknown") == 0 ||
+        if (cat == hud::NodeCategory::Unknown ||
+            std::strcmp(clean_label, "Unknown") == 0 ||
             detail::icontains_str(src.name, "Destroyed") ||
             detail::icontains_str(src.name, "Cleansed")) {
             continue;
@@ -867,7 +803,7 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
             SceneNode& dst   = local_nodes[accepted_count++];
             dst.world_pos    = {sx, sy, sz};
             dst.distance_m   = sdist;
-            dst.category     = (src.name != nullptr) ? classify_node_category(src.name) : cat;
+            dst.category     = cat;
             dst.yaw_deg      = detail::sanitize_float(src.yaw_deg, 0.0f);
             dst.progress_pct = std::isfinite(src.progress_pct) ? src.progress_pct : 0.0f;
             dst.is_open      = src.is_open;

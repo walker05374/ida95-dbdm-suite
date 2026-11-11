@@ -797,14 +797,125 @@ public:
         return mem::write_data<uint8_t>(local_player_st + off.player_state_game_role, role_byte);
     }
 
-    // Classifies an actor using BOTH its instance FName (Actor->NamePrivate) and its UClass FName (Actor->ClassPrivate->NamePrivate).
-    // Returns canonical category ("Killer", "Survivor", "Generator", "Hatch", "ExitGate", "Totem", "Chest", "Hook", "Pallet", "Window")
-    // and sets *out_priority (1 = highest priority .. 10 = lowest), or returns nullptr if not a valid interactive match entity.
+    // Walks UObject::ClassPrivate (+0x10) and UStruct::SuperStruct (+0x48) up to 6 levels,
+    // writing the leaf UClass name into out_leaf_class and the full inheritance chain
+    // (e.g. "BP_Chest01_C->Searchable->Interactable->Actor") into out_super_chain.
+    // Uses a 128-slot direct-mapped UClass* cache so each UClass hierarchy is walked via
+    // process_vm_readv only once rather than on every actor every tick.
+    struct UClassHierarchyCacheEntry {
+        uintptr_t             cls_ptr{0};
+        std::array<char, 96>  leaf_name{};
+        std::array<char, 224> super_chain{};
+    };
+
+    static void resolve_uclass_hierarchy(
+        uintptr_t actor_ptr,
+        const GNamePoolResolver& name_resolver,
+        std::span<char> out_leaf_class,
+        std::span<char> out_super_chain
+    ) noexcept {
+        if (!out_leaf_class.empty()) {
+            out_leaf_class[0] = '\0';
+        }
+        if (!out_super_chain.empty()) {
+            out_super_chain[0] = '\0';
+        }
+        const auto cls_ptr_opt = mem::read<uintptr_t>(actor_ptr + 0x10U);
+        if (!cls_ptr_opt.has_value() || !InProcessMemory::IsValidPtr(*cls_ptr_opt, 0x50U)) {
+            return;
+        }
+
+        const uintptr_t leaf_cls = *cls_ptr_opt;
+        static std::array<UClassHierarchyCacheEntry, 128> s_cache{};
+        const size_t slot = static_cast<size_t>((leaf_cls >> 4U) ^ (leaf_cls >> 13U)) & (s_cache.size() - 1U);
+        UClassHierarchyCacheEntry& cache_entry = s_cache[slot];
+
+        if (cache_entry.cls_ptr == leaf_cls && cache_entry.leaf_name[0] != '\0') {
+            if (!out_leaf_class.empty()) {
+                std::strncpy(out_leaf_class.data(), cache_entry.leaf_name.data(), out_leaf_class.size() - 1U);
+                out_leaf_class[out_leaf_class.size() - 1U] = '\0';
+            }
+            if (!out_super_chain.empty()) {
+                std::strncpy(out_super_chain.data(), cache_entry.super_chain.data(), out_super_chain.size() - 1U);
+                out_super_chain[out_super_chain.size() - 1U] = '\0';
+            }
+            return;
+        }
+
+        uintptr_t cur_cls = leaf_cls;
+        size_t chain_pos = 0;
+        std::array<char, 96> node_name{};
+        std::array<char, 96> built_leaf{};
+        std::array<char, 224> built_chain{};
+
+        for (size_t depth = 0; depth < 6U && cur_cls != 0; ++depth) {
+            if (!InProcessMemory::IsValidPtr(cur_cls, 0x50U)) {
+                break;
+            }
+            const auto cls_fn = mem::read<uint32_t>(cur_cls + 0x18U);
+            if (!cls_fn.has_value() || *cls_fn == 0U || !name_resolver.resolve_name(*cls_fn, node_name)) {
+                break;
+            }
+            if (depth == 0U) {
+                std::strncpy(built_leaf.data(), node_name.data(), built_leaf.size() - 1U);
+                built_leaf[built_leaf.size() - 1U] = '\0';
+            }
+            if (chain_pos + 4U < built_chain.size()) {
+                if (chain_pos > 0U) {
+                    built_chain[chain_pos++] = '-';
+                    built_chain[chain_pos++] = '>';
+                }
+                const size_t nlen = std::strlen(node_name.data());
+                const size_t avail = built_chain.size() - 1U - chain_pos;
+                const size_t copy_n = std::min(nlen, avail);
+                std::memcpy(built_chain.data() + chain_pos, node_name.data(), copy_n);
+                chain_pos += copy_n;
+                built_chain[chain_pos] = '\0';
+            }
+            if (std::strcmp(node_name.data(), "Actor") == 0 ||
+                std::strcmp(node_name.data(), "Object") == 0) {
+                break;
+            }
+            const auto super_opt = mem::read<uintptr_t>(cur_cls + 0x48U);
+            if (!super_opt.has_value() || *super_opt == cur_cls) {
+                break;
+            }
+            cur_cls = *super_opt;
+        }
+
+        if (built_leaf[0] != '\0') {
+            cache_entry.cls_ptr     = leaf_cls;
+            cache_entry.leaf_name   = built_leaf;
+            cache_entry.super_chain = built_chain;
+        }
+
+        if (!out_leaf_class.empty()) {
+            std::strncpy(out_leaf_class.data(), built_leaf.data(), out_leaf_class.size() - 1U);
+            out_leaf_class[out_leaf_class.size() - 1U] = '\0';
+        }
+        if (!out_super_chain.empty()) {
+            std::strncpy(out_super_chain.data(), built_chain.data(), out_super_chain.size() - 1U);
+            out_super_chain[out_super_chain.size() - 1U] = '\0';
+        }
+    }
+
+    // Classifies an actor using a strict 3-tier resolver:
+    //   Tier 1: Strict UE4 UClass / UStruct::SuperStruct hierarchy type check.
+    //   Tier 2: Strict actor-ID / blueprint name check on Actor->NamePrivate.
+    //   Tier 3: No cross-category fallback; logs unresolved interactive actors to the debug log and returns nullptr.
+    // Returns canonical category ("Killer", "Survivor", "Generator", "Hatch", "ExitGate", "Totem", "Chest", "Hook", "Pallet")
+    // and sets *out_priority (1 = highest priority .. 9 = lowest), or returns nullptr if not a valid target match entity.
     [[nodiscard]] static const char* classify_actor_category(
         std::string_view actor_name,
         std::string_view class_name,
-        int32_t* out_priority = nullptr
+        std::string_view super_chain = {},
+        int32_t* out_priority = nullptr,
+        bool* out_is_unresolved_candidate = nullptr
     ) noexcept {
+        if (out_is_unresolved_candidate != nullptr) {
+            *out_is_unresolved_candidate = false;
+        }
+
         auto icontains = [](std::string_view hay, std::string_view needle) noexcept -> bool {
             if (needle.empty() || needle.size() > hay.size()) {
                 return false;
@@ -828,88 +939,107 @@ public:
             return false;
         };
 
-        auto either_contains = [&](std::string_view needle) noexcept -> bool {
+        const std::string_view type_chain = super_chain.empty() ? class_name : super_chain;
+
+        auto leaf_or_actor_contains = [&](std::string_view needle) noexcept -> bool {
             return icontains(class_name, needle) || icontains(actor_name, needle);
         };
 
-        // 1. Strict exclusion of manager actors, ghost generators, sub-entities, templates, and handheld items
-        if (either_contains("Default__")        ||
-            either_contains("Archetype")        ||
-            either_contains("GEN_VARIABLE")     ||
-            either_contains("LevelGenerator")   ||
-            either_contains("ProceduralLevel")  ||
-            either_contains("GeneratorEntity")  ||
-            either_contains("GeneratorDriven")  ||
-            either_contains("Portal_Generator") ||
-            either_contains("Portal_MeatHook")  ||
-            either_contains("BigThreeEvent")    ||
-            either_contains("BP_Entity_C")      ||
-            either_contains("SacrificeEnd")     ||
-            either_contains("PlayerStart")      ||
-            either_contains("GameRoleFront")    ||
-            either_contains("SlasherMale_REF")  ||
-            either_contains("BP_Menu_")         ||
-            either_contains("Lobby")            ||
-            either_contains("Looby")            ||
-            either_contains("pos_")             ||
-            either_contains("Interactable")     ||
-            either_contains("AIController")     ||
-            either_contains("PlayerController") ||
-            either_contains("PlayerState")      ||
-            either_contains("GameState")        ||
-            either_contains("GameMode")         ||
-            either_contains("Camera")           ||
-            either_contains("KillCam")          ||
-            either_contains("ReactionCam")      ||
-            either_contains("StruggleCam")      ||
-            either_contains("SacrificeCam")     ||
-            either_contains("Status")           ||
-            either_contains("Effect")           ||
-            either_contains("Decal")            ||
-            either_contains("Heartbeat")        ||
-            either_contains("Lighting")         ||
-            either_contains("PostProcess")      ||
-            either_contains("Emitter")          ||
-            either_contains("Particle")         ||
-            either_contains("Audio")            ||
-            either_contains("Sound")            ||
-            either_contains("NavMesh")          ||
-            either_contains("NavData")          ||
-            either_contains("Volume")           ||
-            either_contains("ReflectionCapture")||
-            either_contains("NightmareHusk")    ||
-            either_contains("DreamInducer")     ||
-            either_contains("BlastMine")        ||
-            either_contains("Collectable")      ||
-            either_contains("Medkit")           ||
-            either_contains("Flashlight")       ||
-            either_contains("Toolbox")          ||
-            either_contains("Firecracker")      ||
-            either_contains("DullKey")          ||
-            either_contains("SkeletonKey")      ||
-            either_contains("BrokenKey")        ||
-            either_contains("MapItem")          ||
-            either_contains("Addon")            ||
-            either_contains("BP_Item_")         ||
-            either_contains("_ACC")             ||
-            either_contains("Torso")            ||
-            either_contains("Hair")             ||
-            either_contains("Necklace")         ||
-            either_contains("Bags")             ||
-            either_contains("SkeletalMeshActor")||
-            either_contains("StaticMeshActor")  ||
-            either_contains("ClipManager")      ||
-            either_contains("Outline")          ||
-            either_contains("Blocker")) {
+        auto type_contains = [&](std::string_view needle) noexcept -> bool {
+            return icontains(type_chain, needle) || icontains(class_name, needle);
+        };
+
+        // 1. Strict exclusion of manager actors, ghost generators, sub-entities, templates, windows, hiding closets, and handheld items
+        if (leaf_or_actor_contains("Default__")        ||
+            leaf_or_actor_contains("Archetype")        ||
+            leaf_or_actor_contains("GEN_VARIABLE")     ||
+            leaf_or_actor_contains("LevelGenerator")   ||
+            leaf_or_actor_contains("ProceduralLevel")  ||
+            leaf_or_actor_contains("GeneratorEntity")  ||
+            leaf_or_actor_contains("GeneratorDriven")  ||
+            leaf_or_actor_contains("Portal_Generator") ||
+            leaf_or_actor_contains("Portal_MeatHook")  ||
+            leaf_or_actor_contains("BigThreeEvent")    ||
+            leaf_or_actor_contains("BP_Entity_C")      ||
+            leaf_or_actor_contains("SacrificeEnd")     ||
+            leaf_or_actor_contains("PlayerStart")      ||
+            leaf_or_actor_contains("GameRoleFront")    ||
+            leaf_or_actor_contains("SlasherMale_REF")  ||
+            leaf_or_actor_contains("BP_Menu_")         ||
+            leaf_or_actor_contains("Lobby")            ||
+            leaf_or_actor_contains("Looby")            ||
+            leaf_or_actor_contains("pos_")             ||
+            leaf_or_actor_contains("AIController")     ||
+            leaf_or_actor_contains("PlayerController") ||
+            leaf_or_actor_contains("PlayerState")      ||
+            leaf_or_actor_contains("GameState")        ||
+            leaf_or_actor_contains("GameMode")         ||
+            leaf_or_actor_contains("Camera")           ||
+            leaf_or_actor_contains("KillCam")          ||
+            leaf_or_actor_contains("ReactionCam")      ||
+            leaf_or_actor_contains("StruggleCam")      ||
+            leaf_or_actor_contains("SacrificeCam")     ||
+            leaf_or_actor_contains("Status")           ||
+            leaf_or_actor_contains("Effect")           ||
+            leaf_or_actor_contains("Decal")            ||
+            leaf_or_actor_contains("Heartbeat")        ||
+            leaf_or_actor_contains("Lighting")         ||
+            leaf_or_actor_contains("PostProcess")      ||
+            leaf_or_actor_contains("Emitter")          ||
+            leaf_or_actor_contains("Particle")         ||
+            leaf_or_actor_contains("Audio")            ||
+            leaf_or_actor_contains("Sound")            ||
+            leaf_or_actor_contains("NavMesh")          ||
+            leaf_or_actor_contains("NavData")          ||
+            leaf_or_actor_contains("Volume")           ||
+            leaf_or_actor_contains("ReflectionCapture")||
+            leaf_or_actor_contains("NightmareHusk")    ||
+            leaf_or_actor_contains("DreamInducer")     ||
+            leaf_or_actor_contains("BlastMine")        ||
+            leaf_or_actor_contains("Collectable")      ||
+            leaf_or_actor_contains("Medkit")           ||
+            leaf_or_actor_contains("Flashlight")       ||
+            leaf_or_actor_contains("Toolbox")          ||
+            leaf_or_actor_contains("Firecracker")      ||
+            leaf_or_actor_contains("DullKey")          ||
+            leaf_or_actor_contains("SkeletonKey")      ||
+            leaf_or_actor_contains("BrokenKey")        ||
+            leaf_or_actor_contains("MapItem")          ||
+            leaf_or_actor_contains("Addon")            ||
+            leaf_or_actor_contains("BP_Item_")         ||
+            leaf_or_actor_contains("_ACC")             ||
+            leaf_or_actor_contains("Torso")            ||
+            leaf_or_actor_contains("Hair")             ||
+            leaf_or_actor_contains("Necklace")         ||
+            leaf_or_actor_contains("Bags")             ||
+            leaf_or_actor_contains("SkeletalMeshActor")||
+            leaf_or_actor_contains("StaticMeshActor")  ||
+            leaf_or_actor_contains("ClipManager")      ||
+            leaf_or_actor_contains("Outline")          ||
+            leaf_or_actor_contains("Blocker")          ||
+            leaf_or_actor_contains("WindowStandard")      ||
+            leaf_or_actor_contains("BP_Window")           ||
+            leaf_or_actor_contains("Closet")              ||
+            leaf_or_actor_contains("BP_Locker")           ||
+            leaf_or_actor_contains("Breakable")           ||
+            leaf_or_actor_contains("LevelCrow")           ||
+            leaf_or_actor_contains("PlayerInteractable")  ||
+            leaf_or_actor_contains("CamperInteractable")  ||
+            leaf_or_actor_contains("SlasherInteractable") ||
+            leaf_or_actor_contains("BP_IND_ExitGate")) {
             return nullptr;
         }
 
-        // Reject if the UClass itself is an unspawned Spawner (except HexSpawner/Totem) or Component
+        if (icontains(class_name, "Window") || icontains(actor_name, "Window")) {
+            return nullptr;
+        }
+
+        // Reject if the leaf UClass itself is an unspawned Spawner (except HexSpawner/Totem) or Component
         if (icontains(class_name, "Component") ||
             (icontains(class_name, "Spawner") &&
-             !either_contains("Totem") &&
-             !either_contains("HexSpawner") &&
-             !either_contains("Shrine"))) {
+             !leaf_or_actor_contains("Totem") &&
+             !leaf_or_actor_contains("HexSpawner") &&
+             !leaf_or_actor_contains("Shrine"))) {
             return nullptr;
         }
 
@@ -918,84 +1048,188 @@ public:
             return lbl;
         };
 
-        // Priority 1: Killer (Slasher character pawn)
-        if ((either_contains("Slasher_Character") ||
-             either_contains("BP_Slasher")        ||
-             either_contains("SlasherPlayer")     ||
-             either_contains("Killer_Character")) &&
-            !either_contains("Trap")       &&
-            !either_contains("Projectile") &&
-            !either_contains("Power")      &&
-            !either_contains("Stalker")    &&
-            !either_contains("Weapon")     &&
-            !either_contains("Mori")) {
+        const bool is_sub_weapon_or_trap =
+            leaf_or_actor_contains("Trap")       ||
+            leaf_or_actor_contains("Projectile") ||
+            leaf_or_actor_contains("Power")      ||
+            leaf_or_actor_contains("Stalker")    ||
+            leaf_or_actor_contains("Weapon")     ||
+            leaf_or_actor_contains("Mori");
+
+        // ====================================================================
+        // TIER 1: Strict UE4 UClass / UStruct::SuperStruct Type Check
+        // ====================================================================
+        if (!type_chain.empty()) {
+            // Priority 1: Killer (ASlasherPlayer)
+            if (!is_sub_weapon_or_trap &&
+                (type_contains("SlasherPlayer") ||
+                 type_contains("Slasher_Character") ||
+                 type_contains("Killer_Character"))) {
+                return set_prio(1, "Killer");
+            }
+
+            // Priority 2: Survivor (ACamperPlayer)
+            if (type_contains("CamperPlayer") ||
+                type_contains("Camper_Character") ||
+                type_contains("Survivor_Character")) {
+                return set_prio(2, "Survivor");
+            }
+
+            // Priority 3: Generator (AGenerator)
+            if (type_contains("->Generator->")     ||
+                type_contains("GeneratorStandard") ||
+                type_contains("GeneratorNoPole")   ||
+                type_contains("GeneratorShort")    ||
+                type_contains("GeneratorIndoor")   ||
+                type_contains("BP_Generator")      ||
+                icontains(class_name, "Generator")) {
+                return set_prio(3, "Generator");
+            }
+
+            // Priority 4: Hatch (AHatch)
+            if (type_contains("->Hatch->") ||
+                type_contains("BP_Hatch")  ||
+                icontains(class_name, "Hatch")) {
+                return set_prio(4, "Hatch");
+            }
+
+            // Priority 5: Exit Gate (AEscapeDoor)
+            if (type_contains("->EscapeDoor->") ||
+                type_contains("BP_EscapeBase")  ||
+                icontains(class_name, "EscapeDoor")) {
+                return set_prio(5, "ExitGate");
+            }
+
+            // Priority 6: Totem (ATotem)
+            if (type_contains("->Totem->")  ||
+                type_contains("TotemBase")  ||
+                type_contains("BP_Totem")   ||
+                type_contains("HexSpawner") ||
+                type_contains("HexTotem")   ||
+                type_contains("BoonTotem")  ||
+                icontains(class_name, "Totem")) {
+                if (leaf_or_actor_contains("Cleansed") ||
+                    leaf_or_actor_contains("Destroyed") ||
+                    leaf_or_actor_contains("Broken")) {
+                    return nullptr;
+                }
+                return set_prio(6, "Totem");
+            }
+
+            // Priority 7: Chest (ASearchable / BP_Chest)
+            if (type_contains("->Searchable->") ||
+                type_contains("BP_Chest")       ||
+                icontains(class_name, "Chest")  ||
+                icontains(class_name, "Searchable")) {
+                return set_prio(7, "Chest");
+            }
+
+            // Priority 8: Hook (AMeatHook / AMeatLocker / ASmallMeatLocker)
+            if (type_contains("->MeatHook->")    ||
+                type_contains("SmallMeatLocker") ||
+                type_contains("MeatLocker")      ||
+                type_contains("MeatHook")        ||
+                type_contains("BP_Hook")) {
+                return set_prio(8, "Hook");
+            }
+
+            // Priority 9: Pallet (APallet / Bookshelf)
+            if (type_contains("->Pallet->") ||
+                type_contains("BP_Pallet")  ||
+                type_contains("Bookshelf")  ||
+                icontains(class_name, "Pallet")) {
+                return set_prio(9, "Pallet");
+            }
+
+            // When UClass hierarchy (type_chain) is resolved, do NOT fall back to actor_name
+            // substring guessing (which could misclassify e.g. SearchableSpawner MagicFountains as Chests).
+            if (out_is_unresolved_candidate != nullptr) {
+                if (type_contains("Interactable") || type_contains("DBDPlayer")) {
+                    *out_is_unresolved_candidate = true;
+                }
+            }
+            return nullptr;
+        }
+
+        // ====================================================================
+        // TIER 2: Strict Actor-ID / Instance Name Match (No cross-category fallback)
+        // ====================================================================
+        if (!is_sub_weapon_or_trap &&
+            (icontains(actor_name, "Slasher_Character") ||
+             icontains(actor_name, "BP_Slasher")        ||
+             icontains(actor_name, "SlasherPlayer")     ||
+             icontains(actor_name, "Killer_Character"))) {
             return set_prio(1, "Killer");
         }
 
-        // Priority 2: Survivor (Camper character pawn)
-        if (either_contains("BP_Camper")        ||
-            either_contains("CamperMale")       ||
-            either_contains("CamperFemale")     ||
-            either_contains("Camper_Character") ||
-            either_contains("Survivor_Character")) {
+        if (icontains(actor_name, "BP_Camper")        ||
+            icontains(actor_name, "CamperMale")       ||
+            icontains(actor_name, "CamperFemale")     ||
+            icontains(actor_name, "Camper_Character") ||
+            icontains(actor_name, "Survivor_Character")) {
             return set_prio(2, "Survivor");
         }
 
-        // Priority 3: Generator (Strictly real repairable generators; LevelGenerator & GeneratorEntity already excluded)
-        if (either_contains("GeneratorStandard") ||
-            either_contains("GeneratorNoPole")   ||
-            either_contains("GeneratorShort")    ||
-            either_contains("GeneratorIndoor")   ||
-            either_contains("BP_Generator")      ||
-            icontains(class_name, "Generator")) {
+        if (icontains(actor_name, "GeneratorStandard") ||
+            icontains(actor_name, "GeneratorNoPole")   ||
+            icontains(actor_name, "GeneratorShort")    ||
+            icontains(actor_name, "GeneratorIndoor")   ||
+            icontains(actor_name, "BP_Generator")) {
             return set_prio(3, "Generator");
         }
 
-        // Priority 4: Hatch
-        if (either_contains("Hatch")) {
+        if (icontains(actor_name, "BP_Hatch") ||
+            icontains(actor_name, "Hatch01")  ||
+            icontains(actor_name, "Hatch_")) {
             return set_prio(4, "Hatch");
         }
 
-        // Priority 5: Exit Gate
-        if (either_contains("EscapeDoor") || either_contains("ExitGate")) {
+        if (icontains(actor_name, "EscapeDoor") ||
+            icontains(actor_name, "ExitGate")) {
             return set_prio(5, "ExitGate");
         }
 
-        // Priority 6: Totem (Shrine)
-        if (either_contains("Totem")      ||
-            either_contains("HexSpawner") ||
-            either_contains("Shrine")     ||
-            either_contains("HexTotem")   ||
-            either_contains("BoonTotem")) {
-            if (either_contains("Cleansed") || either_contains("Destroyed") || either_contains("Broken")) {
+        if (icontains(actor_name, "BP_Totem")   ||
+            icontains(actor_name, "TotemBase")  ||
+            icontains(actor_name, "HexSpawner") ||
+            icontains(actor_name, "HexTotem")   ||
+            icontains(actor_name, "BoonTotem")) {
+            if (icontains(actor_name, "Cleansed") ||
+                icontains(actor_name, "Destroyed") ||
+                icontains(actor_name, "Broken")) {
                 return nullptr;
             }
             return set_prio(6, "Totem");
         }
 
-        // Priority 7: Chest
-        if (either_contains("Chest") || either_contains("Searchable")) {
+        if (icontains(actor_name, "BP_Chest") ||
+            icontains(actor_name, "Chest01")  ||
+            icontains(actor_name, "Chest_")   ||
+            icontains(actor_name, "Searchable")) {
             return set_prio(7, "Chest");
         }
 
-        // Priority 8: Hook (MeatLocker / SmallMeatLocker / MeatHook)
-        if (either_contains("SmallMeatLocker") ||
-            either_contains("MeatLocker")      ||
-            either_contains("MeatHook")) {
+        if (icontains(actor_name, "SmallMeatLocker") ||
+            icontains(actor_name, "MeatLocker")      ||
+            icontains(actor_name, "MeatHook")        ||
+            icontains(actor_name, "BP_Hook")) {
             return set_prio(8, "Hook");
         }
 
-        // Priority 9: Pallet (Bookshelf / Pallet)
-        if (either_contains("Bookshelf") || either_contains("Pallet")) {
+        if (icontains(actor_name, "Bookshelf") ||
+            icontains(actor_name, "BP_Pallet") ||
+            icontains(actor_name, "Pallet01")  ||
+            icontains(actor_name, "Pallet_")) {
             return set_prio(9, "Pallet");
         }
 
-        // Priority 10: Window / Vault
-        if (either_contains("WindowStandard") ||
-            either_contains("BP_Window")      ||
-            either_contains("Window")         ||
-            either_contains("Vault")) {
-            return set_prio(10, "Window");
+        // ====================================================================
+        // TIER 3: Unresolved Fallback — Never guess or collapse into another category
+        // ====================================================================
+        if (out_is_unresolved_candidate != nullptr) {
+            if (type_contains("Interactable") || type_contains("DBDPlayer")) {
+                *out_is_unresolved_candidate = true;
+            }
         }
 
         return nullptr;
@@ -1123,6 +1357,9 @@ public:
         size_t collected = 0;
         std::array<char, 128> name_buf{};
         std::array<char, 128> class_buf{};
+        std::array<char, 256> super_chain_buf{};
+        static std::array<uint32_t, 64> s_logged_unresolved_fnames{};
+        static size_t s_logged_unresolved_count = 0;
 
         for (uintptr_t ulevel_addr : ulevels) {
             if (!InProcessMemory::IsValidPtr(ulevel_addr, 0xB0U)) {
@@ -1156,18 +1393,60 @@ public:
                     continue;
                 }
 
-                class_buf[0] = '\0';
-                if (const auto cls_ptr = mem::read<uintptr_t>(*actor_ptr + 0x10U);
-                    cls_ptr.has_value() && InProcessMemory::IsValidPtr(*cls_ptr, 0x28U)) {
-                    if (const auto cls_fn = mem::read<uint32_t>(*cls_ptr + 0x18U)) {
-                        (void)name_resolver.resolve_name(*cls_fn, class_buf);
-                    }
-                }
+                resolve_uclass_hierarchy(*actor_ptr, name_resolver, class_buf, super_chain_buf);
 
                 int32_t prio = 99;
-                const char* cat_label = classify_actor_category(name_buf.data(), class_buf.data(), &prio);
+                bool is_unresolved = false;
+                const char* cat_label = classify_actor_category(
+                    name_buf.data(),
+                    class_buf.data(),
+                    super_chain_buf.data(),
+                    &prio,
+                    &is_unresolved);
                 if (cat_label == nullptr) {
+                    if (is_unresolved && class_buf[0] != '\0') {
+                        bool already_logged = false;
+                        for (size_t u = 0; u < s_logged_unresolved_count; ++u) {
+                            if (s_logged_unresolved_fnames[u] == fname_idx) {
+                                already_logged = true;
+                                break;
+                            }
+                        }
+                        if (!already_logged && s_logged_unresolved_count < s_logged_unresolved_fnames.size()) {
+                            s_logged_unresolved_fnames[s_logged_unresolved_count++] = fname_idx;
+                            DIAG_LOGW(
+                                "[CATEGORY-UNRESOLVED] Actor=0x%llX FName=\"%s\" Class=\"%s\" SuperChain=\"%s\"",
+                                static_cast<unsigned long long>(*actor_ptr),
+                                name_buf.data(),
+                                class_buf.data(),
+                                super_chain_buf.data()
+                            );
+                        }
+                    }
                     continue;
+                }
+
+                static std::array<uint32_t, 64> s_logged_matched_fnames{};
+                static size_t s_logged_matched_count = 0;
+                {
+                    bool match_logged = false;
+                    for (size_t m = 0; m < s_logged_matched_count; ++m) {
+                        if (s_logged_matched_fnames[m] == fname_idx) {
+                            match_logged = true;
+                            break;
+                        }
+                    }
+                    if (!match_logged && s_logged_matched_count < s_logged_matched_fnames.size()) {
+                        s_logged_matched_fnames[s_logged_matched_count++] = fname_idx;
+                        DIAG_LOGI(
+                            "[CATEGORY-MATCH] Cat=%s (prio=%d) | FName=\"%s\" | Class=\"%s\" | SuperChain=\"%s\"",
+                            cat_label,
+                            static_cast<int>(prio),
+                            name_buf.data(),
+                            class_buf.data(),
+                            super_chain_buf.data()
+                        );
+                    }
                 }
 
                 const auto pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
@@ -2412,8 +2691,17 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     );
 
     // Update pointers & Generator/Skillcheck telemetry in SceneTelemetryData
-    size_t final_node_count = 0;
-    bool   final_match_active = false;
+    size_t   final_node_count   = 0;
+    bool     final_match_active = false;
+    uint32_t cnt_killer         = 0;
+    uint32_t cnt_survivor       = 0;
+    uint32_t cnt_generator      = 0;
+    uint32_t cnt_totem          = 0;
+    uint32_t cnt_chest          = 0;
+    uint32_t cnt_pallet         = 0;
+    uint32_t cnt_hatch          = 0;
+    uint32_t cnt_exitgate       = 0;
+    uint32_t cnt_hook           = 0;
     {
         hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
         pthread_mutex_lock(&hud_data.mutex);
@@ -2425,7 +2713,47 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         hud_data.skillchecks_handled  = s_skillchecks_handled;
         final_node_count              = hud_data.node_count;
         final_match_active            = hud_data.match_active;
+        for (size_t i = 0; i < final_node_count && i < hud::kMaxSceneNodes; ++i) {
+            switch (hud_data.nodes[i].category) {
+                case hud::NodeCategory::Antagonist:  ++cnt_killer;    break;
+                case hud::NodeCategory::Teammate:    ++cnt_survivor;  break;
+                case hud::NodeCategory::PowerNode:   ++cnt_generator; break;
+                case hud::NodeCategory::Shrine:      ++cnt_totem;     break;
+                case hud::NodeCategory::Container:   ++cnt_chest;     break;
+                case hud::NodeCategory::Barrier:     ++cnt_pallet;    break;
+                case hud::NodeCategory::Portal:      ++cnt_hatch;     break;
+                case hud::NodeCategory::ExitGate:    ++cnt_exitgate;  break;
+                case hud::NodeCategory::SpecialProp: ++cnt_hook;      break;
+                default: break;
+            }
+        }
         pthread_mutex_unlock(&hud_data.mutex);
+    }
+
+    // Print per-category counts at match start (and when map actor spawn completes)
+    static uintptr_t s_cat_logged_ulevel = 0;
+    static size_t    s_cat_logged_nodes  = 0;
+    if (final_match_active && final_node_count > 0 &&
+        (*ulevel != s_cat_logged_ulevel || (s_cat_logged_nodes < 10 && final_node_count >= 10))) {
+        s_cat_logged_ulevel = *ulevel;
+        s_cat_logged_nodes  = final_node_count;
+        DIAG_LOGI(
+            "[MATCH-CATEGORY-COUNTS] ULevel=0x%llX TotalNodes=%zu | Killer=%u | Survivor=%u | Generator=%u | Totem=%u | Chest=%u | Pallet=%u | Hatch=%u | ExitGate=%u | Hook=%u",
+            static_cast<unsigned long long>(*ulevel),
+            final_node_count,
+            cnt_killer,
+            cnt_survivor,
+            cnt_generator,
+            cnt_totem,
+            cnt_chest,
+            cnt_pallet,
+            cnt_hatch,
+            cnt_exitgate,
+            cnt_hook
+        );
+    } else if (!final_match_active) {
+        s_cat_logged_ulevel = 0;
+        s_cat_logged_nodes  = 0;
     }
 
     const bool write_safe = (!is_lobby_level && local_pawn != 0) && (s_teardown_write_lock_ticks == 0U);
@@ -2673,6 +3001,22 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             static_cast<double>(nearest_gen_pct),
             static_cast<unsigned>(s_skillchecks_handled)
         );
+        if (final_match_active) {
+            DIAG_LOGI(
+                "[MATCH-CATEGORY-COUNTS] ULevel=0x%llX TotalNodes=%zu | Killer=%u | Survivor=%u | Generator=%u | Totem=%u | Chest=%u | Pallet=%u | Hatch=%u | ExitGate=%u | Hook=%u",
+                static_cast<unsigned long long>(*ulevel),
+                final_node_count,
+                cnt_killer,
+                cnt_survivor,
+                cnt_generator,
+                cnt_totem,
+                cnt_chest,
+                cnt_pallet,
+                cnt_hatch,
+                cnt_exitgate,
+                cnt_hook
+            );
+        }
     }
 
     // Publish lockless shared telemetry snapshot (/data/local/tmp/dbdm_telemetry_shm.bin) for 60 FPS APK overlay
@@ -3293,7 +3637,9 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
                                                  if (!hud::adapter::is_totem_active(wn.progress_pct, wn.label)) continue;
                                                  cat_id = 6.0f; break;
             case hud::NodeCategory::Barrier:     if (!show_barriers)      continue; cat_id = 7.0f; break;
+            case hud::NodeCategory::ExitGate:    if (!show_portals)       continue; cat_id = 8.0f; break;
             case hud::NodeCategory::SpecialProp: if (!show_special_props) continue; cat_id = 9.0f; break;
+            case hud::NodeCategory::Unknown:
             default: continue;
         }
         if (wn.label[0] == '\0' ||
