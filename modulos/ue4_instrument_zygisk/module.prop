@@ -1,6 +1,6 @@
 id=ue4_instrument_core
 name=UE4.27 AArch64 Diagnostics & Telemetry Suite
-version=v1.0.0-rev7
-versionCode=107
+version=v1.0.0-rev9
+versionCode=109
 author=SystemsEngineering
-description=In-process ELF64 AArch64 telemetry and diagnostic instrumentation for com.netease.dbdena (UE 4.27)
+description=Headless UI-free ELF64 AArch64 telemetry & IPC backend for com.netease.dbdena (UE 4.27)

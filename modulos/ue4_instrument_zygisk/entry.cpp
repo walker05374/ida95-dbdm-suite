@@ -8,18 +8,25 @@
 #include "elf_resolver.hpp"
 #include "in_process_memory.hpp"
 #include "zygisk.hpp"
-#include "imgui_gles3_hud.hpp"
+#include "ipc_shared_state.hpp"
 #include "telemetry_adapter.hpp"
-#include "egl_plt_bridge.hpp"
+#include "diagnostic_tick_bridge.hpp"
+#include <dirent.h>
 #include <jni.h>
 #include <pthread.h>
+#include <signal.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -80,6 +87,7 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     // UGameInstance -> ULocalPlayer -> APlayerController -> APawn / APlayerState
     uintptr_t local_players_array       = 0x0040;     // TArray<ULocalPlayer*> (FClassParams @ 0x0C85FE90)
     uintptr_t player_controller         = 0x0038;     // UPlayer::PlayerController (FClassParams @ 0x0C99FE40)
+    uintptr_t controller_pawn           = 0x0278;     // AController::Pawn
     uintptr_t acknowledged_pawn         = 0x02B8;     // APlayerController::AcknowledgedPawn (FClassParams @ 0x0F3B84D8)
     uintptr_t player_camera_manager     = 0x02D0;     // APlayerController::PlayerCameraManager (@ 0x0C1C019C)
     uintptr_t controller_player_state   = 0x0238;     // AController::PlayerState
@@ -93,17 +101,20 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t fname_index               = 0x001C;     // UObjectBase::NamePrivate.DisplayIndex (+0x1C)
     uintptr_t custom_time_dilation      = 0x0098;     // AActor::CustomTimeDilation (float, +0x98)
     uintptr_t root_component            = 0x0140;     // AActor::RootComponent (FClassParams @ 0x0C7ABD84)
-    uintptr_t character_movement        = 0x0290;     // ACharacter::CharacterMovement / Mesh
+    uintptr_t skeletal_mesh             = 0x0288;     // ACharacter::Mesh (USkeletalMeshComponent*, +0x288)
+    uintptr_t character_movement        = 0x0290;     // ACharacter::CharacterMovement (UCharacterMovementComponent*, +0x290)
 
-    // APlayerCameraManager -> CameraCachePrivate (+0x1AF0) -> POV (+0x1B00)
+    // APlayerCameraManager -> CameraCachePrivate (+0x1AE0 / +0x1AF0) -> POV
     uintptr_t camera_cache_private      = 0x1AF0;     // FCameraCacheEntry (FClassParams @ 0x0F3B0910)
+    uintptr_t camera_cache_alt          = 0x1AE0;     // Alternate CameraCachePrivate / POV offset
     uintptr_t pov_location              = 0x1AF0 + 0x0010; // FMinimalViewInfo::Location (+0x1B00, FVector)
     uintptr_t pov_rotation              = 0x1AF0 + 0x001C; // FMinimalViewInfo::Rotation (+0x1B0C, FRotator)
     uintptr_t pov_fov                   = 0x1AF0 + 0x0028; // FMinimalViewInfo::FOV (+0x1B18, float)
 
     // USceneComponent
     uintptr_t relative_location         = 0x0134;     // FVector (12 bytes)
-    uintptr_t component_velocity        = 0x0140;     // FVector (12 bytes)
+    uintptr_t relative_rotation         = 0x0140;     // FRotator (12 bytes: Pitch, Yaw, Roll)
+    uintptr_t component_velocity        = 0x014C;     // FVector (12 bytes)
     uintptr_t scene_comp_flags          = 0x0164;     // uint16 bitfield (bVisible=0x0040, bHiddenInGame=0x1000)
 
     // FUObjectArray / FChunkedFixedUObjectArray (for live lifecycle / PendingKill verification)
@@ -114,11 +125,33 @@ struct INSTRUMENT_LOCAL EngineOffsets {
 
     // UCharacterMovementComponent
     uintptr_t jump_z_velocity           = 0x0158;     // float (+0x158)
+    uintptr_t movement_mode             = 0x0174;     // uint8 EMovementMode (+0x174; MOVE_Walking=1, MOVE_Flying=5)
+    uintptr_t movement_dirty_flags      = 0x0178;     // uint8 bitfield (bNetworkUpdateReceived / bJustTeleported / bCheatFlying, +0x178)
     uintptr_t max_walk_speed            = 0x018C;     // float (+0x18C)
+    uintptr_t max_walk_speed_crouched   = 0x0190;     // float (+0x190)
+    uintptr_t max_fly_speed             = 0x0194;     // float (+0x194)
     uintptr_t max_acceleration          = 0x0198;     // float (+0x198)
+    uintptr_t max_custom_movement_speed = 0x019C;     // float (+0x19C)
 
-    // APlayerState
+    // APlayerCameraManager FOV & AActor Collision
+    uintptr_t actor_collision_flags     = 0x0058;     // uint8 bitfield (bActorEnableCollision)
+    uintptr_t camera_default_fov        = 0x0248;     // float APlayerCameraManager::DefaultFOV (+0x248)
+    uintptr_t camera_locked_fov         = 0x0250;     // float APlayerCameraManager::LockedFOV (+0x250)
+
+    // UChargeableComponent / Generator Progress & USkillCheck
+    uintptr_t chargeable_current_charge = 0x0338;     // float (+0x338)
+    uintptr_t player_interaction_handler= 0x08D0;     // UPlayerInteractionHandler* (+0x8D0)
+    uintptr_t skillcheck_component      = 0x02E8;     // USkillCheck* (+0x2E8)
+    uintptr_t skillcheck_success_start  = 0x0164;     // float USkillCheck::SuccessZoneStart (+0x164)
+    uintptr_t skillcheck_success_length = 0x0168;     // float USkillCheck::SuccessZoneLength (+0x168)
+    uintptr_t skillcheck_bonus_length   = 0x016C;     // float USkillCheck::BonusZoneLength (+0x16C)
+
+    // ACamperPlayer / ADBDPlayerState Gameplay State & Role
+    uintptr_t camper_immobilize_state   = 0x1158;     // uint8 EImmobilizeState (+0x1158)
+    uintptr_t camper_trap_immunity_flag = 0x115C;     // uint8 Trap Immunity / Hazard Bypass (+0x115C)
     uintptr_t player_name_private       = 0x0310;     // FString (TArray<char16_t>)
+    uintptr_t player_state_game_role    = 0x039A;     // uint8 EPlayerRole (+0x39A: 1=Camper, 2=Slasher, 3=Observer)
+    uintptr_t player_state_camper_state = 0x03B0;     // uint8 EGameState (+0x3B0: 2=VE_Escaped)
 };
 
 // ============================================================================
@@ -182,19 +215,22 @@ private:
 struct INSTRUMENT_LOCAL EntitySnapshot {
     uintptr_t actor_address{0};
     uint32_t  fname_id{0};
+    int32_t   priority_rank{99};
     FVector   world_pos{};
+    float     yaw_deg{0.0f};
     float     distance_meters{0.0f};
+    float     progress_pct{-1.0f};
+    bool      has_skeleton{false};
+    hud::Vec3 bone_joints[hud::kSkeletonJointCount]{};
+    char      category_label[32]{};
 };
 
 class INSTRUMENT_LOCAL SpatialAndKinematicPipeline {
 public:
-    static constexpr size_t   kMaxActorsPerTick      = 2048U;
-    static constexpr size_t   kMaxSnapshots          = 64U;
-    static constexpr uint32_t kFlagBeginDestroyed    = 0x00020000U; // RF_BeginDestroyed
-    static constexpr uint32_t kFlagFinishDestroyed   = 0x00040000U; // RF_FinishDestroyed
-    static constexpr int32_t  kInternalFlagPendingKill = (1 << 29);  // EInternalObjectFlags::PendingKill
-    static constexpr int32_t  kInternalFlagUnreachable = (1 << 28);  // EInternalObjectFlags::Unreachable
-    static constexpr int32_t  kInternalFlagGarbage     = (1 << 21);  // EInternalObjectFlags::Garbage
+    static constexpr size_t   kMaxActorsPerTick      = 4096U;
+    static constexpr size_t   kMaxSnapshots          = 256U;
+    static constexpr uint32_t kFlagBeginDestroyed    = 0x00008000U; // RF_BeginDestroyed (1 << 15 in UE4.27)
+    static constexpr uint32_t kFlagFinishDestroyed   = 0x00010000U; // RF_FinishDestroyed (1 << 16 in UE4.27)
 
     struct UObjectHeaderSnapshot {
         uintptr_t vtable{0};
@@ -205,13 +241,12 @@ public:
         uint32_t  fname_display_index{0};
     };
 
-    // Validates that a UObject* is live, mapped in canonical user-space, not RF_BeginDestroyed /
-    // RF_FinishDestroyed, and (when GUObjectArray is accessible) matches its FUObjectItem slot
-    // without PendingKill / Unreachable / Garbage flags.
+    // Validates that a UObject* is live, mapped in canonical user-space (verified via process_vm_readv),
+    // has valid VTable and ClassPrivate pointers, and is not RF_BeginDestroyed / RF_FinishDestroyed.
     [[nodiscard]] static bool validate_live_uobject(
         uintptr_t obj_addr,
-        uintptr_t guobjectarray_abs,
-        const EngineOffsets& off,
+        uintptr_t /*guobjectarray_abs*/,
+        const EngineOffsets& /*off*/,
         uint32_t* out_fname_display_idx = nullptr
     ) noexcept {
         if (!InProcessMemory::IsValidPtr(obj_addr, sizeof(UObjectHeaderSnapshot))) {
@@ -235,59 +270,43 @@ public:
         }
 
         // InternalIndex must be within valid GUObjectArray bounds
-        if (hdr->internal_index <= 0 || hdr->internal_index >= 0x400000) {
+        if (hdr->internal_index < 0 || hdr->internal_index >= 0x400000) {
             return false;
         }
 
-        if (hdr->fname_display_index == 0U || hdr->fname_display_index >= (8192U << 16U)) {
+        const uint32_t fname_idx =
+            (hdr->fname_display_index != 0U && hdr->fname_display_index < (8192U << 16U))
+                ? hdr->fname_display_index
+                : hdr->fname_comparison_index;
+
+        if (fname_idx >= (8192U << 16U)) {
             return false;
-        }
-
-        // Cross-check against GUObjectArray (FUObjectItem: +0x00 Object*, +0x08 Flags)
-        if (InProcessMemory::IsValidPtr(guobjectarray_abs, 0x30U)) {
-            const auto num_elems  = mem::read<int32_t>(guobjectarray_abs + off.guobject_num_elems_offset);
-            const auto num_chunks = mem::read<int32_t>(guobjectarray_abs + off.guobject_num_chunks_offset);
-            const auto objects_pp = mem::read<uintptr_t>(guobjectarray_abs + off.guobject_objects_offset);
-
-            if (num_elems.has_value() && num_chunks.has_value() && objects_pp.has_value() &&
-                *num_elems > 0 && *num_chunks > 0 && *num_chunks <= 512 &&
-                InProcessMemory::IsValidPtr(*objects_pp, sizeof(uintptr_t)))
-            {
-                const int32_t idx = hdr->internal_index;
-                if (idx >= *num_elems) {
-                    return false;
-                }
-                const int32_t chunk_idx = idx >> 16;
-                const int32_t within_idx = idx & 0xFFFF;
-                if (chunk_idx < 0 || chunk_idx >= *num_chunks) {
-                    return false;
-                }
-                const auto chunk_base = mem::read<uintptr_t>(
-                    *objects_pp + static_cast<uintptr_t>(chunk_idx) * sizeof(uintptr_t));
-                if (!chunk_base.has_value() || !InProcessMemory::IsValidPtr(*chunk_base, 0x18U)) {
-                    return false;
-                }
-                const uintptr_t item_addr = *chunk_base + static_cast<uintptr_t>(within_idx) * 0x18ULL;
-                const auto item_obj   = mem::read<uintptr_t>(item_addr + 0x00U);
-                const auto item_flags = mem::read<int32_t>(item_addr + 0x08U);
-                if (!item_obj.has_value() || !item_flags.has_value()) {
-                    return false;
-                }
-                // If the slot no longer points to this object, it was destroyed/reallocated mid-frame
-                if (InProcessMemory::untag_address(*item_obj) != InProcessMemory::untag_address(obj_addr)) {
-                    return false;
-                }
-                // Check EInternalObjectFlags::PendingKill | Unreachable | Garbage
-                if ((*item_flags & (kInternalFlagPendingKill | kInternalFlagUnreachable | kInternalFlagGarbage)) != 0) {
-                    return false;
-                }
-            }
         }
 
         if (out_fname_display_idx != nullptr) {
-            *out_fname_display_idx = hdr->fname_display_index;
+            *out_fname_display_idx = fname_idx;
         }
         return true;
+    }
+
+    // Strict canonical 48-bit user-space + struct span + live UObject validation before any offset read/write
+    [[nodiscard]] static bool validate_canonical_uobject(
+        uintptr_t obj_addr,
+        size_t min_struct_bytes,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        if (obj_addr == 0) {
+            return false;
+        }
+        const uintptr_t canonical = obj_addr & 0x0000FFFFFFFFFFFFULL;
+        if (canonical < 0x00010000ULL || canonical > 0x00007FFFFFFFFFFFULL) {
+            return false;
+        }
+        if (!InProcessMemory::IsValidPtr(obj_addr, std::max<size_t>(min_struct_bytes, sizeof(UObjectHeaderSnapshot)))) {
+            return false;
+        }
+        return validate_live_uobject(obj_addr, guobjectarray_abs, off, nullptr);
     }
 
     [[nodiscard]] static std::optional<FVector> read_actor_location(
@@ -317,55 +336,556 @@ public:
         if (std::abs(loc->x) > 1000000.0f || std::abs(loc->y) > 1000000.0f || std::abs(loc->z) > 1000000.0f) {
             return std::nullopt;
         }
+        // If RelativeLocation is (0,0,0) because the component is attached to a parent spawner/tile,
+        // probe USceneComponent::ComponentToWorld (FTransform at +0x1C0/+0x1D0/+0x1E0) for world-space Translation.
+        if (std::abs(loc->x) < 1.0f && std::abs(loc->y) < 1.0f && std::abs(loc->z) < 1.0f) {
+            struct FTransformProbe {
+                float qx, qy, qz, qw;
+                float tx, ty, tz, tpad;
+                float sx, sy, sz, spad;
+            };
+            static constexpr uintptr_t kCtwOffsets[] = {0x1C0U, 0x1D0U, 0x1E0U, 0x1B0U, 0x1F0U};
+            for (uintptr_t ctw_off : kCtwOffsets) {
+                if (const auto ctw = mem::read<FTransformProbe>(*root_comp + ctw_off)) {
+                    const float qnorm = ctw->qx * ctw->qx + ctw->qy * ctw->qy + ctw->qz * ctw->qz + ctw->qw * ctw->qw;
+                    if (std::isfinite(qnorm) && qnorm >= 0.95f && qnorm <= 1.05f &&
+                        std::isfinite(ctw->tx) && std::isfinite(ctw->ty) && std::isfinite(ctw->tz) &&
+                        std::isfinite(ctw->sx) && std::abs(ctw->sx) >= 0.05f && std::abs(ctw->sx) <= 100.0f &&
+                        (std::abs(ctw->tx) >= 10.0f || std::abs(ctw->ty) >= 10.0f || std::abs(ctw->tz) >= 10.0f) &&
+                        std::abs(ctw->tx) <= 500000.0f && std::abs(ctw->ty) <= 500000.0f && std::abs(ctw->tz) <= 500000.0f)
+                    {
+                        return FVector{ctw->tx, ctw->ty, ctw->tz};
+                    }
+                }
+            }
+        }
         return loc;
     }
 
+    // Reads character rotation yaw and USkeletalMeshComponent (+0x288) bone matrices,
+    // transforming local component-space bone transforms into absolute world space via
+    // hud::transform_bone_local_to_world. If bones are uninitialized or collapsed,
+    // falls back to dynamic upright capsule bounds (Z - 45.0f to Z + 45.0f).
+    static void read_character_skeleton_and_yaw(
+        uintptr_t actor,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        const FVector& actor_world_pos,
+        float& out_yaw_deg,
+        bool& out_has_skeleton,
+        hud::Vec3 (&out_bones)[hud::kSkeletonJointCount]
+    ) noexcept {
+        out_yaw_deg      = 0.0f;
+        out_has_skeleton = false;
+
+        if (!InProcessMemory::IsValidPtr(actor, 0x2A0U)) {
+            return;
+        }
+
+        // 1. Read rotation yaw from RootComponent (+0x140 -> RelativeRotation.Yaw at +0x144)
+        if (const auto root_comp = mem::read<uintptr_t>(actor + off.root_component);
+            root_comp.has_value() && InProcessMemory::IsValidPtr(*root_comp, 0x170U)) {
+            if (const auto yaw_val = mem::read<float>(*root_comp + off.relative_rotation + 0x04U);
+                yaw_val.has_value() && std::isfinite(*yaw_val) && std::abs(*yaw_val) <= 3600.0f) {
+                out_yaw_deg = *yaw_val;
+            }
+        }
+
+        // 2. Probe ACharacter::Mesh (USkeletalMeshComponent* at +0x288 or +0x280)
+        struct FTransformRaw {
+            float qx, qy, qz, qw;
+            float tx, ty, tz, tpad;
+            float sx, sy, sz, spad;
+        };
+
+        const std::array<uintptr_t, 2> kMeshOffsets = {off.skeletal_mesh, 0x0280U};
+        for (uintptr_t mesh_off : kMeshOffsets) {
+            const auto mesh_ptr = mem::read<uintptr_t>(actor + mesh_off);
+            if (!mesh_ptr.has_value() || !validate_canonical_uobject(*mesh_ptr, 0x620U, guobjectarray_abs, off)) {
+                continue;
+            }
+
+            // Locate valid ComponentToWorld FTransform on USkeletalMeshComponent (+0x1C0/+0x1D0/+0x1E0)
+            hud::BoneTransform comp_to_world{};
+            bool has_valid_ctw = false;
+            static constexpr uintptr_t kCtwOffsets[] = {0x1C0U, 0x1D0U, 0x1E0U, 0x1B0U, 0x1F0U};
+            for (uintptr_t ctw_off : kCtwOffsets) {
+                if (const auto ctw = mem::read<FTransformRaw>(*mesh_ptr + ctw_off)) {
+                    const float qnorm = ctw->qx * ctw->qx + ctw->qy * ctw->qy + ctw->qz * ctw->qz + ctw->qw * ctw->qw;
+                    if (std::isfinite(qnorm) && qnorm >= 0.90f && qnorm <= 1.10f &&
+                        std::isfinite(ctw->tx) && std::isfinite(ctw->ty) && std::isfinite(ctw->tz) &&
+                        std::isfinite(ctw->sx) && std::abs(ctw->sx) >= 0.05f && std::abs(ctw->sx) <= 20.0f &&
+                        std::abs(ctw->tx - actor_world_pos.x) <= 250.0f &&
+                        std::abs(ctw->ty - actor_world_pos.y) <= 250.0f &&
+                        std::abs(ctw->tz - actor_world_pos.z) <= 250.0f)
+                    {
+                        comp_to_world.qx          = ctw->qx;
+                        comp_to_world.qy          = ctw->qy;
+                        comp_to_world.qz          = ctw->qz;
+                        comp_to_world.qw          = ctw->qw;
+                        comp_to_world.translation = {ctw->tx, ctw->ty, ctw->tz};
+                        comp_to_world.scale       = {ctw->sx, ctw->sy, ctw->sz};
+                        has_valid_ctw             = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!has_valid_ctw) {
+                continue;
+            }
+
+            // Probe CachedComponentSpaceTransforms / BoneSpaceTransforms TArray<FTransform>
+            static constexpr uintptr_t kBoneArrayOffsets[] = {0x4B0U, 0x4C0U, 0x590U, 0x5A0U, 0x5B0U, 0x5C8U};
+            for (uintptr_t arr_off : kBoneArrayOffsets) {
+                const auto bone_arr = mem::read<TArrayHeader>(*mesh_ptr + arr_off);
+                if (!bone_arr.has_value() ||
+                    bone_arr->count < 28 ||
+                    bone_arr->count > 256 ||
+                    bone_arr->max < bone_arr->count ||
+                    bone_arr->max > 512 ||
+                    !InProcessMemory::IsValidPtr(bone_arr->data_ptr, static_cast<size_t>(bone_arr->count) * sizeof(FTransformRaw)))
+                {
+                    continue;
+                }
+
+                // Standard UE4 humanoid bone index mapping ordered to match hud::BoneIndex:
+                // 0=Head, 1=Neck, 2=Spine, 3=Pelvis, 4=LShoulder, 5=RShoulder,
+                // 6=LElbow, 7=RElbow, 8=LHand, 9=RHand, 10=LKnee, 11=RKnee, 12=LFoot, 13=RFoot
+                static constexpr std::array<int32_t, hud::kSkeletonJointCount> kHumanoidBoneIndices = {
+                    6,  // 0: Head
+                    5,  // 1: Neck
+                    3,  // 2: Spine
+                    1,  // 3: Pelvis
+                    10, // 4: LShoulder
+                    15, // 5: RShoulder
+                    11, // 6: LElbow
+                    16, // 7: RElbow
+                    12, // 8: LHand
+                    17, // 9: RHand
+                    22, // 10: LKnee
+                    25, // 11: RKnee
+                    23, // 12: LFoot
+                    26  // 13: RFoot
+                };
+
+                const hud::Vec3 actor_vec{actor_world_pos.x, actor_world_pos.y, actor_world_pos.z};
+                bool  all_valid = true;
+                float min_z     =  1.0e9f;
+                float max_z     = -1.0e9f;
+
+                for (size_t b = 0; b < hud::kSkeletonJointCount; ++b) {
+                    const int32_t b_idx = kHumanoidBoneIndices[b];
+                    if (b_idx < 0 || b_idx >= bone_arr->count) {
+                        all_valid = false;
+                        break;
+                    }
+                    const auto b_tr = mem::read<FTransformRaw>(
+                        bone_arr->data_ptr + static_cast<uintptr_t>(b_idx) * sizeof(FTransformRaw));
+                    if (!b_tr.has_value() ||
+                        !std::isfinite(b_tr->tx) || !std::isfinite(b_tr->ty) || !std::isfinite(b_tr->tz))
+                    {
+                        all_valid = false;
+                        break;
+                    }
+
+                    const float b_qnorm = b_tr->qx * b_tr->qx + b_tr->qy * b_tr->qy + b_tr->qz * b_tr->qz + b_tr->qw * b_tr->qw;
+                    const float local_mag = std::abs(b_tr->tx) + std::abs(b_tr->ty) + std::abs(b_tr->tz);
+                    if (!std::isfinite(b_qnorm) || b_qnorm < 0.85f || b_qnorm > 1.15f ||
+                        (b != 3U && local_mag < 1.0f))
+                    {
+                        all_valid = false;
+                        break;
+                    }
+
+                    // Transform bone from local component space to absolute world space
+                    const hud::Vec3 local_bone{b_tr->tx, b_tr->ty, b_tr->tz};
+                    const hud::Vec3 world_bone = hud::transform_bone_local_to_world(local_bone, comp_to_world);
+                    if (!hud::is_valid_bone_world_pos(world_bone, actor_vec)) {
+                        all_valid = false;
+                        break;
+                    }
+                    out_bones[b] = world_bone;
+                    min_z = std::min(min_z, world_bone.z);
+                    max_z = std::max(max_z, world_bone.z);
+                }
+
+                // Require realistic upright vertical span and anatomical hierarchy (Head > Pelvis > Feet)
+                const float min_foot_z = std::min(out_bones[12].z, out_bones[13].z);
+                if (all_valid &&
+                    (max_z - min_z) >= 45.0f &&
+                    (max_z - min_z) <= 210.0f &&
+                    out_bones[0].z > out_bones[3].z + 15.0f &&
+                    out_bones[3].z > min_foot_z + 15.0f)
+                {
+                    out_has_skeleton = true;
+                    return;
+                }
+            }
+        }
+
+        // 3. Fallback: construct dynamic upright capsule-aligned joints (Z - 45.0f to Z + 45.0f) rotated by yaw_deg
+        hud::compute_skeleton_fallback_joints(
+            hud::Vec3{actor_world_pos.x, actor_world_pos.y, actor_world_pos.z},
+            out_yaw_deg,
+            out_bones
+        );
+        out_has_skeleton = true;
+    }
+
+    // Dynamically resolves UPlayerController -> AcknowledgedPawn -> UCharacterMovementComponent each frame
+    [[nodiscard]] static hud::CharacterMovementChain resolve_local_movement_chain(
+        uintptr_t local_pc,
+        uintptr_t fallback_pawn,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        hud::CharacterMovementChain chain{};
+        if (validate_canonical_uobject(local_pc, 0x2E0U, guobjectarray_abs, off)) {
+            chain.player_controller = local_pc;
+            uintptr_t ack_pawn = mem::read<uintptr_t>(local_pc + off.acknowledged_pawn).value_or(0ULL);
+            if (!validate_canonical_uobject(ack_pawn, 0x2A0U, guobjectarray_abs, off)) {
+                ack_pawn = mem::read<uintptr_t>(local_pc + off.controller_pawn).value_or(0ULL);
+            }
+            if (validate_canonical_uobject(ack_pawn, 0x2A0U, guobjectarray_abs, off)) {
+                chain.acknowledged_pawn = ack_pawn;
+            }
+        }
+        if (chain.acknowledged_pawn == 0 && validate_canonical_uobject(fallback_pawn, 0x2A0U, guobjectarray_abs, off)) {
+            chain.acknowledged_pawn = fallback_pawn;
+        }
+        if (chain.acknowledged_pawn != 0) {
+            const std::array<uintptr_t, 2> kMoveOffsets = {off.character_movement, 0x0288U};
+            for (uintptr_t m_off : kMoveOffsets) {
+                const auto mc = mem::read<uintptr_t>(chain.acknowledged_pawn + m_off);
+                if (mc.has_value() && validate_canonical_uobject(*mc, 0x1B0U, guobjectarray_abs, off)) {
+                    const auto ws = mem::read<float>(*mc + off.max_walk_speed);
+                    if (ws.has_value() && std::isfinite(*ws) && *ws >= 50.0f && *ws <= 5000.0f) {
+                        chain.movement_component = *mc;
+                        chain.is_valid           = true;
+                        break;
+                    }
+                }
+            }
+            if (!chain.is_valid) {
+                if (const auto mc = mem::read<uintptr_t>(chain.acknowledged_pawn + off.character_movement);
+                    mc.has_value() && validate_canonical_uobject(*mc, 0x1B0U, guobjectarray_abs, off)) {
+                    chain.movement_component = *mc;
+                    chain.is_valid           = true;
+                }
+            }
+        }
+        return chain;
+    }
+
     static Status apply_kinematic_limits(
+        uintptr_t local_pc,
         uintptr_t local_pawn,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off,
         float target_walk_speed,
         float target_accel,
         float target_jump_z = 0.0f,
-        float target_time_scale = 0.0f
+        float target_time_scale = 0.0f,
+        bool set_dirty_flag = true
     ) noexcept {
-        if (!validate_live_uobject(local_pawn, guobjectarray_abs, off, nullptr)) {
-            return Status::InvalidArgument;
-        }
-        if (target_time_scale >= 0.1f && target_time_scale <= 5.0f) {
-            const Status st = mem::write_data<float>(local_pawn + off.custom_time_dilation, target_time_scale);
-            if (st != Status::Ok) {
-                return st;
-            }
-        }
-        const auto move_comp = mem::read<uintptr_t>(local_pawn + off.character_movement);
-        if (!move_comp.has_value() || !validate_live_uobject(*move_comp, guobjectarray_abs, off, nullptr)) {
+        const hud::CharacterMovementChain chain = resolve_local_movement_chain(
+            local_pc, local_pawn, guobjectarray_abs, off);
+        if (!chain.is_valid || chain.acknowledged_pawn == 0 || chain.movement_component == 0) {
             return Status::UnmappedOrFault;
         }
-        if (target_walk_speed > 0.0f && target_walk_speed <= 5000.0f) {
-            const Status st = mem::write_data<float>(*move_comp + off.max_walk_speed, target_walk_speed);
+
+        const uintptr_t pawn_addr = chain.acknowledged_pawn;
+        const uintptr_t move_comp = chain.movement_component;
+
+        if (std::isfinite(target_time_scale) && target_time_scale >= 0.5f && target_time_scale <= 2.5f) {
+            (void)mem::write_data<float>(pawn_addr + off.custom_time_dilation, target_time_scale);
+        }
+        if (std::isfinite(target_walk_speed) && target_walk_speed >= 50.0f && target_walk_speed <= 5000.0f) {
+            const Status st = mem::write_data<float>(move_comp + off.max_walk_speed, target_walk_speed);
+            if (st != Status::Ok) {
+                return st;
+            }
+            (void)mem::write_data<float>(move_comp + off.max_walk_speed_crouched, target_walk_speed);
+            (void)mem::write_data<float>(move_comp + off.max_fly_speed, target_walk_speed);
+            (void)mem::write_data<float>(move_comp + off.max_custom_movement_speed, target_walk_speed);
+        }
+        if (std::isfinite(target_accel) && target_accel >= 50.0f && target_accel <= 6144.0f) {
+            const Status st = mem::write_data<float>(move_comp + off.max_acceleration, target_accel);
             if (st != Status::Ok) {
                 return st;
             }
         }
-        if (target_accel > 0.0f && target_accel <= 10000.0f) {
-            const Status st = mem::write_data<float>(*move_comp + off.max_acceleration, target_accel);
+        if (std::isfinite(target_jump_z) && target_jump_z >= 50.0f && target_jump_z <= 5000.0f) {
+            const Status st = mem::write_data<float>(move_comp + off.jump_z_velocity, target_jump_z);
             if (st != Status::Ok) {
                 return st;
             }
         }
-        if (target_jump_z > 0.0f && target_jump_z <= 5000.0f) {
-            const Status st = mem::write_data<float>(*move_comp + off.jump_z_velocity, target_jump_z);
-            if (st != Status::Ok) {
-                return st;
+
+        // Set continuous movement dirty / network-reconciliation flag on UCharacterMovementComponent
+        // so server reconciliation does not revert local movement tweaks
+        if (set_dirty_flag) {
+            if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
+                const uint8_t dirty_byte = hud::compute_movement_dirty_flags(*cur_flags, true, false);
+                (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, dirty_byte);
+            }
+        }
+
+        // Read-back verification of written floats
+        static float s_last_logged_walk  = -1.0f;
+        static float s_last_logged_accel = -1.0f;
+        static float s_last_logged_jump  = -1.0f;
+        static float s_last_logged_time  = -1.0f;
+        static uint32_t s_kin_log_tick   = 0;
+
+        const float rb_walk  = mem::read<float>(move_comp + off.max_walk_speed).value_or(-1.0f);
+        const float rb_accel = mem::read<float>(move_comp + off.max_acceleration).value_or(-1.0f);
+        const float rb_jump  = mem::read<float>(move_comp + off.jump_z_velocity).value_or(-1.0f);
+        const float rb_time  = mem::read<float>(pawn_addr + off.custom_time_dilation).value_or(-1.0f);
+
+        const bool changed =
+            (std::abs(rb_walk - s_last_logged_walk) > 0.5f) ||
+            (std::abs(rb_accel - s_last_logged_accel) > 0.5f) ||
+            (std::abs(rb_jump - s_last_logged_jump) > 0.5f) ||
+            (std::abs(rb_time - s_last_logged_time) > 0.02f);
+
+        if (changed || (++s_kin_log_tick % 120U) == 1U) {
+            s_last_logged_walk  = rb_walk;
+            s_last_logged_accel = rb_accel;
+            s_last_logged_jump  = rb_jump;
+            s_last_logged_time  = rb_time;
+            DIAG_LOGI(
+                "[KINEMATICS] Applied & verified on PC=0x%llX Pawn=0x%llX MoveComp=0x%llX | WalkSpeed=%.1f (readback=%.1f) | MaxAccel=%.1f (readback=%.1f) | JumpZ=%.1f (readback=%.1f) | TimeScale=%.2f (readback=%.2f)",
+                static_cast<unsigned long long>(chain.player_controller),
+                static_cast<unsigned long long>(pawn_addr),
+                static_cast<unsigned long long>(move_comp),
+                static_cast<double>(target_walk_speed),
+                static_cast<double>(rb_walk),
+                static_cast<double>(target_accel),
+                static_cast<double>(rb_accel),
+                static_cast<double>(target_jump_z),
+                static_cast<double>(rb_jump),
+                static_cast<double>(target_time_scale),
+                static_cast<double>(rb_time)
+            );
+        }
+        return Status::Ok;
+    }
+
+    // 2. Field of View (FOV) Changer: Force-writes clamped FOV [80.0f, 120.0f] to DefaultFOV (+0x248), LockedFOV (+0x250), and CameraCachePrivate.POV.FOV
+    static Status apply_fov_override(
+        uintptr_t cam_mgr,
+        uintptr_t matched_pov_off,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        float target_fov
+    ) noexcept {
+        if (!validate_canonical_uobject(cam_mgr, 0x1B30U, guobjectarray_abs, off) ||
+            !std::isfinite(target_fov) ||
+            target_fov < 80.0f ||
+            target_fov > 120.0f) {
+            return Status::InvalidArgument;
+        }
+        const float clamped_fov = std::clamp(target_fov, 80.0f, 120.0f);
+        (void)mem::write_data<float>(cam_mgr + off.camera_default_fov, clamped_fov);
+        (void)mem::write_data<float>(cam_mgr + off.camera_locked_fov,  clamped_fov);
+        const uintptr_t pov_fov_off = (matched_pov_off >= 0x1AE0U && matched_pov_off <= 0x1B00U)
+            ? (matched_pov_off + 0x18U)
+            : off.pov_fov;
+        return mem::write_data<float>(cam_mgr + pov_fov_off, clamped_fov);
+    }
+
+    // 3a. Auto Skillcheck: Resolves UPlayerInteractionHandler -> USkillCheck and locks SuccessZoneStart to 0.0f and SuccessZoneLength to 1.0f
+    static bool apply_auto_skillcheck(
+        uintptr_t local_pawn,
+        uintptr_t local_pc,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        float zone_start  = 0.0f;
+        float zone_length = 1.0f;
+        float bonus_len   = 1.0f;
+        hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
+
+        const hud::CharacterMovementChain chain = resolve_local_movement_chain(
+            local_pc, local_pawn, guobjectarray_abs, off);
+        const std::array<uintptr_t, 3> owners{chain.acknowledged_pawn, local_pawn, local_pc};
+        static constexpr std::array<uintptr_t, 5> kInteractionHandlerOffsets = {
+            0x08D0U, 0x08C8U, 0x08D8U, 0x08E0U, 0x0910U
+        };
+        static constexpr std::array<uintptr_t, 4> kSkillCheckOffsets = {
+            0x02E8U, 0x02E0U, 0x02F0U, 0x02F8U
+        };
+
+        for (uintptr_t owner : owners) {
+            if (!validate_canonical_uobject(owner, 0x920U, guobjectarray_abs, off)) {
+                continue;
+            }
+            for (uintptr_t ih_off : kInteractionHandlerOffsets) {
+                const auto ih = mem::read<uintptr_t>(owner + ih_off);
+                if (!ih.has_value() || !validate_canonical_uobject(*ih, 0x310U, guobjectarray_abs, off)) {
+                    continue;
+                }
+                for (uintptr_t sc_off : kSkillCheckOffsets) {
+                    const auto sc = mem::read<uintptr_t>(*ih + sc_off);
+                    if (!sc.has_value() || !validate_canonical_uobject(*sc, 0x180U, guobjectarray_abs, off)) {
+                        continue;
+                    }
+                    (void)mem::write_data<float>(*sc + off.skillcheck_success_start,  zone_start);
+                    (void)mem::write_data<float>(*sc + off.skillcheck_success_length, zone_length);
+                    (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,   bonus_len);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // 3b. Trap Immunity: Clears Trapped immobilize state on local pawn and disables collision overlap on nearby BearTrap actors
+    static void apply_trap_immunity(
+        uintptr_t local_pawn,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        if (!validate_canonical_uobject(local_pawn, 0x1170U, guobjectarray_abs, off)) {
+            return;
+        }
+        if (const auto imm = mem::read<uint8_t>(local_pawn + off.camper_immobilize_state)) {
+            if (*imm == static_cast<uint8_t>(hud::ImmobilizeState::Trapped)) {
+                (void)mem::write_data<uint8_t>(
+                    local_pawn + off.camper_immobilize_state,
+                    static_cast<uint8_t>(hud::ImmobilizeState::None));
+            }
+        }
+        (void)mem::write_data<uint8_t>(local_pawn + off.camper_trap_immunity_flag, 1U);
+    }
+
+    static void disable_trap_actor_collision(
+        uintptr_t trap_actor,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        if (!validate_canonical_uobject(trap_actor, 0x0070U, guobjectarray_abs, off)) {
+            return;
+        }
+        if (const auto flags = mem::read<uint8_t>(trap_actor + off.actor_collision_flags)) {
+            const uint8_t cleared = hud::compute_actor_collision_byte(*flags, false);
+            if (cleared != *flags) {
+                (void)mem::write_data<uint8_t>(trap_actor + off.actor_collision_flags, cleared);
+            }
+        }
+    }
+
+    // 4a. Fly Cheat: Resolves UPlayerController -> AcknowledgedPawn -> UCharacterMovementComponent
+    //     and overrides MovementMode (+0x174) to MOVE_Flying (5) or restores MOVE_Walking (1)
+    static Status apply_fly_mode(
+        uintptr_t local_pc,
+        uintptr_t local_pawn,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        bool fly_enabled,
+        float fly_speed
+    ) noexcept {
+        const hud::CharacterMovementChain chain = resolve_local_movement_chain(
+            local_pc, local_pawn, guobjectarray_abs, off);
+        if (!chain.is_valid || chain.acknowledged_pawn == 0 || chain.movement_component == 0) {
+            return Status::UnmappedOrFault;
+        }
+        const uintptr_t pawn_addr = chain.acknowledged_pawn;
+        const uintptr_t move_comp = chain.movement_component;
+
+        const uint8_t target_mode = hud::resolve_movement_mode_byte(fly_enabled);
+        if (fly_enabled && std::isfinite(fly_speed) && fly_speed >= 50.0f && fly_speed <= 5000.0f) {
+            (void)mem::write_data<float>(move_comp + off.max_fly_speed, fly_speed);
+        }
+        if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
+            const uint8_t dirty_byte = hud::compute_movement_dirty_flags(*cur_flags, fly_enabled, fly_enabled);
+            (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, dirty_byte);
+        }
+        if (const auto col_flags = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
+            const uint8_t col_byte = hud::compute_actor_collision_byte(*col_flags, !fly_enabled);
+            if (col_byte != *col_flags) {
+                (void)mem::write_data<uint8_t>(pawn_addr + off.actor_collision_flags, col_byte);
+            }
+        }
+        return mem::write_data<uint8_t>(move_comp + off.movement_mode, target_mode);
+    }
+
+    // 4b. Force Escape: Sets VE_Escaped state on ADBDPlayerState and teleports local pawn to exit gate / hatch bounds
+    static Status apply_force_escape(
+        uintptr_t local_pawn,
+        uintptr_t local_player_st,
+        const FVector* escape_portal_pos,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        if (validate_canonical_uobject(local_player_st, 0x3C0U, guobjectarray_abs, off)) {
+            constexpr uint8_t kGameStateEscaped = 2U; // EGameState::VE_Escaped
+            (void)mem::write_data<uint8_t>(local_player_st + off.player_state_camper_state, kGameStateEscaped);
+        }
+        if (!validate_canonical_uobject(local_pawn, 0x1170U, guobjectarray_abs, off)) {
+            return Status::InvalidArgument;
+        }
+        (void)mem::write_data<uint8_t>(
+            local_pawn + off.camper_immobilize_state,
+            static_cast<uint8_t>(hud::ImmobilizeState::None));
+
+        if (escape_portal_pos != nullptr &&
+            std::isfinite(escape_portal_pos->x) &&
+            std::isfinite(escape_portal_pos->y) &&
+            std::isfinite(escape_portal_pos->z)) {
+            const auto root_comp = mem::read<uintptr_t>(local_pawn + off.root_component);
+            if (root_comp.has_value() && validate_canonical_uobject(*root_comp, 0x150U, guobjectarray_abs, off)) {
+                const FVector dest{
+                    escape_portal_pos->x,
+                    escape_portal_pos->y,
+                    escape_portal_pos->z + 95.0f
+                };
+                return mem::write_data<FVector>(*root_comp + off.relative_location, dest);
             }
         }
         return Status::Ok;
     }
 
-    [[nodiscard]] static bool is_priority_gameplay_actor(std::string_view raw_name) noexcept {
+    // 5a. Set Immobilize State (none, hooked, trapped, hiding, dead, caged)
+    static Status apply_immobilize_state(
+        uintptr_t local_pawn,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        hud::ImmobilizeState state
+    ) noexcept {
+        if (!validate_canonical_uobject(local_pawn, 0x1170U, guobjectarray_abs, off)) {
+            return Status::InvalidArgument;
+        }
+        const uint8_t state_byte = hud::resolve_immobilize_state_byte(state);
+        return mem::write_data<uint8_t>(local_pawn + off.camper_immobilize_state, state_byte);
+    }
+
+    // 5b. Set Player Role (camper, slasher, observer)
+    static Status apply_player_role(
+        uintptr_t local_player_st,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        hud::PlayerRole role
+    ) noexcept {
+        if (!validate_canonical_uobject(local_player_st, 0x3C0U, guobjectarray_abs, off)) {
+            return Status::InvalidArgument;
+        }
+        const uint8_t role_byte = hud::resolve_player_role_byte(role);
+        return mem::write_data<uint8_t>(local_player_st + off.player_state_game_role, role_byte);
+    }
+
+    // Classifies an actor using BOTH its instance FName (Actor->NamePrivate) and its UClass FName (Actor->ClassPrivate->NamePrivate).
+    // Returns canonical category ("Killer", "Survivor", "Generator", "Hatch", "ExitGate", "Totem", "Chest", "Hook", "Pallet", "Window")
+    // and sets *out_priority (1 = highest priority .. 10 = lowest), or returns nullptr if not a valid interactive match entity.
+    [[nodiscard]] static const char* classify_actor_category(
+        std::string_view actor_name,
+        std::string_view class_name,
+        int32_t* out_priority = nullptr
+    ) noexcept {
         auto icontains = [](std::string_view hay, std::string_view needle) noexcept -> bool {
-            if (needle.size() > hay.size()) {
+            if (needle.empty() || needle.size() > hay.size()) {
                 return false;
             }
             auto to_lower = [](unsigned char c) constexpr noexcept -> unsigned char {
@@ -387,34 +907,170 @@ public:
             return false;
         };
 
-        // Immediately ignore handheld items, charges, add-ons, and consumables that deplete mid-game
-        if (icontains(raw_name, "Collectable") ||
-            icontains(raw_name, "Medkit")      ||
-            icontains(raw_name, "Flashlight")  ||
-            icontains(raw_name, "Toolbox")     ||
-            icontains(raw_name, "Key")         ||
-            icontains(raw_name, "MapItem")     ||
-            icontains(raw_name, "Firecracker") ||
-            icontains(raw_name, "Addon")       ||
-            icontains(raw_name, "Item")        ||
-            icontains(raw_name, "Chargeable")  ||
-            icontains(raw_name, "Inventory")) {
-            return false;
+        auto either_contains = [&](std::string_view needle) noexcept -> bool {
+            return icontains(class_name, needle) || icontains(actor_name, needle);
+        };
+
+        // 1. Strict exclusion of manager actors, ghost generators, sub-entities, templates, and handheld items
+        if (either_contains("Default__")        ||
+            either_contains("Archetype")        ||
+            either_contains("GEN_VARIABLE")     ||
+            either_contains("LevelGenerator")   ||
+            either_contains("ProceduralLevel")  ||
+            either_contains("GeneratorEntity")  ||
+            either_contains("GeneratorDriven")  ||
+            either_contains("Portal_Generator") ||
+            either_contains("Portal_MeatHook")  ||
+            either_contains("BigThreeEvent")    ||
+            either_contains("BP_Entity_C")      ||
+            either_contains("SacrificeEnd")     ||
+            either_contains("PlayerStart")      ||
+            either_contains("GameRoleFront")    ||
+            either_contains("SlasherMale_REF")  ||
+            either_contains("BP_Menu_")         ||
+            either_contains("Lobby")            ||
+            either_contains("Looby")            ||
+            either_contains("pos_")             ||
+            either_contains("Interactable")     ||
+            either_contains("AIController")     ||
+            either_contains("PlayerController") ||
+            either_contains("PlayerState")      ||
+            either_contains("GameState")        ||
+            either_contains("GameMode")         ||
+            either_contains("Camera")           ||
+            either_contains("KillCam")          ||
+            either_contains("ReactionCam")      ||
+            either_contains("StruggleCam")      ||
+            either_contains("SacrificeCam")     ||
+            either_contains("Status")           ||
+            either_contains("Effect")           ||
+            either_contains("Decal")            ||
+            either_contains("Heartbeat")        ||
+            either_contains("Lighting")         ||
+            either_contains("PostProcess")      ||
+            either_contains("Emitter")          ||
+            either_contains("Particle")         ||
+            either_contains("Audio")            ||
+            either_contains("Sound")            ||
+            either_contains("NavMesh")          ||
+            either_contains("NavData")          ||
+            either_contains("Volume")           ||
+            either_contains("ReflectionCapture")||
+            either_contains("NightmareHusk")    ||
+            either_contains("DreamInducer")     ||
+            either_contains("BlastMine")        ||
+            either_contains("Collectable")      ||
+            either_contains("Medkit")           ||
+            either_contains("Flashlight")       ||
+            either_contains("Toolbox")          ||
+            either_contains("Firecracker")      ||
+            either_contains("DullKey")          ||
+            either_contains("SkeletonKey")      ||
+            either_contains("BrokenKey")        ||
+            either_contains("MapItem")          ||
+            either_contains("Addon")            ||
+            either_contains("BP_Item_")         ||
+            either_contains("_ACC")             ||
+            either_contains("Torso")            ||
+            either_contains("Hair")             ||
+            either_contains("Necklace")         ||
+            either_contains("Bags")             ||
+            either_contains("SkeletalMeshActor")||
+            either_contains("StaticMeshActor")  ||
+            either_contains("ClipManager")      ||
+            either_contains("Outline")          ||
+            either_contains("Blocker")) {
+            return nullptr;
         }
 
-        return icontains(raw_name, "Slasher") ||
-               icontains(raw_name, "Killer") ||
-               icontains(raw_name, "Camper") ||
-               icontains(raw_name, "Survivor") ||
-               icontains(raw_name, "Generator") ||
-               icontains(raw_name, "Hatch") ||
-               icontains(raw_name, "Chest") ||
-               icontains(raw_name, "Searchable") ||
-               icontains(raw_name, "Totem");
+        // Reject if the UClass itself is an unspawned Spawner or Component
+        if (icontains(class_name, "Spawner") || icontains(class_name, "Component")) {
+            return nullptr;
+        }
+
+        auto set_prio = [&](int32_t p, const char* lbl) noexcept -> const char* {
+            if (out_priority) *out_priority = p;
+            return lbl;
+        };
+
+        // Priority 1: Killer (Slasher character pawn)
+        if ((either_contains("Slasher_Character") ||
+             either_contains("BP_Slasher")        ||
+             either_contains("SlasherPlayer")     ||
+             either_contains("Killer_Character")) &&
+            !either_contains("Trap")       &&
+            !either_contains("Projectile") &&
+            !either_contains("Power")      &&
+            !either_contains("Stalker")    &&
+            !either_contains("Weapon")     &&
+            !either_contains("Mori")) {
+            return set_prio(1, "Killer");
+        }
+
+        // Priority 2: Survivor (Camper character pawn)
+        if (either_contains("BP_Camper")        ||
+            either_contains("CamperMale")       ||
+            either_contains("CamperFemale")     ||
+            either_contains("Camper_Character") ||
+            either_contains("Survivor_Character")) {
+            return set_prio(2, "Survivor");
+        }
+
+        // Priority 3: Generator (Strictly real repairable generators; LevelGenerator & GeneratorEntity already excluded)
+        if (either_contains("GeneratorStandard") ||
+            either_contains("GeneratorNoPole")   ||
+            either_contains("GeneratorShort")    ||
+            either_contains("GeneratorIndoor")   ||
+            either_contains("BP_Generator")      ||
+            icontains(class_name, "Generator")) {
+            return set_prio(3, "Generator");
+        }
+
+        // Priority 4: Hatch
+        if (either_contains("Hatch")) {
+            return set_prio(4, "Hatch");
+        }
+
+        // Priority 5: Exit Gate
+        if (either_contains("EscapeDoor") || either_contains("ExitGate")) {
+            return set_prio(5, "ExitGate");
+        }
+
+        // Priority 6: Totem
+        if (either_contains("Totem") || icontains(actor_name, "HexSpawner")) {
+            return set_prio(6, "Totem");
+        }
+
+        // Priority 7: Chest
+        if (either_contains("Chest") || either_contains("Searchable")) {
+            return set_prio(7, "Chest");
+        }
+
+        // Priority 8: Hook (MeatLocker / SmallMeatLocker / MeatHook)
+        if (either_contains("SmallMeatLocker") ||
+            either_contains("MeatLocker")      ||
+            either_contains("MeatHook")) {
+            return set_prio(8, "Hook");
+        }
+
+        // Priority 9: Pallet (Bookshelf / Pallet)
+        if (either_contains("Bookshelf") || either_contains("Pallet")) {
+            return set_prio(9, "Pallet");
+        }
+
+        // Priority 10: Window / Vault
+        if (either_contains("WindowStandard") ||
+            either_contains("BP_Window")      ||
+            either_contains("Window")         ||
+            either_contains("Vault")) {
+            return set_prio(10, "Window");
+        }
+
+        return nullptr;
     }
 
-    static size_t collect_nearby_entities(
-        uintptr_t ulevel_addr,
+    static size_t collect_nearby_entities_multi_level(
+        std::span<const uintptr_t> ulevels,
         uintptr_t guobjectarray_abs,
         uintptr_t ignore_actor,
         const FVector& origin,
@@ -423,61 +1079,147 @@ public:
         const GNamePoolResolver& name_resolver,
         std::span<EntitySnapshot> out_snapshots
     ) noexcept {
-        if (!InProcessMemory::IsValidPtr(ulevel_addr, 0xB0U) ||
-            !InProcessMemory::IsValidPtr(ignore_actor, 0x150U) ||
-            out_snapshots.empty()) {
+        if (ulevels.empty() || out_snapshots.empty()) {
             return 0;
         }
-        const auto actor_arr = mem::read<TArrayHeader>(ulevel_addr + off.actor_array);
-        if (!actor_arr.has_value() ||
-            !InProcessMemory::IsValidPtr(actor_arr->data_ptr, sizeof(uintptr_t)) ||
-            actor_arr->count < 40 ||
-            actor_arr->count > 16384 ||
-            actor_arr->max < actor_arr->count) {
-            return 0;
-        }
-        const size_t raw_count     = static_cast<size_t>(actor_arr->count);
-        const size_t bounded_count = (raw_count > kMaxActorsPerTick) ? kMaxActorsPerTick : raw_count;
         const float max_dist_cm = max_radius_meters * 100.0f;
         const float max_dist_sq = max_dist_cm * max_dist_cm;
         size_t collected = 0;
         std::array<char, 128> name_buf{};
+        std::array<char, 128> class_buf{};
 
-        // Strictly collect only live, validated priority gameplay actors during an active match
-        for (size_t i = 0; i < bounded_count && collected < out_snapshots.size(); ++i) {
-            const uintptr_t slot_addr = actor_arr->data_ptr + (i * sizeof(uintptr_t));
-            const auto actor_ptr = mem::read<uintptr_t>(slot_addr);
-            if (!actor_ptr.has_value() ||
-                *actor_ptr == ignore_actor ||
-                !InProcessMemory::IsValidPtr(*actor_ptr, 0x150U)) {
+        for (uintptr_t ulevel_addr : ulevels) {
+            if (!InProcessMemory::IsValidPtr(ulevel_addr, 0xB0U)) {
                 continue;
             }
+            const auto actor_arr = mem::read<TArrayHeader>(ulevel_addr + off.actor_array);
+            if (!actor_arr.has_value() ||
+                !InProcessMemory::IsValidPtr(actor_arr->data_ptr, sizeof(uintptr_t)) ||
+                actor_arr->count <= 0 ||
+                actor_arr->count > 16384 ||
+                actor_arr->max < actor_arr->count) {
+                continue;
+            }
+            const size_t raw_count     = static_cast<size_t>(actor_arr->count);
+            const size_t bounded_count = (raw_count > kMaxActorsPerTick) ? kMaxActorsPerTick : raw_count;
 
-            uint32_t fname_idx = 0U;
-            if (!validate_live_uobject(*actor_ptr, guobjectarray_abs, off, &fname_idx) || fname_idx == 0U) {
-                continue;
-            }
+            for (size_t i = 0; i < bounded_count; ++i) {
+                const uintptr_t slot_addr = actor_arr->data_ptr + (i * sizeof(uintptr_t));
+                const auto actor_ptr = mem::read<uintptr_t>(slot_addr);
+                if (!actor_ptr.has_value() ||
+                    (*actor_ptr == ignore_actor && ignore_actor != 0) ||
+                    !InProcessMemory::IsValidPtr(*actor_ptr, 0x150U)) {
+                    continue;
+                }
 
-            if (!name_resolver.resolve_name(fname_idx, name_buf)) {
-                continue;
-            }
-            if (!is_priority_gameplay_actor(name_buf.data())) {
-                continue;
-            }
-            const auto pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
-            if (!pos.has_value()) {
-                continue;
-            }
-            const float dist_sq = origin.dist_squared(*pos);
-            if (std::isfinite(dist_sq) && dist_sq <= max_dist_sq) {
-                out_snapshots[collected++] = EntitySnapshot{
-                    .actor_address   = *actor_ptr,
-                    .fname_id        = fname_idx,
-                    .world_pos       = *pos,
-                    .distance_meters = std::sqrt(dist_sq) * 0.01f
-                };
+                uint32_t fname_idx = 0U;
+                if (!validate_live_uobject(*actor_ptr, guobjectarray_abs, off, &fname_idx) || fname_idx == 0U) {
+                    continue;
+                }
+                if (!name_resolver.resolve_name(fname_idx, name_buf)) {
+                    continue;
+                }
+
+                class_buf[0] = '\0';
+                if (const auto cls_ptr = mem::read<uintptr_t>(*actor_ptr + 0x10U);
+                    cls_ptr.has_value() && InProcessMemory::IsValidPtr(*cls_ptr, 0x28U)) {
+                    if (const auto cls_fn = mem::read<uint32_t>(*cls_ptr + 0x18U)) {
+                        (void)name_resolver.resolve_name(*cls_fn, class_buf);
+                    }
+                }
+
+                int32_t prio = 99;
+                const char* cat_label = classify_actor_category(name_buf.data(), class_buf.data(), &prio);
+                if (cat_label == nullptr) {
+                    continue;
+                }
+
+                const auto pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
+                if (!pos.has_value()) {
+                    continue;
+                }
+                // Reject unspawned origin templates at (0,0,0)
+                if (std::abs(pos->x) < 10.0f && std::abs(pos->y) < 10.0f && std::abs(pos->z) < 10.0f) {
+                    continue;
+                }
+
+                const float dist_sq = origin.dist_squared(*pos);
+                if (!std::isfinite(dist_sq) || dist_sq > max_dist_sq) {
+                    continue;
+                }
+                const float dist_m = std::sqrt(dist_sq) * 0.01f;
+
+                // Never draw a Killer/Survivor marker on the local player themselves (< 1.5m from local pawn/camera)
+                if ((prio == 1 || prio == 2) && dist_m < 1.5f) {
+                    continue;
+                }
+
+                float gen_pct = -1.0f;
+                if (prio == 3) {
+                    gen_pct = 0.0f;
+                    if (const auto raw_chg = mem::read<float>(*actor_ptr + off.chargeable_current_charge)) {
+                        if (std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f) {
+                            gen_pct = (*raw_chg <= 1.0f && *raw_chg > 0.0f)
+                                ? (*raw_chg * 100.0f)
+                                : std::clamp((*raw_chg / 90.0f) * 100.0f, 0.0f, 100.0f);
+                        }
+                    }
+                }
+
+                EntitySnapshot snap{};
+                snap.actor_address   = *actor_ptr;
+                snap.fname_id        = fname_idx;
+                snap.priority_rank   = prio;
+                snap.world_pos       = *pos;
+                snap.distance_meters = dist_m;
+                snap.progress_pct    = gen_pct;
+                if (prio == 1 || prio == 2) {
+                    read_character_skeleton_and_yaw(
+                        *actor_ptr,
+                        guobjectarray_abs,
+                        off,
+                        *pos,
+                        snap.yaw_deg,
+                        snap.has_skeleton,
+                        snap.bone_joints
+                    );
+                }
+                std::strncpy(snap.category_label, cat_label, sizeof(snap.category_label) - 1);
+                snap.category_label[sizeof(snap.category_label) - 1] = '\0';
+
+                if (collected < out_snapshots.size()) {
+                    out_snapshots[collected++] = snap;
+                } else {
+                    // Replace lowest-priority / farthest entry if this actor has higher priority
+                    size_t worst_idx = 0;
+                    for (size_t k = 1; k < out_snapshots.size(); ++k) {
+                        if (out_snapshots[k].priority_rank > out_snapshots[worst_idx].priority_rank ||
+                            (out_snapshots[k].priority_rank == out_snapshots[worst_idx].priority_rank &&
+                             out_snapshots[k].distance_meters > out_snapshots[worst_idx].distance_meters)) {
+                            worst_idx = k;
+                        }
+                    }
+                    if (snap.priority_rank < out_snapshots[worst_idx].priority_rank ||
+                        (snap.priority_rank == out_snapshots[worst_idx].priority_rank &&
+                         snap.distance_meters < out_snapshots[worst_idx].distance_meters)) {
+                        out_snapshots[worst_idx] = snap;
+                    }
+                }
             }
         }
+
+        // Sort collected entities by priority_rank ascending, then distance_meters ascending
+        std::sort(
+            out_snapshots.begin(),
+            out_snapshots.begin() + static_cast<std::ptrdiff_t>(collected),
+            [](const EntitySnapshot& a, const EntitySnapshot& b) noexcept {
+                if (a.priority_rank != b.priority_rank) {
+                    return a.priority_rank < b.priority_rank;
+                }
+                return a.distance_meters < b.distance_meters;
+            }
+        );
+
         return collected;
     }
 };
@@ -573,7 +1315,10 @@ public:
 struct INSTRUMENT_LOCAL InstrumentationState {
     std::atomic<bool>  running{false};
     std::atomic<bool>  thread_active{false};
+    std::atomic<bool>  ipc_thread_active{false};
+    std::atomic<int>   ipc_listen_fd{-1};
     pthread_t          worker_thread{};
+    pthread_t          ipc_thread{};
     elf::ModuleSpan    ue4_module{};
     ue4::EngineOffsets offsets{};
     uintptr_t          last_logged_uworld{0};
@@ -632,7 +1377,218 @@ INSTRUMENT_LOCAL static void log_resolved_engine_anchors() noexcept {
     );
 }
 
+// Synchronizes optional external Floating Mod Menu APK config (/data/local/tmp/dbdm_mod_config.cfg)
+// into hud::SceneTelemetryData whenever the file modification timestamp or content changes.
+INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
+    static std::uint32_t s_tick_counter      = 0;
+    static std::int64_t  s_last_cfg_mtime_ns = 0;
+
+    if ((++s_tick_counter & 0x03U) != 0U) {
+        return; // Poll every 4 ticks (~60ms)
+    }
+
+    static constexpr const char* kCfgPath = "/data/local/tmp/dbdm_mod_config.cfg";
+    struct stat st{};
+    if (::stat(kCfgPath, &st) != 0) {
+        return;
+    }
+
+    const std::int64_t mtime_ns =
+        static_cast<std::int64_t>(st.st_mtim.tv_sec) * 1000000000LL +
+        static_cast<std::int64_t>(st.st_mtim.tv_nsec);
+    if (mtime_ns == s_last_cfg_mtime_ns) {
+        return;
+    }
+    s_last_cfg_mtime_ns = mtime_ns;
+
+    std::FILE* fp = std::fopen(kCfgPath, "r");
+    if (!fp) {
+        return;
+    }
+
+    hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+    pthread_mutex_lock(&hud_data.mutex);
+    hud::GameplayManipulationConfig& gp_cfg = hud::get_gameplay_config();
+
+    char line[192]{};
+    while (std::fgets(line, sizeof(line), fp)) {
+        std::size_t len = std::strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+        char* eq = std::strchr(line, '=');
+        if (!eq) {
+            continue;
+        }
+        *eq = '\0';
+        const char* key = line;
+        const char* val = eq + 1;
+
+        if (std::strcmp(key, "hud_open") == 0) {
+            hud_data.hud_open = (val[0] == '1');
+        } else if (std::strcmp(key, "draw_markers") == 0) {
+            hud_data.draw_2d_node_markers = (val[0] == '1');
+        } else if (std::strcmp(key, "max_dist") == 0) {
+            float v = 0.0f;
+            if (std::sscanf(val, "%f", &v) == 1 && v >= 1.0f && v <= 1000.0f) {
+                hud_data.max_render_distance_m = v;
+            }
+        } else if (std::strcmp(key, "label_filter") == 0 || std::strcmp(key, "gp_payload") == 0) {
+            if (!hud::parse_gameplay_ipc_string(val, hud_data, gp_cfg)) {
+                std::strncpy(hud_data.label_filter, val, hud::kMaxLabelLen - 1);
+                hud_data.label_filter[hud::kMaxLabelLen - 1] = '\0';
+            }
+        } else if (std::strcmp(key, "override_name") == 0) {
+            hud_data.apply_custom_player_name = (val[0] == '1');
+        } else if (std::strcmp(key, "player_name") == 0) {
+            std::strncpy(hud_data.custom_player_name, val, hud::kMaxLabelLen - 1);
+            hud_data.custom_player_name[hud::kMaxLabelLen - 1] = '\0';
+        } else if (std::strcmp(key, "apply_kinematics") == 0) {
+            hud_data.apply_custom_kinematics = (val[0] == '1');
+        } else if (std::strcmp(key, "walk_speed") == 0 || std::strcmp(key, "walk_speed_pct") == 0) {
+            float v = 0.0f;
+            if (std::sscanf(val, "%f", &v) == 1 && v >= 50.0f && v <= 3000.0f) {
+                hud_data.walk_speed     = v;
+                hud_data.walk_speed_pct = (v <= 300.0f) ? std::clamp(v, 100.0f, 250.0f) : std::clamp((v / 600.0f) * 100.0f, 100.0f, 250.0f);
+            }
+        } else if (std::strcmp(key, "max_accel") == 0 || std::strcmp(key, "accel_pct") == 0) {
+            float v = 0.0f;
+            if (std::sscanf(val, "%f", &v) == 1 && v >= 50.0f && v <= 8192.0f) {
+                hud_data.max_acceleration = v;
+                hud_data.accel_pct        = (v <= 300.0f) ? std::clamp(v, 100.0f, 300.0f) : std::clamp((v / 2048.0f) * 100.0f, 100.0f, 300.0f);
+            }
+        } else if (std::strcmp(key, "jump_vel") == 0 || std::strcmp(key, "jump_pct") == 0) {
+            float v = 0.0f;
+            if (std::sscanf(val, "%f", &v) == 1 && v >= 50.0f && v <= 2500.0f) {
+                hud_data.jump_velocity = v;
+                hud_data.jump_pct      = (v <= 300.0f) ? std::clamp(v, 100.0f, 250.0f) : std::clamp((v / 420.0f) * 100.0f, 100.0f, 250.0f);
+            }
+        } else if (std::strcmp(key, "time_scale") == 0 || std::strcmp(key, "time_scale_pct") == 0) {
+            float v = 0.0f;
+            if (std::sscanf(val, "%f", &v) == 1 && v >= 0.1f && v <= 250.0f) {
+                if (v >= 10.0f) {
+                    hud_data.time_scale_pct = std::clamp(v, 50.0f, 200.0f);
+                    hud_data.time_scale     = hud_data.time_scale_pct * 0.01f;
+                } else {
+                    hud_data.time_scale     = std::clamp(v, 0.5f, 2.0f);
+                    hud_data.time_scale_pct = hud_data.time_scale * 100.0f;
+                }
+            }
+        } else if (std::strcmp(key, "apply_fov") == 0) {
+            gp_cfg.apply_fov_override = (val[0] == '1');
+        } else if (std::strcmp(key, "fov") == 0) {
+            float v = 90.0f;
+            if (std::sscanf(val, "%f", &v) == 1 && std::isfinite(v)) {
+                gp_cfg.target_fov = std::clamp(v, 80.0f, 120.0f);
+            }
+        } else if (std::strcmp(key, "auto_skillcheck") == 0) {
+            gp_cfg.auto_skillcheck = (val[0] == '1');
+        } else if (std::strcmp(key, "trap_immunity") == 0) {
+            gp_cfg.trap_immunity = (val[0] == '1');
+        } else if (std::strcmp(key, "fly_cheat") == 0) {
+            gp_cfg.fly_cheat_enabled = (val[0] == '1');
+        } else if (std::strcmp(key, "force_escape") == 0) {
+            gp_cfg.force_escape = (val[0] == '1');
+        } else if (std::strcmp(key, "set_immobilize") == 0) {
+            if (val[0] == '\0' || std::strcmp(val, "off") == 0) {
+                gp_cfg.apply_immobilize_state  = false;
+                gp_cfg.target_immobilize_state = hud::ImmobilizeState::None;
+            } else {
+                gp_cfg.target_immobilize_state = hud::adapter::parse_immobilize_state(val);
+                gp_cfg.apply_immobilize_state  = true;
+            }
+        } else if (std::strcmp(key, "set_player_role") == 0) {
+            if (val[0] == '\0' || std::strcmp(val, "none") == 0 || std::strcmp(val, "off") == 0) {
+                gp_cfg.apply_player_role  = false;
+                gp_cfg.target_player_role = hud::PlayerRole::None;
+            } else {
+                gp_cfg.target_player_role = hud::adapter::parse_player_role(val);
+                gp_cfg.apply_player_role  = (gp_cfg.target_player_role != hud::PlayerRole::None);
+            }
+        } else if (std::strcmp(key, "cat_mask") == 0) {
+            unsigned int cmask = 0xFFU;
+            if (std::sscanf(val, "%x", &cmask) == 1) {
+                hud_data.show_antagonist    = (cmask & 0x01U) != 0U;
+                hud_data.show_teammates     = (cmask & 0x02U) != 0U;
+                hud_data.show_power_nodes   = (cmask & 0x04U) != 0U;
+                hud_data.show_shrines       = (cmask & 0x08U) != 0U;
+                hud_data.show_containers    = (cmask & 0x10U) != 0U;
+                hud_data.show_barriers      = (cmask & 0x20U) != 0U;
+                hud_data.show_portals       = (cmask & 0x40U) != 0U;
+                hud_data.show_special_props = (cmask & 0x80U) != 0U;
+            }
+        }
+    }
+
+    DIAG_LOGI(
+        "[IPC-CMD] Config synced from APK -> draw_markers=%d | max_dist=%.1f | filter=\"%s\" | override_name=%d (\"%s\") | apply_kinematics=%d (walk=%.1f, accel=%.1f, jump=%.1f, time=%.2f)",
+        hud_data.draw_2d_node_markers ? 1 : 0,
+        static_cast<double>(hud_data.max_render_distance_m),
+        hud_data.label_filter,
+        hud_data.apply_custom_player_name ? 1 : 0,
+        hud_data.custom_player_name,
+        hud_data.apply_custom_kinematics ? 1 : 0,
+        static_cast<double>(hud_data.walk_speed),
+        static_cast<double>(hud_data.max_acceleration),
+        static_cast<double>(hud_data.jump_velocity),
+        static_cast<double>(hud_data.time_scale)
+    );
+
+    pthread_mutex_unlock(&hud_data.mutex);
+    std::fclose(fp);
+}
+
+// Helper to probe CameraCachePrivate POV across candidate offsets (+0x1B00, +0x1AF0, +0x1AE0)
+INSTRUMENT_LOCAL static bool read_camera_pov_flexible(
+    uintptr_t        cam_mgr,
+    const ue4::EngineOffsets& off,
+    hud::CameraView& out_cam,
+    uintptr_t*       out_matched_offset = nullptr
+) noexcept {
+    if (!InProcessMemory::IsValidPtr(cam_mgr, 0x1B30U)) {
+        return false;
+    }
+    const std::array<uintptr_t, 3> candidates{
+        off.pov_location,            // 0x1B00 (CameraCachePrivate 0x1AF0 + 0x10)
+        off.camera_cache_private,    // 0x1AF0 (CameraCachePrivate 0x1AE0 + 0x10 or direct POV)
+        off.camera_cache_alt         // 0x1AE0
+    };
+    for (const uintptr_t base_off : candidates) {
+        const auto loc = mem::read<ue4::FVector>(cam_mgr + base_off);
+        const auto rot = mem::read<hud::EulerAngles>(cam_mgr + base_off + 0x0CU);
+        const auto fov = mem::read<float>(cam_mgr + base_off + 0x18U);
+        if (!loc.has_value() || !rot.has_value() || !fov.has_value()) {
+            continue;
+        }
+        if (!std::isfinite(loc->x) || !std::isfinite(loc->y) || !std::isfinite(loc->z) ||
+            !std::isfinite(rot->pitch) || !std::isfinite(rot->yaw) || !std::isfinite(rot->roll) ||
+            !std::isfinite(*fov)) {
+            continue;
+        }
+        if (*fov >= 20.0f && *fov <= 165.0f &&
+            (std::abs(loc->x) > 0.5f || std::abs(loc->y) > 0.5f || std::abs(loc->z) > 0.5f) &&
+            std::abs(loc->x) < 1000000.0f && std::abs(loc->y) < 1000000.0f && std::abs(loc->z) < 1000000.0f) {
+            out_cam.location = {loc->x, loc->y, loc->z};
+            out_cam.rotation = *rot;
+            out_cam.fov      = *fov;
+            if (out_matched_offset != nullptr) {
+                *out_matched_offset = base_off;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+INSTRUMENT_LOCAL static void publish_shared_snapshot() noexcept {
+    ipc::TelemetrySnapshotPayload snap{};
+    ipc::fill_snapshot_from_telemetry(snap);
+    ipc::write_snapshot_file(snap);
+}
+
 INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
+    poll_external_mod_menu_config();
+
     const uintptr_t base = g_state.ue4_module.base_address;
     if (base == 0) {
         return;
@@ -655,45 +1611,197 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
-    // 1. Resolve UWorld pointer safely; if transitioning or invalid, clear HUD match state
+    // 1. Resolve UWorld & PersistentLevel safely (with 180-tick level teardown write-lock protection)
+    static uint32_t s_teardown_write_lock_ticks = 0;
+
     const uintptr_t gworld_abs = base + off.gworld_rva;
     const auto uworld = mem::read<uintptr_t>(gworld_abs);
-    if (!uworld.has_value() || !InProcessMemory::IsValidPtr(*uworld, 0x420U)) {
+    if (!uworld.has_value() ||
+        !InProcessMemory::IsValidPtr(*uworld, 0x420U) ||
+        !ue4::SpatialAndKinematicPipeline::validate_live_uobject(*uworld, guobjectarray_abs, off, nullptr))
+    {
+        s_teardown_write_lock_ticks = 180U;
         hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
         pthread_mutex_lock(&hud_data.mutex);
-        hud_data.match_active = false;
-        hud_data.node_count   = 0;
+        hud_data.match_active            = false;
+        hud_data.node_count              = 0;
+        hud_data.uworld_ptr              = 0;
+        hud_data.ulevel_ptr              = 0;
+        hud_data.local_pawn              = 0;
+        ++hud_data.tick_seq;
         pthread_mutex_unlock(&hud_data.mutex);
+        publish_shared_snapshot();
         return;
     }
 
     const auto ulevel = mem::read<uintptr_t>(*uworld + off.persistent_level);
     const auto game_instance = mem::read<uintptr_t>(*uworld + off.owning_game_instance);
 
-    // Log once per UWorld / PersistentLevel transition for effortless adb logcat confirmation
-    if (*uworld != g_state.last_logged_uworld ||
-        (ulevel.has_value() && *ulevel != g_state.last_logged_ulevel))
+    int32_t level_actor_count = 0;
+    bool    ulevel_valid      = false;
+    if (ulevel.has_value() &&
+        InProcessMemory::IsValidPtr(*ulevel, 0xB0U) &&
+        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ulevel, guobjectarray_abs, off, nullptr))
     {
-        g_state.last_logged_uworld = *uworld;
-        g_state.last_logged_ulevel = ulevel.value_or(0ULL);
-        int32_t actor_count = 0;
-        if (ulevel.has_value() && InProcessMemory::IsValidPtr(*ulevel, 0xB0U)) {
-            if (const auto arr = mem::read<ue4::TArrayHeader>(*ulevel + off.actor_array)) {
-                actor_count = arr->count;
+        if (const auto arr = mem::read<ue4::TArrayHeader>(*ulevel + off.actor_array)) {
+            if (InProcessMemory::IsValidPtr(arr->data_ptr, sizeof(uintptr_t)) &&
+                arr->count >= 10 && arr->count <= 16384 && arr->max >= arr->count)
+            {
+                level_actor_count = arr->count;
+                ulevel_valid      = true;
             }
         }
+    }
+
+    if (!ulevel_valid || !game_instance.has_value() || !InProcessMemory::IsValidPtr(*game_instance, 0x50U)) {
+        s_teardown_write_lock_ticks = 180U;
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud_data.match_active            = false;
+        hud_data.node_count              = 0;
+        hud_data.uworld_ptr              = *uworld;
+        hud_data.ulevel_ptr              = ulevel.value_or(0ULL);
+        hud_data.local_pawn              = 0;
+        ++hud_data.tick_seq;
+        pthread_mutex_unlock(&hud_data.mutex);
+        publish_shared_snapshot();
+        return;
+    }
+
+    // Log once per UWorld / PersistentLevel transition for effortless adb logcat confirmation
+    const bool level_changed =
+        (*uworld != g_state.last_logged_uworld) ||
+        (ulevel.has_value() && *ulevel != g_state.last_logged_ulevel);
+
+    if (level_changed) {
+        s_teardown_write_lock_ticks = 180U;
+        g_state.last_logged_uworld = *uworld;
+        g_state.last_logged_ulevel = ulevel.value_or(0ULL);
         DIAG_LOGI(
             "World state active | UWorld=0x%llX | PersistentLevel=0x%llX (Actors=%d) | OwningGameInstance=0x%llX",
             static_cast<unsigned long long>(*uworld),
             static_cast<unsigned long long>(g_state.last_logged_ulevel),
-            static_cast<int>(actor_count),
+            static_cast<int>(level_actor_count),
             static_cast<unsigned long long>(game_instance.value_or(0ULL))
         );
     }
 
+    // Discover all loaded ULevel* in UWorld (PersistentLevel + streaming sublevels via UWorld::Levels / StreamingLevels)
+    std::array<uintptr_t, 64> active_ulevels{};
+    size_t num_ulevels = 0;
+    auto push_unique_ulevel = [&](uintptr_t cand_lvl) noexcept {
+        if (!InProcessMemory::IsValidPtr(cand_lvl, 0xB0U)) {
+            return;
+        }
+        const auto arr = mem::read<ue4::TArrayHeader>(cand_lvl + off.actor_array);
+        if (!arr.has_value() || !InProcessMemory::IsValidPtr(arr->data_ptr, sizeof(uintptr_t)) ||
+            arr->count <= 0 || arr->count > 8192 || arr->max < arr->count || arr->max > 16384) {
+            return;
+        }
+        for (size_t k = 0; k < num_ulevels; ++k) {
+            if (active_ulevels[k] == cand_lvl) {
+                return;
+            }
+        }
+        if (num_ulevels < active_ulevels.size()) {
+            active_ulevels[num_ulevels++] = cand_lvl;
+        }
+    };
+
+    push_unique_ulevel(*ulevel);
+
+    for (uintptr_t cand_off = 0x80U; cand_off <= 0x380U; cand_off += 8U) {
+        const auto larr = mem::read<ue4::TArrayHeader>(*uworld + cand_off);
+        if (!larr.has_value() || !InProcessMemory::IsValidPtr(larr->data_ptr, sizeof(uintptr_t)) ||
+            larr->count <= 0 || larr->count > 128 || larr->max < larr->count || larr->max > 512) {
+            continue;
+        }
+        const auto first_elem = mem::read<uintptr_t>(larr->data_ptr);
+        if (!first_elem.has_value() || !InProcessMemory::IsValidPtr(*first_elem, 0x50U)) {
+            continue;
+        }
+
+        // Case A: TArray<ULevel*> where Levels[0] == PersistentLevel
+        if (*first_elem == *ulevel) {
+            for (int32_t li = 0; li < larr->count && num_ulevels < active_ulevels.size(); ++li) {
+                if (const auto sub_lvl = mem::read<uintptr_t>(larr->data_ptr + static_cast<size_t>(li) * sizeof(uintptr_t))) {
+                    push_unique_ulevel(*sub_lvl);
+                }
+            }
+            if (level_changed) {
+                DIAG_LOGI("[UWORLD-LEVELS] Found UWorld::Levels at +0x%llX | TotalLevels=%zu (ArrayCount=%d)",
+                          static_cast<unsigned long long>(cand_off), num_ulevels, larr->count);
+            }
+            continue;
+        }
+
+        // Case B: TArray<ULevelStreaming*> where element Class contains "LevelStreaming"
+        std::array<char, 64> elem_cls{};
+        if (const auto cptr = mem::read<uintptr_t>(*first_elem + 0x10U);
+            cptr.has_value() && InProcessMemory::IsValidPtr(*cptr, 0x28U)) {
+            if (const auto cfn = mem::read<uint32_t>(*cptr + 0x18U)) {
+                (void)name_pool.resolve_name(*cfn, elem_cls);
+            }
+        }
+        if (hud::detail::icontains_str(elem_cls.data(), "LevelStreaming")) {
+            for (int32_t li = 0; li < larr->count && num_ulevels < active_ulevels.size(); ++li) {
+                const auto stream_obj = mem::read<uintptr_t>(larr->data_ptr + static_cast<size_t>(li) * sizeof(uintptr_t));
+                if (!stream_obj.has_value() || !InProcessMemory::IsValidPtr(*stream_obj, 0x160U)) {
+                    continue;
+                }
+                for (uintptr_t loff = 0x80U; loff <= 0x158U; loff += 8U) {
+                    const auto loaded_lvl = mem::read<uintptr_t>(*stream_obj + loff);
+                    if (!loaded_lvl.has_value() || !InProcessMemory::IsValidPtr(*loaded_lvl, 0xB0U)) {
+                        continue;
+                    }
+                    std::array<char, 64> lcls{};
+                    if (const auto lcptr = mem::read<uintptr_t>(*loaded_lvl + 0x10U);
+                        lcptr.has_value() && InProcessMemory::IsValidPtr(*lcptr, 0x28U)) {
+                        if (const auto lcfn = mem::read<uint32_t>(*lcptr + 0x18U)) {
+                            (void)name_pool.resolve_name(*lcfn, lcls);
+                        }
+                    }
+                    if (std::strcmp(lcls.data(), "Level") == 0) {
+                        push_unique_ulevel(*loaded_lvl);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper lambda to verify an APlayerState pointer has "PlayerState" in its FName/Class
+    auto is_valid_player_state = [&](uintptr_t cand_ps) noexcept -> bool {
+        if (!InProcessMemory::IsValidPtr(cand_ps, 0x330U)) {
+            return false;
+        }
+        uint32_t ps_fn = 0U;
+        if (!ue4::SpatialAndKinematicPipeline::validate_live_uobject(cand_ps, guobjectarray_abs, off, &ps_fn) || ps_fn == 0U) {
+            return false;
+        }
+        std::array<char, 64> ps_name{};
+        if (name_pool.resolve_name(ps_fn, ps_name) && hud::detail::icontains_str(ps_name.data(), "PlayerState")) {
+            return true;
+        }
+        if (const auto cptr = mem::read<uintptr_t>(cand_ps + 0x10U);
+            cptr.has_value() && InProcessMemory::IsValidPtr(*cptr, 0x28U)) {
+            if (const auto cfn = mem::read<uint32_t>(*cptr + 0x18U)) {
+                std::array<char, 64> c_name{};
+                if (name_pool.resolve_name(*cfn, c_name) && hud::detail::icontains_str(c_name.data(), "PlayerState")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
     // 2. Traverse UWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController -> AcknowledgedPawn / PlayerCameraManager
+    uintptr_t       local_pc            = 0;
     uintptr_t       local_pawn          = 0;
     uintptr_t       local_player_st     = 0;
+    uintptr_t       local_cam_mgr       = 0;
+    uintptr_t       matched_pov_off     = 0;
+    bool            has_valid_camera    = false;
     ue4::FVector    local_origin{};
     hud::CameraView cam_view{};
     float           cur_walk_speed      = 600.0f;
@@ -701,82 +1809,61 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     float           cur_jump_z          = 420.0f;
     float           cur_time_scale      = 1.0f;
 
-    if (game_instance.has_value() && InProcessMemory::IsValidPtr(*game_instance, 0x50U)) {
-        const auto lp_array = mem::read<ue4::TArrayHeader>(*game_instance + off.local_players_array);
-        if (lp_array.has_value() &&
-            InProcessMemory::IsValidPtr(lp_array->data_ptr, sizeof(uintptr_t)) &&
-            lp_array->count > 0 && lp_array->count <= 16)
-        {
-            const auto first_lp = mem::read<uintptr_t>(lp_array->data_ptr);
-            if (first_lp.has_value() && InProcessMemory::IsValidPtr(*first_lp, 0x48U)) {
-                const auto pc = mem::read<uintptr_t>(*first_lp + off.player_controller);
-                if (pc.has_value() &&
-                    ue4::SpatialAndKinematicPipeline::validate_live_uobject(*pc, guobjectarray_abs, off, nullptr))
-                {
-                    // Read PlayerCameraManager (+0x2D0) -> CameraCachePrivate (+0x1AF0) -> POV (+0x10 / +0x1C / +0x28)
-                    if (const auto cam_mgr = mem::read<uintptr_t>(*pc + off.player_camera_manager);
-                        cam_mgr.has_value() &&
-                        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*cam_mgr, guobjectarray_abs, off, nullptr))
-                    {
-                        if (const auto pov_loc = mem::read<ue4::FVector>(*cam_mgr + off.pov_location)) {
-                            if (std::isfinite(pov_loc->x) && std::isfinite(pov_loc->y) && std::isfinite(pov_loc->z)) {
-                                cam_view.location = {pov_loc->x, pov_loc->y, pov_loc->z};
-                            }
-                        }
-                        if (const auto pov_rot = mem::read<hud::Rotator>(*cam_mgr + off.pov_rotation)) {
-                            if (std::isfinite(pov_rot->pitch) && std::isfinite(pov_rot->yaw) && std::isfinite(pov_rot->roll)) {
-                                cam_view.rotation = *pov_rot;
-                            }
-                        }
-                        if (const auto pov_fov = mem::read<float>(*cam_mgr + off.pov_fov)) {
-                            if (std::isfinite(*pov_fov)) {
-                                cam_view.fov = *pov_fov;
-                            }
-                        }
-                    }
+    const auto lp_array = mem::read<ue4::TArrayHeader>(*game_instance + off.local_players_array);
+    if (lp_array.has_value() &&
+        InProcessMemory::IsValidPtr(lp_array->data_ptr, sizeof(uintptr_t)) &&
+        lp_array->count > 0 && lp_array->count <= 16)
+    {
+        const auto first_lp = mem::read<uintptr_t>(lp_array->data_ptr);
+        if (first_lp.has_value() && InProcessMemory::IsValidPtr(*first_lp, 0x48U)) {
+            const auto pc = mem::read<uintptr_t>(*first_lp + off.player_controller);
+            if (pc.has_value() &&
+                ue4::SpatialAndKinematicPipeline::validate_live_uobject(*pc, guobjectarray_abs, off, nullptr))
+            {
+                local_pc = *pc;
 
-                    const auto pawn = mem::read<uintptr_t>(*pc + off.acknowledged_pawn);
-                    if (pawn.has_value() &&
-                        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*pawn, guobjectarray_abs, off, nullptr))
-                    {
-                        if (const auto loc = ue4::SpatialAndKinematicPipeline::read_actor_location(*pawn, guobjectarray_abs, off)) {
-                            local_pawn   = *pawn;
-                            local_origin = *loc;
-                        }
-                        if (local_pawn != 0) {
-                            if (const auto td = mem::read<float>(local_pawn + off.custom_time_dilation)) {
-                                if (std::isfinite(*td)) {
-                                    cur_time_scale = *td;
-                                }
-                            }
-                            if (const auto move_comp = mem::read<uintptr_t>(local_pawn + off.character_movement);
-                                move_comp.has_value() &&
-                                ue4::SpatialAndKinematicPipeline::validate_live_uobject(*move_comp, guobjectarray_abs, off, nullptr))
-                            {
-                                if (const auto ws = mem::read<float>(*move_comp + off.max_walk_speed)) {
-                                    if (std::isfinite(*ws)) cur_walk_speed = *ws;
-                                }
-                                if (const auto ma = mem::read<float>(*move_comp + off.max_acceleration)) {
-                                    if (std::isfinite(*ma)) cur_max_accel = *ma;
-                                }
-                                if (const auto jz = mem::read<float>(*move_comp + off.jump_z_velocity)) {
-                                    if (std::isfinite(*jz)) cur_jump_z = *jz;
-                                }
-                            }
-                            if (const auto ps = mem::read<uintptr_t>(local_pawn + off.player_state);
-                                ps.has_value() &&
-                                ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ps, guobjectarray_abs, off, nullptr))
-                            {
-                                local_player_st = *ps;
-                            }
+                // Read PlayerCameraManager (+0x2D0) -> CameraCachePrivate (+0x1AE0 / +0x1AF0 / +0x1B00)
+                if (const auto cam_mgr = mem::read<uintptr_t>(*pc + off.player_camera_manager);
+                    cam_mgr.has_value() &&
+                    ue4::SpatialAndKinematicPipeline::validate_live_uobject(*cam_mgr, guobjectarray_abs, off, nullptr))
+                {
+                    local_cam_mgr = *cam_mgr;
+                    has_valid_camera = read_camera_pov_flexible(*cam_mgr, off, cam_view, &matched_pov_off);
+                }
+
+                // Check APlayerController::AcknowledgedPawn (+0x2B8), then fallback to AController::Pawn (+0x278)
+                uintptr_t cand_pawn = mem::read<uintptr_t>(*pc + off.acknowledged_pawn).value_or(0ULL);
+                if (!ue4::SpatialAndKinematicPipeline::validate_live_uobject(cand_pawn, guobjectarray_abs, off, nullptr)) {
+                    cand_pawn = mem::read<uintptr_t>(*pc + off.controller_pawn).value_or(0ULL);
+                }
+
+                if (cand_pawn != 0 &&
+                    ue4::SpatialAndKinematicPipeline::validate_live_uobject(cand_pawn, guobjectarray_abs, off, nullptr))
+                {
+                    local_pawn = cand_pawn;
+                    if (const auto loc = ue4::SpatialAndKinematicPipeline::read_actor_location(cand_pawn, guobjectarray_abs, off)) {
+                        local_origin = *loc;
+                    }
+                }
+
+                // Resolve verified APlayerState from Pawn (+0x240 / +0x248) or Controller (+0x228 / +0x230 / +0x238)
+                if (local_pawn != 0) {
+                    constexpr std::array<uintptr_t, 3> kPawnPsOffsets = {0x240U, 0x248U, 0x250U};
+                    for (uintptr_t ps_off : kPawnPsOffsets) {
+                        if (const auto ps = mem::read<uintptr_t>(local_pawn + ps_off);
+                            ps.has_value() && is_valid_player_state(*ps)) {
+                            local_player_st = *ps;
+                            break;
                         }
                     }
-                    if (local_player_st == 0) {
-                        if (const auto ctrl_ps = mem::read<uintptr_t>(*pc + off.controller_player_state);
-                            ctrl_ps.has_value() &&
-                            ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ctrl_ps, guobjectarray_abs, off, nullptr))
-                        {
+                }
+                if (local_player_st == 0) {
+                    constexpr std::array<uintptr_t, 3> kCtrlPsOffsets = {0x228U, 0x230U, 0x238U};
+                    for (uintptr_t ps_off : kCtrlPsOffsets) {
+                        if (const auto ctrl_ps = mem::read<uintptr_t>(*pc + ps_off);
+                            ctrl_ps.has_value() && is_valid_player_state(*ctrl_ps)) {
                             local_player_st = *ctrl_ps;
+                            break;
                         }
                     }
                 }
@@ -784,6 +1871,205 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
+    // 2b. Scan active ULevel::Actors (+0xA0) across PersistentLevel and streaming sublevels for:
+    //     - Fallback Pawn / PlayerState / CameraManager when in Lobby or Custom Match
+    //     - Active Generator Chargeable Progress (+0x0338) & Skillcheck Handler (Item 4)
+    //     - Diagnostic actor dump on level change
+    uint32_t active_gen_count     = 0;
+    float    nearest_gen_pct      = 0.0f;
+    float    nearest_gen_dist_sq  = 1e18f;
+    static uint32_t s_skillchecks_handled = 0;
+    size_t   logged_actors        = 0;
+    bool     is_lobby_level       = false;
+
+    for (size_t lvl_idx = 0; lvl_idx < num_ulevels; ++lvl_idx) {
+        const uintptr_t cur_lvl = active_ulevels[lvl_idx];
+        const auto actor_arr = mem::read<ue4::TArrayHeader>(cur_lvl + off.actor_array);
+        if (!actor_arr.has_value() || !InProcessMemory::IsValidPtr(actor_arr->data_ptr, sizeof(uintptr_t))) {
+            continue;
+        }
+        const size_t scan_limit = std::min<size_t>(
+            static_cast<size_t>(std::max<int32_t>(0, actor_arr->count)),
+            ue4::SpatialAndKinematicPipeline::kMaxActorsPerTick);
+        std::array<char, 128> scan_name{};
+        std::array<char, 128> cls_name{};
+
+        const ue4::FVector ref_origin = (local_pawn != 0)
+            ? local_origin
+            : ue4::FVector{cam_view.location.x, cam_view.location.y, cam_view.location.z};
+
+        for (size_t i = 0; i < scan_limit; ++i) {
+            const auto a_ptr = mem::read<uintptr_t>(actor_arr->data_ptr + i * sizeof(uintptr_t));
+            if (!a_ptr.has_value() || !InProcessMemory::IsValidPtr(*a_ptr, 0x150U)) {
+                continue;
+            }
+            uint32_t fn_id = 0U;
+            if (!ue4::SpatialAndKinematicPipeline::validate_live_uobject(*a_ptr, guobjectarray_abs, off, &fn_id) || fn_id == 0U) {
+                continue;
+            }
+            if (!name_pool.resolve_name(fn_id, scan_name)) {
+                continue;
+            }
+
+            cls_name[0] = '\0';
+            if (const auto cls_ptr = mem::read<uintptr_t>(*a_ptr + 0x10U);
+                cls_ptr.has_value() && InProcessMemory::IsValidPtr(*cls_ptr, 0x28U)) {
+                if (const auto cls_fn = mem::read<uint32_t>(*cls_ptr + 0x18U)) {
+                    (void)name_pool.resolve_name(*cls_fn, cls_name);
+                }
+            }
+
+            if (hud::detail::icontains_str(scan_name.data(), "OfflineLobby") ||
+                hud::detail::icontains_str(scan_name.data(), "MatchLobby") ||
+                hud::detail::icontains_str(scan_name.data(), "StartScreen") ||
+                hud::detail::icontains_str(scan_name.data(), "DBDGame_Start") ||
+                hud::detail::icontains_str(scan_name.data(), "RoleSelection")) {
+                is_lobby_level = true;
+            }
+
+            if (level_changed && logged_actors < 300U) {
+                const auto a_pos = ue4::SpatialAndKinematicPipeline::read_actor_location(*a_ptr, guobjectarray_abs, off);
+                const auto rc_ptr = mem::read<uintptr_t>(*a_ptr + off.root_component).value_or(0ULL);
+                DIAG_LOGI(
+                    "[LEVEL-SCAN] Lvl[%zu] Actor[%zu]=0x%llX FName=\"%s\" Class=\"%s\" RC=0x%llX HasPos=%d Pos=(%.1f, %.1f, %.1f)",
+                    lvl_idx,
+                    i,
+                    static_cast<unsigned long long>(*a_ptr),
+                    scan_name.data(),
+                    cls_name.data(),
+                    static_cast<unsigned long long>(rc_ptr),
+                    a_pos.has_value() ? 1 : 0,
+                    static_cast<double>(a_pos ? a_pos->x : 0.0f),
+                    static_cast<double>(a_pos ? a_pos->y : 0.0f),
+                    static_cast<double>(a_pos ? a_pos->z : 0.0f)
+                );
+                ++logged_actors;
+            }
+
+            // Fallback PlayerState discovery in ULevel::Actors (e.g. DBDPlayerState / MenuPlayerState)
+            if (local_player_st == 0 && is_valid_player_state(*a_ptr)) {
+                local_player_st = *a_ptr;
+            }
+
+            // Fallback CameraManager discovery in ULevel::Actors
+            if (!has_valid_camera &&
+                (hud::detail::icontains_str(scan_name.data(), "CameraManager") ||
+                 hud::detail::icontains_str(cls_name.data(), "CameraManager"))) {
+                if (read_camera_pov_flexible(*a_ptr, off, cam_view, &matched_pov_off)) {
+                    local_cam_mgr    = *a_ptr;
+                    has_valid_camera = true;
+                }
+            }
+
+            // Fallback Local Pawn discovery (e.g. Lobby or Match Camper / Slasher / Character with valid CharacterMovement)
+            if (local_pawn == 0 &&
+                (hud::detail::icontains_str(scan_name.data(), "Camper") ||
+                 hud::detail::icontains_str(scan_name.data(), "Slasher") ||
+                 hud::detail::icontains_str(scan_name.data(), "Survivor") ||
+                 hud::detail::icontains_str(scan_name.data(), "Character") ||
+                 hud::detail::icontains_str(cls_name.data(), "Camper") ||
+                 hud::detail::icontains_str(cls_name.data(), "Slasher")))
+            {
+                if (const auto mc = mem::read<uintptr_t>(*a_ptr + off.character_movement);
+                    mc.has_value() && ue4::SpatialAndKinematicPipeline::validate_live_uobject(*mc, guobjectarray_abs, off, nullptr))
+                {
+                    local_pawn = *a_ptr;
+                    if (const auto loc = ue4::SpatialAndKinematicPipeline::read_actor_location(*a_ptr, guobjectarray_abs, off)) {
+                        local_origin = *loc;
+                    }
+                    if (local_player_st == 0) {
+                        constexpr std::array<uintptr_t, 3> kPawnPsOffsets = {0x240U, 0x248U, 0x250U};
+                        for (uintptr_t ps_off : kPawnPsOffsets) {
+                            if (const auto ps = mem::read<uintptr_t>(*a_ptr + ps_off);
+                                ps.has_value() && is_valid_player_state(*ps)) {
+                                local_player_st = *ps;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Item 4: Generator Progress (+0x0338) & Skillcheck Handler (strictly real interactive Generators only!)
+            const char* cat = ue4::SpatialAndKinematicPipeline::classify_actor_category(scan_name.data(), cls_name.data());
+            if (cat != nullptr && std::strcmp(cat, "Generator") == 0) {
+                if (const auto gpos = ue4::SpatialAndKinematicPipeline::read_actor_location(*a_ptr, guobjectarray_abs, off)) {
+                    const float origin_sq = gpos->x * gpos->x + gpos->y * gpos->y + gpos->z * gpos->z;
+                    const bool is_ghost_pos =
+                        (std::fabs(gpos->x - 330.0f) < 5.0f &&
+                         std::fabs(gpos->y - 180.0f) < 5.0f &&
+                         std::fabs(gpos->z - 20.0f) < 5.0f);
+                    if (origin_sq >= 100.0f && !is_ghost_pos) {
+                        ++active_gen_count;
+                        float gen_pct = 0.0f;
+                        if (const auto raw_chg = mem::read<float>(*a_ptr + off.chargeable_current_charge)) {
+                            if (std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f) {
+                                gen_pct = (*raw_chg <= 1.0f && *raw_chg > 0.0f)
+                                    ? (*raw_chg * 100.0f)
+                                    : std::clamp((*raw_chg / 90.0f) * 100.0f, 0.0f, 100.0f);
+                            }
+                        }
+                        const float dsq = ref_origin.dist_squared(*gpos);
+                        if (dsq < nearest_gen_dist_sq) {
+                            nearest_gen_dist_sq = dsq;
+                            nearest_gen_pct     = gen_pct;
+                        }
+                        // When local player is repairing within interaction radius (<= 3.5m)
+                        if (dsq <= (350.0f * 350.0f) && gen_pct < 100.0f) {
+                            ++s_skillchecks_handled;
+                        }
+                    }
+                }
+            }
+
+            // Trap Immunity: disable overlap collision on nearby BearTrap / Trap actors when enabled
+            if (hud::get_gameplay_config().trap_immunity &&
+                (hud::detail::icontains_str(scan_name.data(), "BearTrap") ||
+                 hud::detail::icontains_str(cls_name.data(), "BearTrap"))) {
+                ue4::SpatialAndKinematicPipeline::disable_trap_actor_collision(*a_ptr, guobjectarray_abs, off);
+            }
+        }
+    }
+
+    // Dynamically resolve UPlayerController -> AcknowledgedPawn -> UCharacterMovementComponent each frame
+    const hud::CharacterMovementChain move_chain =
+        ue4::SpatialAndKinematicPipeline::resolve_local_movement_chain(
+            local_pc, local_pawn, guobjectarray_abs, off);
+    if (move_chain.acknowledged_pawn != 0) {
+        local_pawn = move_chain.acknowledged_pawn;
+    }
+
+    // Read current kinematic state if local_pawn / UCharacterMovementComponent is resolved
+    if (local_pawn != 0) {
+        if (const auto td = mem::read<float>(local_pawn + off.custom_time_dilation)) {
+            if (std::isfinite(*td)) {
+                cur_time_scale = *td;
+            }
+        }
+        if (move_chain.is_valid && move_chain.movement_component != 0) {
+            if (const auto ws = mem::read<float>(move_chain.movement_component + off.max_walk_speed)) {
+                if (std::isfinite(*ws)) cur_walk_speed = *ws;
+            }
+            if (const auto ma = mem::read<float>(move_chain.movement_component + off.max_acceleration)) {
+                if (std::isfinite(*ma)) cur_max_accel = *ma;
+            }
+            if (const auto jz = mem::read<float>(move_chain.movement_component + off.jump_z_velocity)) {
+                if (std::isfinite(*jz)) cur_jump_z = *jz;
+            }
+        }
+    }
+
+    if (!has_valid_camera && local_pawn != 0) {
+        cam_view.location = {local_origin.x, local_origin.y, local_origin.z + 65.0f};
+        cam_view.fov      = 90.0f;
+        has_valid_camera  = true;
+    }
+
+    if (local_pawn == 0 && has_valid_camera) {
+        local_origin = {cam_view.location.x, cam_view.location.y, cam_view.location.z};
+    }
+
+    // Item 3: Read & Override Player Name (works in BOTH Lobby and Active Match whenever APlayerState is live!)
     std::array<char, 64> current_player_name{};
     if (local_player_st != 0) {
         (void)ue4::LocalPlayerNameController::read_local_name(
@@ -793,18 +2079,14 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         );
     }
 
-    // 3. Traverse UWorld -> PersistentLevel -> Actors array and convert to RawEntitySample[64]
+    // 3. Traverse all active ULevels -> Actors arrays and convert to RawEntitySample[256]
     std::array<ue4::EntitySnapshot, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> snapshots{};
-    std::array<std::array<char, 64>, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> resolved_names{};
     std::array<hud::adapter::RawEntitySample, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> raw_samples{};
     size_t collected_count = 0;
 
-    if (ulevel.has_value() &&
-        local_pawn != 0 &&
-        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ulevel, guobjectarray_abs, off, nullptr))
-    {
-        collected_count = ue4::SpatialAndKinematicPipeline::collect_nearby_entities(
-            *ulevel,
+    if (!is_lobby_level && num_ulevels > 0 && has_valid_camera) {
+        collected_count = ue4::SpatialAndKinematicPipeline::collect_nearby_entities_multi_level(
+            std::span<const uintptr_t>{active_ulevels.data(), num_ulevels},
             guobjectarray_abs,
             local_pawn,
             local_origin,
@@ -815,20 +2097,26 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         );
 
         for (size_t i = 0; i < collected_count; ++i) {
-            if (!name_pool.resolve_name(snapshots[i].fname_id, resolved_names[i])) {
-                resolved_names[i][0] = '\0';
+            hud::adapter::build_raw_entity_sample(
+                snapshots[i].world_pos.x,
+                snapshots[i].world_pos.y,
+                snapshots[i].world_pos.z,
+                snapshots[i].yaw_deg,
+                snapshots[i].distance_meters,
+                snapshots[i].progress_pct,
+                snapshots[i].has_skeleton,
+                snapshots[i].category_label,
+                raw_samples[i]
+            );
+            if (snapshots[i].has_skeleton) {
+                for (size_t b = 0; b < hud::kSkeletonJointCount; ++b) {
+                    raw_samples[i].bone_joints[b] = snapshots[i].bone_joints[b];
+                }
             }
-            raw_samples[i] = hud::adapter::RawEntitySample{
-                .x      = snapshots[i].world_pos.x,
-                .y      = snapshots[i].world_pos.y,
-                .z      = snapshots[i].world_pos.z,
-                .dist_m = snapshots[i].distance_meters,
-                .name   = resolved_names[i].data()
-            };
         }
     }
 
-    // 4. Synchronize camera, entities, player name, and kinematics with Dear ImGui HUD
+    // 4. Synchronize camera, entities, player name, and kinematics with shared state
     bool  should_apply_kinematics  = false;
     float target_walk_speed        = cur_walk_speed;
     float target_accel             = cur_max_accel;
@@ -837,7 +2125,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     bool  should_apply_player_name = false;
     std::array<char, 64> target_player_name{};
 
-    hud::adapter::sync_telemetry_to_hud(
+    const hud::adapter::KinematicsSyncResult sync_res = hud::adapter::sync_telemetry_to_hud(
         cam_view.location.x,
         cam_view.location.y,
         cam_view.location.z,
@@ -862,32 +2150,265 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         target_player_name.size()
     );
 
-    if (should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
-        if (ue4::SpatialAndKinematicPipeline::validate_live_uobject(local_player_st, guobjectarray_abs, off, nullptr)) {
-            (void)ue4::LocalPlayerNameController::override_local_name_utf8(
+    // Update pointers & Generator/Skillcheck telemetry in SceneTelemetryData
+    size_t final_node_count = 0;
+    bool   final_match_active = false;
+    {
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud_data.uworld_ptr           = *uworld;
+        hud_data.ulevel_ptr           = *ulevel;
+        hud_data.local_pawn           = local_pawn;
+        hud_data.active_generators    = active_gen_count;
+        hud_data.nearest_gen_progress = nearest_gen_pct;
+        hud_data.skillchecks_handled  = s_skillchecks_handled;
+        final_node_count              = hud_data.node_count;
+        final_match_active            = hud_data.match_active;
+        pthread_mutex_unlock(&hud_data.mutex);
+    }
+
+    if (collected_count == 0 || !final_match_active) {
+        s_teardown_write_lock_ticks = 180U;
+    } else if (s_teardown_write_lock_ticks > 0U) {
+        --s_teardown_write_lock_ticks;
+    }
+
+    const bool write_safe = final_match_active && (s_teardown_write_lock_ticks == 0U);
+
+    // Execute Item 3: Player Name Override + Read-back Verification Log
+    if (write_safe && should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
+        if (ue4::SpatialAndKinematicPipeline::validate_canonical_uobject(local_player_st, 0x330U, guobjectarray_abs, off)) {
+            const Status name_st = ue4::LocalPlayerNameController::override_local_name_utf8(
                 local_player_st,
                 off,
                 target_player_name.data()
             );
+            std::array<char, 64> readback_name{};
+            (void)ue4::LocalPlayerNameController::read_local_name(local_player_st, off, readback_name);
+            static char s_last_logged_name[64]{};
+            static uint32_t s_name_log_tick = 0;
+            if (std::strcmp(s_last_logged_name, readback_name.data()) != 0 || (++s_name_log_tick % 120U) == 1U) {
+                std::strncpy(s_last_logged_name, readback_name.data(), sizeof(s_last_logged_name) - 1);
+                s_last_logged_name[sizeof(s_last_logged_name) - 1] = '\0';
+                DIAG_LOGI(
+                    "[NAME-OVERRIDE] Status=%d on APlayerState=0x%llX (+0x%llX) | Requested=\"%s\" -> Readback=\"%s\"",
+                    static_cast<int>(name_st),
+                    static_cast<unsigned long long>(local_player_st),
+                    static_cast<unsigned long long>(off.player_name_private),
+                    target_player_name.data(),
+                    readback_name.data()
+                );
+            }
+            if (readback_name[0] != '\0') {
+                hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+                pthread_mutex_lock(&hud_data.mutex);
+                std::strncpy(hud_data.in_game_player_name, readback_name.data(), hud::kMaxLabelLen - 1);
+                hud_data.in_game_player_name[hud::kMaxLabelLen - 1] = '\0';
+                pthread_mutex_unlock(&hud_data.mutex);
+            }
         }
     }
 
-    if (should_apply_kinematics && local_pawn != 0) {
+    // Execute Item 2: Persistent Character Movement Component Hook (Kinematics Override + Continuous Dirty Flag)
+    if (write_safe && should_apply_kinematics && (local_pc != 0 || local_pawn != 0)) {
         (void)ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
+            local_pc,
             local_pawn,
             guobjectarray_abs,
             off,
             target_walk_speed,
             target_accel,
             target_jump_z,
-            target_time_scale
+            target_time_scale,
+            sync_res.movement_dirty_flag
         );
     }
+
+    // Execute Advanced Feature 2: Field of View (FOV) Changer (APlayerCameraManager::DefaultFOV +0x248)
+    float clamped_fov_target = cam_view.fov;
+    if (local_cam_mgr != 0 && hud::compute_clamped_fov_target(sync_res, cam_view.fov, &clamped_fov_target)) {
+        (void)ue4::SpatialAndKinematicPipeline::apply_fov_override(
+            local_cam_mgr,
+            matched_pov_off,
+            guobjectarray_abs,
+            off,
+            clamped_fov_target
+        );
+        cam_view.fov = clamped_fov_target;
+    }
+
+    // Execute Advanced Feature 3: Auto Skillcheck & Trap Immunity
+    if (write_safe && sync_res.auto_skillcheck && (local_pawn != 0 || local_pc != 0)) {
+        if (ue4::SpatialAndKinematicPipeline::apply_auto_skillcheck(local_pawn, local_pc, guobjectarray_abs, off)) {
+            ++s_skillchecks_handled;
+        }
+    }
+    if (write_safe && sync_res.trap_immunity && local_pawn != 0) {
+        ue4::SpatialAndKinematicPipeline::apply_trap_immunity(local_pawn, guobjectarray_abs, off);
+    }
+
+    // Execute Advanced Feature 4: Fly Cheat & Force Escape
+    static bool s_was_flying = false;
+    if (write_safe && (local_pc != 0 || local_pawn != 0) && (sync_res.fly_cheat_enabled || s_was_flying)) {
+        (void)ue4::SpatialAndKinematicPipeline::apply_fly_mode(
+            local_pc,
+            local_pawn,
+            guobjectarray_abs,
+            off,
+            sync_res.fly_cheat_enabled,
+            target_walk_speed
+        );
+        s_was_flying = sync_res.fly_cheat_enabled;
+    } else if (!write_safe) {
+        s_was_flying = false;
+    }
+    if (write_safe && sync_res.force_escape && local_pawn != 0) {
+        const ue4::FVector* escape_pos = nullptr;
+        for (size_t i = 0; i < collected_count; ++i) {
+            if (std::strcmp(snapshots[i].category_label, "ExitGate") == 0 ||
+                std::strcmp(snapshots[i].category_label, "Hatch") == 0) {
+                escape_pos = &snapshots[i].world_pos;
+                break;
+            }
+        }
+        (void)ue4::SpatialAndKinematicPipeline::apply_force_escape(
+            local_pawn,
+            local_player_st,
+            escape_pos,
+            guobjectarray_abs,
+            off
+        );
+        hud::set_force_escape(false);
+    }
+
+    // Execute Advanced Feature 5: Immobilize State & Player Role Setters
+    if (write_safe && sync_res.should_apply_immobilize && local_pawn != 0) {
+        (void)ue4::SpatialAndKinematicPipeline::apply_immobilize_state(
+            local_pawn,
+            guobjectarray_abs,
+            off,
+            sync_res.immobilize_state
+        );
+    }
+    if (write_safe && sync_res.should_apply_role && local_player_st != 0) {
+        (void)ue4::SpatialAndKinematicPipeline::apply_player_role(
+            local_player_st,
+            guobjectarray_abs,
+            off,
+            sync_res.player_role
+        );
+    }
+
+    // Periodic Telemetry Summary Log (Items 1 & 4) every ~120 ticks (~2 seconds)
+    static uint32_t s_summary_tick = 0;
+    if ((++s_summary_tick % 120U) == 1U) {
+        DIAG_LOGI(
+            "[AURA-SYNC] MatchActive=%d | Actors=%d | Collected=%zu | AuraNodes=%zu | PC=0x%llX Pawn=0x%llX PS=0x%llX (\"%s\") | CamMgr=0x%llX (POV+0x%llX) Pos=(%.1f, %.1f, %.1f) Rot=(%.1f, %.1f, %.1f) FOV=%.1f",
+            final_match_active ? 1 : 0,
+            static_cast<int>(level_actor_count),
+            collected_count,
+            final_node_count,
+            static_cast<unsigned long long>(local_pc),
+            static_cast<unsigned long long>(local_pawn),
+            static_cast<unsigned long long>(local_player_st),
+            current_player_name.data(),
+            static_cast<unsigned long long>(local_cam_mgr),
+            static_cast<unsigned long long>(matched_pov_off),
+            static_cast<double>(cam_view.location.x),
+            static_cast<double>(cam_view.location.y),
+            static_cast<double>(cam_view.location.z),
+            static_cast<double>(cam_view.rotation.pitch),
+            static_cast<double>(cam_view.rotation.yaw),
+            static_cast<double>(cam_view.rotation.roll),
+            static_cast<double>(cam_view.fov)
+        );
+        DIAG_LOGI(
+            "[GEN-SKILLCHECK] ActiveGenerators=%u | NearestGenProgress=%.1f%% | SkillChecksHandled=%u",
+            static_cast<unsigned>(active_gen_count),
+            static_cast<double>(nearest_gen_pct),
+            static_cast<unsigned>(s_skillchecks_handled)
+        );
+    }
+
+    // Publish lockless shared telemetry snapshot (/data/local/tmp/dbdm_telemetry_shm.bin) for 60 FPS APK overlay
+    publish_shared_snapshot();
+}
+
+INSTRUMENT_LOCAL static void* ipc_server_worker_entry(void* /*arg*/) noexcept {
+    pthread_setname_np(pthread_self(), "ue4_ipc_srv");
+
+    const int srv_fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (srv_fd < 0) {
+        DIAG_LOGE("Failed to create AF_UNIX IPC socket.");
+        return nullptr;
+    }
+
+    struct sockaddr_un addr{};
+    const socklen_t addr_len = ipc::build_abstract_sockaddr(addr);
+    if (::bind(srv_fd, reinterpret_cast<const struct sockaddr*>(&addr), addr_len) != 0) {
+        DIAG_LOGW("Abstract socket bind failed (already bound or restricted); closing fd.");
+        ::close(srv_fd);
+        return nullptr;
+    }
+
+    if (::listen(srv_fd, 8) != 0) {
+        ::close(srv_fd);
+        return nullptr;
+    }
+
+    g_state.ipc_listen_fd.store(srv_fd, std::memory_order_release);
+    DIAG_LOGI("Headless Telemetry IPC Server listening on abstract socket @%s", ipc::kAbstractSocketName);
+
+    struct timeval accept_tv{};
+    accept_tv.tv_sec  = 0;
+    accept_tv.tv_usec = 250000; // 250ms poll timeout so shutdown_instrumentation wakes cleanly
+    ::setsockopt(srv_fd, SOL_SOCKET, SO_RCVTIMEO, &accept_tv, sizeof(accept_tv));
+
+    while (g_state.running.load(std::memory_order_acquire)) {
+        const int client_fd = ::accept4(srv_fd, nullptr, nullptr, SOCK_CLOEXEC);
+        if (client_fd < 0) {
+            continue;
+        }
+
+        struct timeval io_tv{};
+        io_tv.tv_sec  = 0;
+        io_tv.tv_usec = 50000;
+        ::setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &io_tv, sizeof(io_tv));
+        ::setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &io_tv, sizeof(io_tv));
+
+        ipc::ControlPayload req{};
+        const ssize_t r = ::recv(client_fd, &req, sizeof(req), 0);
+        if (r == static_cast<ssize_t>(sizeof(req)) && req.magic == ipc::kIpcMagicVersion) {
+            if (req.packet_type == static_cast<std::uint32_t>(ipc::PacketType::PushControl)) {
+                ipc::apply_control_to_telemetry(req);
+                if (std::strncmp(req.label_filter, "@gp:", 4) == 0) {
+                    hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+                    pthread_mutex_lock(&hud_data.mutex);
+                    (void)hud::parse_gameplay_ipc_string(
+                        req.label_filter,
+                        hud_data,
+                        hud::get_gameplay_config());
+                    pthread_mutex_unlock(&hud_data.mutex);
+                }
+            }
+            ipc::TelemetrySnapshotPayload resp{};
+            ipc::fill_snapshot_from_telemetry(resp);
+            (void)::send(client_fd, &resp, sizeof(resp), MSG_NOSIGNAL);
+        }
+
+        ::close(client_fd);
+    }
+
+    const int fd_to_close = g_state.ipc_listen_fd.exchange(-1, std::memory_order_acq_rel);
+    if (fd_to_close >= 0) {
+        ::close(fd_to_close);
+    }
+    return nullptr;
 }
 
 INSTRUMENT_LOCAL static void* telemetry_worker_entry(void* /*arg*/) noexcept {
     pthread_setname_np(pthread_self(), "ue4_diag_worker");
-    DIAG_LOGI("Telemetry worker started; polling dl_iterate_phdr for libUE4.so...");
+    DIAG_LOGI("Headless telemetry worker started (no EGL/ImGui hooks); polling dl_iterate_phdr for libUE4.so...");
 
     while (g_state.running.load(std::memory_order_acquire)) {
         const auto mod = elf::find_module("libUE4.so");
@@ -895,14 +2416,9 @@ INSTRUMENT_LOCAL static void* telemetry_worker_entry(void* /*arg*/) noexcept {
             std::array<uint8_t, sizeof(Elf64_Ehdr)> hdr{};
             if (InProcessMemory::safe_read(mod->base_address, hdr) == Status::Ok) {
                 g_state.ue4_module = *mod;
-                const uintptr_t lib_base = g_state.ue4_module.base_address;
                 log_resolved_engine_anchors();
-                if (egl_bridge::install_egl_bridge(lib_base)) {
-                    DIAG_LOGI("EGL PLT/GOT bridge installed on libUE4.so @ 0x%llX",
-                              static_cast<unsigned long long>(lib_base));
-                } else {
-                    DIAG_LOGW("EGL PLT/GOT bridge did not find eglSwapBuffers slot in libUE4.so");
-                }
+                DIAG_LOGI("Headless telemetry backend active on libUE4.so @ 0x%llX (waiting for live match state)",
+                          static_cast<unsigned long long>(g_state.ue4_module.base_address));
                 break;
             }
         }
@@ -925,7 +2441,7 @@ INSTRUMENT_LOCAL bool initialize_instrumentation() noexcept {
     }
 
     DIAG_LOGI(
-        "Initializing UE4.27 AArch64 Instrumentation (Configured RVAs: GWorld=0x%llX, GNamePool=0x%llX)",
+        "Initializing Headless UE4.27 AArch64 Instrumentation (Configured RVAs: GWorld=0x%llX, GNamePool=0x%llX)",
         static_cast<unsigned long long>(g_state.offsets.gworld_rva),
         static_cast<unsigned long long>(g_state.offsets.gnamepool_rva)
     );
@@ -938,13 +2454,18 @@ INSTRUMENT_LOCAL bool initialize_instrumentation() noexcept {
     }
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
     const int rc = pthread_create(&g_state.worker_thread, &attr, &telemetry_worker_entry, nullptr);
-    pthread_attr_destroy(&attr);
     if (rc != 0) {
+        pthread_attr_destroy(&attr);
         g_state.running.store(false, std::memory_order_release);
         DIAG_LOGE("pthread_create failed with error code %d.", rc);
         return false;
     }
     g_state.thread_active.store(true, std::memory_order_release);
+
+    if (pthread_create(&g_state.ipc_thread, &attr, &ipc_server_worker_entry, nullptr) == 0) {
+        g_state.ipc_thread_active.store(true, std::memory_order_release);
+    }
+    pthread_attr_destroy(&attr);
     return true;
 }
 
@@ -952,10 +2473,113 @@ INSTRUMENT_LOCAL void shutdown_instrumentation() noexcept {
     if (!g_state.running.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
+    const int listen_fd = g_state.ipc_listen_fd.exchange(-1, std::memory_order_acq_rel);
+    if (listen_fd >= 0) {
+        ::shutdown(listen_fd, SHUT_RDWR);
+        ::close(listen_fd);
+    }
+    if (g_state.ipc_thread_active.exchange(false, std::memory_order_acq_rel)) {
+        pthread_join(g_state.ipc_thread, nullptr);
+    }
     if (g_state.thread_active.exchange(false, std::memory_order_acq_rel)) {
         pthread_join(g_state.worker_thread, nullptr);
     }
 }
+
+INSTRUMENT_LOCAL static bool is_current_process_game() noexcept {
+    std::FILE* fp = std::fopen("/proc/self/cmdline", "rb");
+    if (!fp) {
+        return false;
+    }
+    char cmdline[128]{};
+    const std::size_t n = std::fread(cmdline, 1, sizeof(cmdline) - 1, fp);
+    std::fclose(fp);
+    cmdline[n] = '\0';
+    return std::strstr(cmdline, "com.netease.dbdena") != nullptr;
+}
+
+// Pure 3D-to-2D perspective projection for Standalone APK Overlay
+INSTRUMENT_LOCAL static bool project_world_to_overlay_screen(
+    const hud::Vec3&       world_pos,
+    const hud::CameraView& camera,
+    float                  screen_width,
+    float                  screen_height,
+    float&                 out_x,
+    float&                 out_y,
+    float                  vertical_offset_cm = 85.0f) noexcept {
+
+    if (screen_width <= 1.0f || screen_height <= 1.0f) {
+        return false;
+    }
+    if (!std::isfinite(world_pos.x) || !std::isfinite(world_pos.y) || !std::isfinite(world_pos.z) ||
+        !std::isfinite(camera.location.x) || !std::isfinite(camera.location.y) || !std::isfinite(camera.location.z)) {
+        return false;
+    }
+
+    auto normalize_angle = [](float deg) noexcept -> float {
+        if (!std::isfinite(deg)) {
+            return 0.0f;
+        }
+        float w = std::fmod(deg, 360.0f);
+        if (w < 0.0f) w += 360.0f;
+        if (w > 180.0f) w -= 360.0f;
+        return w;
+    };
+
+    constexpr float kDegToRad           = std::numbers::pi_v<float> / 180.0f;
+    constexpr float kNearClipPlaneUnits = 1.0f;
+
+    const hud::Vec3 elevated{
+        world_pos.x,
+        world_pos.y,
+        world_pos.z + vertical_offset_cm
+    };
+
+    const float pitch_rad = std::clamp(normalize_angle(camera.rotation.pitch), -89.9f, 89.9f) * kDegToRad;
+    const float yaw_rad   = normalize_angle(camera.rotation.yaw) * kDegToRad;
+    const float roll_rad  = normalize_angle(camera.rotation.roll) * kDegToRad;
+
+    const float sp = std::sin(pitch_rad), cp = std::cos(pitch_rad);
+    const float sy = std::sin(yaw_rad),   cy = std::cos(yaw_rad);
+    const float sr = std::sin(roll_rad),  cr = std::cos(roll_rad);
+
+    const hud::Vec3 axis_forward{cp * cy, cp * sy, sp};
+    const hud::Vec3 axis_right{sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, -sr * cp};
+    const hud::Vec3 axis_up{-(cr * sp * cy + sr * sy), cy * sr - cr * sp * sy, cr * cp};
+
+    const hud::Vec3 delta = elevated - camera.location;
+    const float view_x = delta.dot(axis_right);
+    const float view_y = delta.dot(axis_up);
+    const float view_z = delta.dot(axis_forward);
+
+    if (!std::isfinite(view_z) || view_z < kNearClipPlaneUnits) {
+        return false;
+    }
+
+    const float clamped_fov  = std::clamp(std::isfinite(camera.fov) ? camera.fov : 90.0f, 10.0f, 170.0f);
+    const float tan_half_fov = std::tan((clamped_fov * 0.5f) * kDegToRad);
+    if (tan_half_fov <= 1e-5f) {
+        return false;
+    }
+
+    const float center_x     = screen_width * 0.5f;
+    const float center_y     = screen_height * 0.5f;
+    const float focal_length = center_x / tan_half_fov;
+
+    const float proj_x = center_x + (view_x * focal_length) / view_z;
+    const float proj_y = center_y - (view_y * focal_length) / view_z;
+
+    if (!std::isfinite(proj_x) || !std::isfinite(proj_y) ||
+        proj_x < 0.0f || proj_x > screen_width ||
+        proj_y < 0.0f || proj_y > screen_height) {
+        return false;
+    }
+
+    out_x = proj_x;
+    out_y = proj_y;
+    return true;
+}
+
 } // namespace runtime
 
 // ============================================================================
@@ -997,7 +2621,7 @@ public:
 
     void postAppSpecialize(const zygisk::AppSpecializeArgs* /*args*/) override {
         if (is_target_process_) {
-            DIAG_LOGI("Zygisk postAppSpecialize matched com.netease.dbdena; starting worker.");
+            DIAG_LOGI("Zygisk postAppSpecialize matched com.netease.dbdena; starting headless telemetry worker.");
             (void)initialize_instrumentation();
         }
     }
@@ -1026,12 +2650,511 @@ INSTRUMENT_C_EXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;
     }
-    if (!runtime::initialize_instrumentation()) {
-        return JNI_ERR;
+    // Only start the UE4 background worker when loaded inside com.netease.dbdena;
+    // when loaded inside the standalone Mod Menu APK (com.dbdm.modmenu), act purely as an IPC client.
+    if (runtime::is_current_process_game()) {
+        if (!runtime::initialize_instrumentation()) {
+            return JNI_ERR;
+        }
     }
     return JNI_VERSION_1_6;
 }
 
 INSTRUMENT_C_EXPORT void JNICALL JNI_OnUnload(JavaVM* /*vm*/, void* /*reserved*/) {
-    runtime::shutdown_instrumentation();
+    if (runtime::is_current_process_game()) {
+        runtime::shutdown_instrumentation();
+    }
 }
+
+// Standalone Floating Mod Menu APK JNI Bridge (IPC Client -> Headless Zygisk Server)
+INSTRUMENT_C_EXPORT void JNICALL
+Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
+    JNIEnv*  env,
+    jclass   /*clazz*/,
+    jboolean hud_open,
+    jboolean draw_markers,
+    jfloat   max_dist,
+    jstring  label_filter,
+    jboolean override_name,
+    jstring  player_name,
+    jboolean apply_kinematics,
+    jfloat   walk_speed,
+    jfloat   max_accel,
+    jfloat   jump_vel,
+    jfloat   time_scale) {
+
+    const char* filter_cstr = label_filter ? env->GetStringUTFChars(label_filter, nullptr) : "";
+    const char* name_cstr   = player_name  ? env->GetStringUTFChars(player_name, nullptr)  : "";
+
+    ipc::ControlPayload ctrl{};
+    ctrl.magic                    = ipc::kIpcMagicVersion;
+    ctrl.packet_type              = static_cast<std::uint32_t>(ipc::PacketType::PushControl);
+    ctrl.hud_open                 = (hud_open == JNI_TRUE) ? 1U : 0U;
+    ctrl.draw_2d_node_markers     = (draw_markers == JNI_TRUE) ? 1U : 0U;
+    ctrl.apply_custom_player_name = (override_name == JNI_TRUE) ? 1U : 0U;
+    ctrl.apply_custom_kinematics  = (apply_kinematics == JNI_TRUE) ? 1U : 0U;
+    ctrl.max_render_distance_m    = static_cast<float>(max_dist);
+    ctrl.walk_speed               = static_cast<float>(walk_speed);
+    ctrl.max_acceleration         = static_cast<float>(max_accel);
+    ctrl.jump_velocity            = static_cast<float>(jump_vel);
+    ctrl.time_scale               = static_cast<float>(time_scale);
+
+    if (filter_cstr) {
+        std::strncpy(ctrl.label_filter, filter_cstr, hud::kMaxLabelLen - 1);
+        ctrl.label_filter[hud::kMaxLabelLen - 1] = '\0';
+    }
+    if (name_cstr) {
+        std::strncpy(ctrl.custom_player_name, name_cstr, hud::kMaxLabelLen - 1);
+        ctrl.custom_player_name[hud::kMaxLabelLen - 1] = '\0';
+    }
+
+    // 1. Update local state + send over Abstract UNIX Domain Socket IPC to com.netease.dbdena
+    ipc::apply_control_to_telemetry(ctrl);
+
+    bool          gp_fov_on  = false;
+    float         gp_fov     = 90.0f;
+    bool          gp_skill   = false;
+    bool          gp_trap    = false;
+    bool          gp_fly     = false;
+    bool          gp_esc     = false;
+    unsigned int  gp_catmask = 0xFFU;
+    hud::ImmobilizeState gp_imm_state = hud::ImmobilizeState::None;
+    bool          gp_imm_on  = false;
+    hud::PlayerRole gp_role_val = hud::PlayerRole::None;
+    bool          gp_role_on = false;
+
+    const bool is_gp_filter = (filter_cstr && std::strncmp(filter_cstr, "@gp:", 4) == 0);
+    {
+        hud::SceneTelemetryData& local_cfg = hud::get_telemetry_data();
+        pthread_mutex_lock(&local_cfg.mutex);
+        hud::GameplayManipulationConfig& gp_cfg = hud::get_gameplay_config();
+        if (is_gp_filter) {
+            (void)hud::parse_gameplay_ipc_string(filter_cstr, local_cfg, gp_cfg);
+        }
+        gp_fov_on    = gp_cfg.apply_fov_override;
+        gp_fov       = gp_cfg.target_fov;
+        gp_skill     = gp_cfg.auto_skillcheck;
+        gp_trap      = gp_cfg.trap_immunity;
+        gp_fly       = gp_cfg.fly_cheat_enabled;
+        gp_esc       = gp_cfg.force_escape;
+        gp_imm_on    = gp_cfg.apply_immobilize_state;
+        gp_imm_state = gp_cfg.target_immobilize_state;
+        gp_role_on   = gp_cfg.apply_player_role;
+        gp_role_val  = gp_cfg.target_player_role;
+
+        gp_catmask = 0U;
+        if (local_cfg.show_antagonist)    gp_catmask |= 0x01U;
+        if (local_cfg.show_teammates)     gp_catmask |= 0x02U;
+        if (local_cfg.show_power_nodes)   gp_catmask |= 0x04U;
+        if (local_cfg.show_shrines)       gp_catmask |= 0x08U;
+        if (local_cfg.show_containers)    gp_catmask |= 0x10U;
+        if (local_cfg.show_barriers)      gp_catmask |= 0x20U;
+        if (local_cfg.show_portals)       gp_catmask |= 0x40U;
+        if (local_cfg.show_special_props) gp_catmask |= 0x80U;
+        pthread_mutex_unlock(&local_cfg.mutex);
+    }
+
+    (void)ipc::client_exchange_packet(&ctrl, nullptr);
+
+    // 2. Also write fallback config file if permissible
+    static constexpr const char* kCfgPath = "/data/local/tmp/dbdm_mod_config.cfg";
+    if (std::FILE* fp = std::fopen(kCfgPath, "w")) {
+        const char* imm_str = "off";
+        if (gp_imm_on) {
+            switch (gp_imm_state) {
+                case hud::ImmobilizeState::None:    imm_str = "none";    break;
+                case hud::ImmobilizeState::Hooked:  imm_str = "hooked";  break;
+                case hud::ImmobilizeState::Trapped: imm_str = "trapped"; break;
+                case hud::ImmobilizeState::Hiding:  imm_str = "hiding";  break;
+                case hud::ImmobilizeState::Dead:    imm_str = "dead";    break;
+                case hud::ImmobilizeState::Caged:   imm_str = "caged";   break;
+            }
+        }
+        const char* role_str = "none";
+        if (gp_role_on) {
+            switch (gp_role_val) {
+                case hud::PlayerRole::Camper:   role_str = "camper";   break;
+                case hud::PlayerRole::Slasher:  role_str = "slasher";  break;
+                case hud::PlayerRole::Observer: role_str = "observer"; break;
+                default:                        role_str = "none";     break;
+            }
+        }
+        std::fprintf(
+            fp,
+            "hud_open=%d\n"
+            "draw_markers=%d\n"
+            "max_dist=%.1f\n"
+            "label_filter=%s\n"
+            "gp_payload=%s\n"
+            "override_name=%d\n"
+            "player_name=%s\n"
+            "apply_kinematics=%d\n"
+            "walk_speed=%.1f\n"
+            "max_accel=%.1f\n"
+            "jump_vel=%.1f\n"
+            "time_scale=%.2f\n"
+            "apply_fov=%d\n"
+            "fov=%.1f\n"
+            "auto_skillcheck=%d\n"
+            "trap_immunity=%d\n"
+            "fly_cheat=%d\n"
+            "force_escape=%d\n"
+            "set_immobilize=%s\n"
+            "set_player_role=%s\n"
+            "cat_mask=%02X\n",
+            hud_open ? 1 : 0,
+            draw_markers ? 1 : 0,
+            static_cast<double>(max_dist),
+            (!is_gp_filter && filter_cstr) ? filter_cstr : "",
+            (is_gp_filter && filter_cstr) ? filter_cstr : "",
+            override_name ? 1 : 0,
+            name_cstr ? name_cstr : "",
+            apply_kinematics ? 1 : 0,
+            static_cast<double>(walk_speed),
+            static_cast<double>(max_accel),
+            static_cast<double>(jump_vel),
+            static_cast<double>(time_scale),
+            gp_fov_on ? 1 : 0,
+            static_cast<double>(gp_fov),
+            gp_skill ? 1 : 0,
+            gp_trap ? 1 : 0,
+            gp_fly ? 1 : 0,
+            gp_esc ? 1 : 0,
+            imm_str,
+            role_str,
+            gp_catmask);
+        std::fclose(fp);
+        ::chmod(kCfgPath, 0666);
+    }
+
+    if (label_filter && filter_cstr) {
+        env->ReleaseStringUTFChars(label_filter, filter_cstr);
+    }
+    if (player_name && name_cstr) {
+        env->ReleaseStringUTFChars(player_name, name_cstr);
+    }
+}
+
+INSTRUMENT_C_EXPORT jstring JNICALL
+Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus(JNIEnv* env, jclass /*clazz*/) {
+    ipc::TelemetrySnapshotPayload snap{};
+    char buf[256]{};
+    if (ipc::client_exchange_packet(nullptr, &snap)) {
+        std::snprintf(
+            buf,
+            sizeof(buf),
+            "IPC: ONLINE | %s | Nodes: %u | Gens: %u (%.0f%%) | Player: %s",
+            snap.match_active ? "IN MATCH (ACTIVE)" : "LOBBY / STANDBY",
+            static_cast<unsigned>(snap.node_count),
+            static_cast<unsigned>(snap.active_generators),
+            static_cast<double>(snap.nearest_gen_progress),
+            snap.active_player_name[0] != '\0' ? snap.active_player_name : "(In-Game Default)");
+    } else {
+        std::snprintf(buf, sizeof(buf), "IPC: WAITING FOR GAME (com.netease.dbdena)");
+    }
+    return env->NewStringUTF(buf);
+}
+
+// Polls the headless Zygisk backend via IPC, projects live 3D entities into 2D screen space,
+// and writes [screen_x, screen_y, distance_m, category_id] (4 floats per entity) into out_packed.
+// Category IDs: 1 = Killer, 2 = Survivor, 3 = Generator, 4 = Hatch, 5 = Chest, 6 = Totem.
+INSTRUMENT_C_EXPORT jint JNICALL
+Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
+    JNIEnv*     env,
+    jclass      /*clazz*/,
+    jfloat      screen_width,
+    jfloat      screen_height,
+    jfloatArray out_packed) {
+
+    if (!out_packed || screen_width <= 1.0f || screen_height <= 1.0f) {
+        return 0;
+    }
+
+    const jsize arr_len = env->GetArrayLength(out_packed);
+    if (arr_len < 4) {
+        return 0;
+    }
+
+    ipc::TelemetrySnapshotPayload snap{};
+    if (!ipc::client_exchange_packet(nullptr, &snap) || snap.match_active == 0 || snap.node_count == 0) {
+        return 0;
+    }
+
+    bool  draw_markers       = true;
+    float max_dist_m         = 250.0f;
+    bool  show_antagonist    = true;
+    bool  show_teammates     = true;
+    bool  show_power_nodes   = true;
+    bool  show_shrines       = true;
+    bool  show_containers    = true;
+    bool  show_barriers      = true;
+    bool  show_portals       = true;
+    bool  show_special_props = true;
+    char  filter_buf[hud::kMaxLabelLen]{};
+    {
+        hud::SceneTelemetryData& local_cfg = hud::get_telemetry_data();
+        pthread_mutex_lock(&local_cfg.mutex);
+        draw_markers       = local_cfg.draw_2d_node_markers;
+        max_dist_m         = local_cfg.max_render_distance_m;
+        show_antagonist    = local_cfg.show_antagonist;
+        show_teammates     = local_cfg.show_teammates;
+        show_power_nodes   = local_cfg.show_power_nodes;
+        show_shrines       = local_cfg.show_shrines;
+        show_containers    = local_cfg.show_containers;
+        show_barriers      = local_cfg.show_barriers;
+        show_portals       = local_cfg.show_portals;
+        show_special_props = local_cfg.show_special_props;
+        std::memcpy(filter_buf, local_cfg.label_filter, hud::kMaxLabelLen);
+        filter_buf[hud::kMaxLabelLen - 1] = '\0';
+        pthread_mutex_unlock(&local_cfg.mutex);
+    }
+
+    if (!draw_markers) {
+        return 0;
+    }
+
+    hud::CameraView cam{};
+    cam.location = {snap.cam_x, snap.cam_y, snap.cam_z};
+    cam.rotation = {snap.cam_pitch, snap.cam_yaw, snap.cam_roll};
+    cam.fov      = snap.cam_fov;
+
+    const std::size_t max_out_nodes = std::min<std::size_t>(
+        hud::kMaxSceneNodes,
+        static_cast<std::size_t>(arr_len / 4));
+    const std::size_t node_limit = std::min<std::size_t>(snap.node_count, hud::kMaxSceneNodes);
+
+    float packed[hud::kMaxSceneNodes * 4]{};
+    jint  out_count = 0;
+
+    for (std::size_t i = 0; i < node_limit && static_cast<std::size_t>(out_count) < max_out_nodes; ++i) {
+        const ipc::WireNode& wn = snap.nodes[i];
+        if (!std::isfinite(wn.distance_m) || wn.distance_m > max_dist_m) {
+            continue;
+        }
+        if (!hud::detail::icontains_str(wn.label, filter_buf)) {
+            continue;
+        }
+
+        float sx = 0.0f;
+        float sy = 0.0f;
+        if (!runtime::project_world_to_overlay_screen(
+                hud::Vec3{wn.x, wn.y, wn.z},
+                cam,
+                static_cast<float>(screen_width),
+                static_cast<float>(screen_height),
+                sx,
+                sy)) {
+            continue;
+        }
+
+        float cat_id = 0.0f;
+        if (std::strcmp(wn.label, "Killer") == 0 || std::strcmp(wn.label, "Assassino") == 0) {
+            if (!show_antagonist) continue;
+            cat_id = 1.0f;
+        } else if (std::strcmp(wn.label, "Survivor") == 0 || std::strcmp(wn.label, "Sobrevivente") == 0) {
+            if (!show_teammates) continue;
+            cat_id = 2.0f;
+        } else if (std::strcmp(wn.label, "Generator") == 0 || std::strcmp(wn.label, "Gerador") == 0) {
+            if (!show_power_nodes) continue;
+            if (std::isfinite(wn.progress_pct) && wn.progress_pct >= 99.5f) {
+                continue;
+            }
+            const float clamped_pct = (std::isfinite(wn.progress_pct) && wn.progress_pct >= 0.0f)
+                ? std::clamp(wn.progress_pct, 0.0f, 99.0f)
+                : 0.0f;
+            cat_id = 3.0f + clamped_pct * 0.001f;
+        } else if (std::strcmp(wn.label, "Hatch") == 0 || std::strcmp(wn.label, "Alçapão") == 0) {
+            if (!show_portals) continue;
+            cat_id = 4.0f;
+        } else if (std::strcmp(wn.label, "Chest") == 0 || std::strcmp(wn.label, "Baú") == 0) {
+            if (!show_containers) continue;
+            cat_id = 5.0f;
+        } else if (std::strcmp(wn.label, "Totem") == 0) {
+            if (!show_shrines) continue;
+            if (std::isfinite(wn.progress_pct) && wn.progress_pct < 0.0f && wn.progress_pct != -1.0f) {
+                continue;
+            }
+            cat_id = 6.0f;
+        } else if (std::strcmp(wn.label, "Pallet") == 0) {
+            if (!show_barriers) continue;
+            cat_id = 7.0f;
+        } else if (std::strcmp(wn.label, "Hook") == 0 || std::strcmp(wn.label, "Gancho") == 0) {
+            if (!show_special_props) continue;
+            cat_id = 9.0f;
+        } else if (std::strcmp(wn.label, "ExitGate") == 0 || std::strcmp(wn.label, "Portão de Saída") == 0) {
+            if (!show_portals) continue;
+            cat_id = 10.0f;
+        } else {
+            continue;
+        }
+
+        // For Killer (1) and Survivor (2), project the character's 3D root foot coordinate (Z - 45.0f)
+        // as (sx, sy) and encode the 3D-projected capsule height (|foot_sy - head_sy|) in cat_id
+        // so the 2D overlay locks onto the character's exact 3D capsule bounds and foot anchor.
+        if (cat_id == 1.0f || cat_id == 2.0f) {
+            float foot_sx = sx;
+            float foot_sy = sy;
+            float head_sx = sx;
+            float head_sy = sy;
+            const bool has_foot = runtime::project_world_to_overlay_screen(
+                hud::Vec3{wn.x, wn.y, wn.z - hud::kCapsuleHalfHeightCm},
+                cam,
+                static_cast<float>(screen_width),
+                static_cast<float>(screen_height),
+                foot_sx,
+                foot_sy,
+                0.0f);
+            const bool has_head = runtime::project_world_to_overlay_screen(
+                hud::Vec3{wn.x, wn.y, wn.z + hud::kCapsuleHalfHeightCm},
+                cam,
+                static_cast<float>(screen_width),
+                static_cast<float>(screen_height),
+                head_sx,
+                head_sy,
+                0.0f);
+            if (has_foot) {
+                sx = foot_sx;
+                sy = foot_sy;
+            }
+            float proj_height_px = 0.0f;
+            if (has_foot && has_head) {
+                proj_height_px = std::clamp(std::abs(foot_sy - head_sy), 18.0f, 450.0f);
+            } else {
+                proj_height_px = std::clamp(1800.0f / std::max(5.0f, wn.distance_m), 18.0f, 320.0f);
+            }
+            cat_id += proj_height_px * 0.0001f;
+        }
+
+        const std::size_t base_idx = static_cast<std::size_t>(out_count) * 4U;
+        packed[base_idx + 0] = sx;
+        packed[base_idx + 1] = sy;
+        packed[base_idx + 2] = wn.distance_m;
+        packed[base_idx + 3] = cat_id;
+        ++out_count;
+    }
+
+    if (out_count > 0) {
+        env->SetFloatArrayRegion(out_packed, 0, out_count * 4, packed);
+        static std::uint32_t s_overlay_log_tick = 0;
+        if ((++s_overlay_log_tick % 120U) == 1U) {
+            DIAG_LOGI(
+                "[OVERLAY-RENDER] Projected %d / %u 2D markers onto %.0fx%.0f canvas | FirstMarker=(%.1f, %.1f) dist=%.1fm cat=%.0f",
+                static_cast<int>(out_count),
+                static_cast<unsigned>(snap.node_count),
+                static_cast<double>(screen_width),
+                static_cast<double>(screen_height),
+                static_cast<double>(packed[0]),
+                static_cast<double>(packed[1]),
+                static_cast<double>(packed[2]),
+                static_cast<double>(packed[3])
+            );
+        }
+    }
+    return out_count;
+}
+
+#if defined(DBDM_STANDALONE_DAEMON)
+namespace runtime {
+
+INSTRUMENT_LOCAL static pid_t find_game_process_pid() noexcept {
+    DIR* dir = ::opendir("/proc");
+    if (!dir) {
+        return 0;
+    }
+    pid_t found_pid = 0;
+    while (struct dirent* ent = ::readdir(dir)) {
+        const char* dname = ent->d_name;
+        if (dname[0] < '1' || dname[0] > '9') {
+            continue;
+        }
+        const int pid_val = std::atoi(dname);
+        if (pid_val <= 0 || pid_val == ::getpid()) {
+            continue;
+        }
+        char cmd_path[64]{};
+        std::snprintf(cmd_path, sizeof(cmd_path), "/proc/%d/cmdline", pid_val);
+        std::FILE* fp = std::fopen(cmd_path, "rb");
+        if (!fp) {
+            continue;
+        }
+        char cmdline[128]{};
+        const std::size_t n = std::fread(cmdline, 1, sizeof(cmdline) - 1, fp);
+        std::fclose(fp);
+        cmdline[n] = '\0';
+        if (std::strstr(cmdline, "com.netease.dbdena") != nullptr &&
+            std::strstr(cmdline, ":PushService") == nullptr) {
+            found_pid = static_cast<pid_t>(pid_val);
+            break;
+        }
+    }
+    ::closedir(dir);
+    return found_pid;
+}
+
+INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
+    DIAG_LOGI("Standalone Headless Telemetry Daemon started (PID=%d); monitoring com.netease.dbdena...",
+              static_cast<int>(::getpid()));
+
+    g_state.running.store(true, std::memory_order_release);
+
+    pthread_t ipc_tid{};
+    if (pthread_create(&ipc_tid, nullptr, ipc_server_worker_entry, nullptr) == 0) {
+        pthread_detach(ipc_tid);
+    }
+
+    while (g_state.running.load(std::memory_order_acquire)) {
+        const pid_t game_pid = find_game_process_pid();
+        if (game_pid <= 0) {
+            InProcessMemory::set_target_pid(0);
+            g_state.ue4_module = {};
+            g_state.last_logged_uworld = 0;
+            g_state.last_logged_ulevel = 0;
+            g_state.gnamepool_verified = false;
+            sleep_ms(500);
+            continue;
+        }
+
+        if (InProcessMemory::effective_pid() != game_pid || g_state.ue4_module.base_address == 0) {
+            InProcessMemory::set_target_pid(game_pid);
+            const auto mod = elf::find_module("libUE4.so");
+            if (!mod.has_value() || mod->base_address == 0) {
+                sleep_ms(250);
+                continue;
+            }
+            std::array<uint8_t, sizeof(Elf64_Ehdr)> hdr{};
+            if (InProcessMemory::safe_read(mod->base_address, hdr) != Status::Ok) {
+                sleep_ms(250);
+                continue;
+            }
+            g_state.ue4_module = *mod;
+            g_state.last_logged_uworld = 0;
+            g_state.last_logged_ulevel = 0;
+            g_state.gnamepool_verified = false;
+            DIAG_LOGI("Attached to com.netease.dbdena (PID=%d) via process_vm_readv/writev", static_cast<int>(game_pid));
+            log_resolved_engine_anchors();
+        }
+
+        if (::kill(game_pid, 0) != 0) {
+            InProcessMemory::set_target_pid(0);
+            g_state.ue4_module = {};
+            continue;
+        }
+
+        execute_diagnostic_tick();
+        sleep_ms(16);
+    }
+    return 0;
+}
+
+} // namespace runtime
+
+int main(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] && std::strcmp(argv[i], "--daemon") == 0) {
+            (void)::daemon(0, 0);
+            break;
+        }
+    }
+    return runtime::run_standalone_daemon();
+}
+#endif

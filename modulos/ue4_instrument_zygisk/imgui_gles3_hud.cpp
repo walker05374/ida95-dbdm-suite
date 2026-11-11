@@ -3,16 +3,17 @@
 #include "imgui_impl_opengl3.h"
 
 #include <android/input.h>
+#include <android/keycodes.h>
 #include <dlfcn.h>
 #include <jni.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <numbers>
-#include <string_view>
 
 namespace hud {
 
@@ -52,22 +53,37 @@ struct TouchInputState {
     bool            pending_tap_release{false};
     bool            captured_by_hud{false};
     ImVec2          win_pos{24.0f, 24.0f};
-    ImVec2          win_size{520.0f, 640.0f};
+    ImVec2          win_size{560.0f, 700.0f};
     bool            want_capture_mouse{false};
 };
 
 TouchInputState   g_touch{};
 std::atomic<bool> g_imgui_initialized{false};
+std::atomic<bool> g_last_want_text_input{false};
+bool              g_show_touch_keypad{false};
+bool              g_keypad_uppercase{false};
 
-// Vertical height offset in Unreal centimeters (~0.85m actor torso/head offset above root pivot)
-inline constexpr float kActorVerticalOffsetUnits = 85.0f;
-inline constexpr float kNearClipPlaneUnits       = 1.0f;
+struct QueuedKeyEvent {
+    int action;
+    int key_code;
+    int meta_state;
+    int unicode_char;
+};
+
+struct KeyEventQueue {
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    QueuedKeyEvent  events[32]{};
+    std::size_t     count{0};
+};
+
+KeyEventQueue g_key_queue{};
+
+inline constexpr float kNearClipPlaneUnits = 1.0f;
 
 [[nodiscard]] constexpr float deg_to_rad(float degrees) noexcept {
     return degrees * (std::numbers::pi_v<float> / 180.0f);
 }
 
-// Normalizes any arbitrary Euler angle (in degrees) into [-180.0f, 180.0f]
 [[nodiscard]] inline float normalize_euler_angle(float angle_deg) noexcept {
     if (!std::isfinite(angle_deg)) {
         return 0.0f;
@@ -92,6 +108,141 @@ inline constexpr float kNearClipPlaneUnits       = 1.0f;
            (px <= (rect_pos.x + rect_size.x + kTouchPadding)) &&
            (py >= (rect_pos.y - kTouchPadding)) &&
            (py <= (rect_pos.y + rect_size.y + kTouchPadding));
+}
+
+[[nodiscard]] constexpr bool is_valid_cstr_ptr(const char* ptr) noexcept {
+    if (ptr == nullptr) {
+        return false;
+    }
+    const auto raw  = reinterpret_cast<std::uintptr_t>(ptr);
+    const auto addr = raw & 0x0000FFFFFFFFFFFFULL;
+    return (addr >= 0x00010000ULL && addr <= 0x00007FFFFFFFFFFFULL);
+}
+
+[[nodiscard]] inline std::size_t bounded_strnlen(const char* s, std::size_t max_len = kMaxLabelLen) noexcept {
+    if (!is_valid_cstr_ptr(s)) {
+        return 0;
+    }
+    std::size_t n = 0;
+    while (n < max_len && s[n] != '\0') {
+        ++n;
+    }
+    return n;
+}
+
+[[nodiscard]] bool icontains_label(const char* haystack, const char* needle) noexcept {
+    if (!is_valid_cstr_ptr(needle) || needle[0] == '\0') {
+        return true;
+    }
+    if (!is_valid_cstr_ptr(haystack) || haystack[0] == '\0') {
+        return false;
+    }
+
+    const std::size_t n_len = bounded_strnlen(needle, kMaxLabelLen);
+    const std::size_t h_len = bounded_strnlen(haystack, 128);
+    if (n_len == 0 || n_len > h_len) {
+        return false;
+    }
+
+    auto to_lower = [](unsigned char c) constexpr noexcept -> unsigned char {
+        return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c + ('a' - 'A')) : c;
+    };
+
+    for (std::size_t i = 0; i <= h_len - n_len; ++i) {
+        bool match = true;
+        for (std::size_t j = 0; j < n_len; ++j) {
+            if (to_lower(static_cast<unsigned char>(haystack[i + j])) !=
+                to_lower(static_cast<unsigned char>(needle[j]))) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] inline bool is_nonzero_vec3(const Vec3& v) noexcept {
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) &&
+           (std::abs(v.x) > 1e-3f || std::abs(v.y) > 1e-3f || std::abs(v.z) > 1e-3f);
+}
+
+// Rotates a local (dx, dy, dz) offset around the Z-axis by yaw_deg and adds it to center
+[[nodiscard]] inline Vec3 rotate_local_offset(
+    const Vec3& center,
+    float       dx,
+    float       dy,
+    float       dz,
+    float       cos_yaw,
+    float       sin_yaw) noexcept {
+    return Vec3{
+        center.x + (dx * cos_yaw - dy * sin_yaw),
+        center.y + (dx * sin_yaw + dy * cos_yaw),
+        center.z + dz
+    };
+}
+
+// Draws a centered text tag with a crisp 1px drop shadow below a given 2D anchor point
+inline void draw_centered_label_below(
+    ImDrawList*   draw_list,
+    const ImVec2& anchor_bottom,
+    ImU32         text_color,
+    const char*   text) noexcept {
+    if (!draw_list || !text || text[0] == '\0') {
+        return;
+    }
+    const ImVec2 text_size = ImGui::CalcTextSize(text);
+    const ImVec2 pos{
+        anchor_bottom.x - (text_size.x * 0.5f),
+        anchor_bottom.y + 4.0f
+    };
+    const ImU32 shadow_col = IM_COL32(0, 0, 0, 225);
+    draw_list->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), shadow_col, text);
+    draw_list->AddText(pos, text_color, text);
+}
+
+// Resolves effective NodeCategory from node.category and/or node.label
+[[nodiscard]] inline NodeCategory resolve_node_category(const SceneNode& node) noexcept {
+    if (icontains_label(node.label, "Killer") ||
+        icontains_label(node.label, "Slasher") ||
+        icontains_label(node.label, "Assassino")) {
+        return NodeCategory::Antagonist;
+    }
+    if (icontains_label(node.label, "Survivor") ||
+        icontains_label(node.label, "Camper") ||
+        icontains_label(node.label, "Sobrevivente")) {
+        return NodeCategory::Teammate;
+    }
+    if (icontains_label(node.label, "Generator") ||
+        icontains_label(node.label, "Gerador")) {
+        return NodeCategory::PowerNode;
+    }
+    if (icontains_label(node.label, "Totem") ||
+        icontains_label(node.label, "HexSpawner")) {
+        return NodeCategory::Shrine;
+    }
+    if (icontains_label(node.label, "Chest") ||
+        icontains_label(node.label, "Searchable") ||
+        icontains_label(node.label, "Bau") ||
+        icontains_label(node.label, "Baú")) {
+        return NodeCategory::Container;
+    }
+    if (icontains_label(node.label, "Pallet") ||
+        icontains_label(node.label, "Bookshelf")) {
+        return NodeCategory::Barrier;
+    }
+    if (icontains_label(node.label, "Hatch") ||
+        icontains_label(node.label, "ExitGate") ||
+        icontains_label(node.label, "EscapeDoor") ||
+        icontains_label(node.label, "Alcapao") ||
+        icontains_label(node.label, "Alçapão") ||
+        icontains_label(node.label, "Portao") ||
+        icontains_label(node.label, "Portão")) {
+        return NodeCategory::Portal;
+    }
+    return node.category;
 }
 
 // Queries Android DisplayMetrics (both Display.getRealMetrics and Resources.getSystem().getDisplayMetrics)
@@ -149,12 +300,11 @@ inline bool query_android_display_metrics(
     if (env->PushLocalFrame(16) == JNI_OK) {
         jclass dm_cls = env->FindClass("android/util/DisplayMetrics");
         if (!clear_jni_exc() && dm_cls) {
-            jmethodID dm_ctor  = env->GetMethodID(dm_cls, "<init>", "()V");
-            jfieldID  w_fid    = env->GetFieldID(dm_cls, "widthPixels", "I");
-            jfieldID  h_fid    = env->GetFieldID(dm_cls, "heightPixels", "I");
+            jmethodID dm_ctor = env->GetMethodID(dm_cls, "<init>", "()V");
+            jfieldID  w_fid   = env->GetFieldID(dm_cls, "widthPixels", "I");
+            jfieldID  h_fid   = env->GetFieldID(dm_cls, "heightPixels", "I");
 
             if (!clear_jni_exc() && dm_ctor && w_fid && h_fid) {
-                // 1. Query Display.getRealMetrics via ActivityThread.currentApplication()
                 jobject dm_obj = env->NewObject(dm_cls, dm_ctor);
                 if (!clear_jni_exc() && dm_obj) {
                     jclass at_cls = env->FindClass("android/app/ActivityThread");
@@ -199,7 +349,6 @@ inline bool query_android_display_metrics(
                     }
                 }
 
-                // 2. Query Resources.getSystem().getDisplayMetrics()
                 jclass res_cls = env->FindClass("android/content/res/Resources");
                 if (!clear_jni_exc() && res_cls) {
                     jmethodID get_sys_mid = env->GetStaticMethodID(
@@ -247,7 +396,6 @@ inline bool query_android_display_metrics(
     }
 
     if (cand_real_w > 0.0f && cand_sys_w > 0.0f && egl_h > 0.0f) {
-        // Choose whichever physical metric aspect ratio matches the active EGLSurface aspect ratio best
         const float egl_aspect  = egl_w / egl_h;
         const float real_aspect = cand_real_w / cand_real_h;
         const float sys_aspect  = cand_sys_w / cand_sys_h;
@@ -305,151 +453,7 @@ inline void update_touch_scaling_locked(float egl_w, float egl_h) noexcept {
     }
 }
 
-[[nodiscard]] constexpr bool is_valid_cstr_ptr(const char* ptr) noexcept {
-    if (ptr == nullptr) {
-        return false;
-    }
-    const auto raw  = reinterpret_cast<std::uintptr_t>(ptr);
-    const auto addr = raw & 0x0000FFFFFFFFFFFFULL;
-    return (addr >= 0x00010000ULL && addr <= 0x00007FFFFFFFFFFFULL);
-}
-
-[[nodiscard]] inline std::size_t bounded_strnlen(const char* s, std::size_t max_len = kMaxLabelLen) noexcept {
-    if (!is_valid_cstr_ptr(s)) {
-        return 0;
-    }
-    std::size_t n = 0;
-    while (n < max_len && s[n] != '\0') {
-        ++n;
-    }
-    return n;
-}
-
-[[nodiscard]] bool icontains_label(const char* haystack, const char* needle) noexcept {
-    if (!is_valid_cstr_ptr(needle) || needle[0] == '\0') {
-        return true;
-    }
-    if (!is_valid_cstr_ptr(haystack) || haystack[0] == '\0') {
-        return false;
-    }
-
-    const std::size_t n_len = bounded_strnlen(needle, kMaxLabelLen);
-    const std::size_t h_len = bounded_strnlen(haystack, 128);
-    if (n_len == 0 || n_len > h_len) {
-        return false;
-    }
-
-    auto to_lower = [](unsigned char c) constexpr noexcept -> unsigned char {
-        return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c + ('a' - 'A')) : c;
-    };
-
-    for (std::size_t i = 0; i <= h_len - n_len; ++i) {
-        bool match = true;
-        for (std::size_t j = 0; j < n_len; ++j) {
-            if (to_lower(static_cast<unsigned char>(haystack[i + j])) !=
-                to_lower(static_cast<unsigned char>(needle[j]))) {
-                match = false;
-                break;
-            }
-        }
-        if (match) {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace
-
-SceneTelemetryData& get_telemetry_data() noexcept {
-    static SceneTelemetryData instance{};
-    return instance;
-}
-
-void format_friendly_node_label(const char* raw_name, char (&out_label)[kMaxLabelLen]) noexcept {
-    if (!is_valid_cstr_ptr(raw_name) || raw_name[0] == '\0') {
-        std::strncpy(out_label, "Unknown", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // Ignore non-spawned CDOs, lobby actors, sub-components, or handheld items/consumables
-    if (icontains_label(raw_name, "Default__")    ||
-        icontains_label(raw_name, "Lobby")        ||
-        icontains_label(raw_name, "Menu")         ||
-        icontains_label(raw_name, "Controller")   ||
-        icontains_label(raw_name, "Component")    ||
-        icontains_label(raw_name, "AnimInstance") ||
-        icontains_label(raw_name, "Collectable")  ||
-        icontains_label(raw_name, "Medkit")       ||
-        icontains_label(raw_name, "Flashlight")   ||
-        icontains_label(raw_name, "Toolbox")      ||
-        icontains_label(raw_name, "Firecracker")  ||
-        icontains_label(raw_name, "MapItem")      ||
-        icontains_label(raw_name, "Key")          ||
-        icontains_label(raw_name, "Addon")        ||
-        icontains_label(raw_name, "Chargeable")   ||
-        icontains_label(raw_name, "Inventory")    ||
-        icontains_label(raw_name, "Item")) {
-        std::strncpy(out_label, "Unknown", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // 1. Chests / Searchable Boxes (check BEFORE Survivor/Camper so Chests with Camper interactions aren't mislabeled)
-    if (icontains_label(raw_name, "Chest") || icontains_label(raw_name, "Searchable")) {
-        std::strncpy(out_label, "Chest", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // 2. Generators
-    if (icontains_label(raw_name, "Generator")) {
-        std::strncpy(out_label, "Generator", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // 3. Hatch / Escape Door
-    if (icontains_label(raw_name, "Hatch")) {
-        std::strncpy(out_label, "Hatch", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // 4. Totems
-    if (icontains_label(raw_name, "Totem")) {
-        std::strncpy(out_label, "Totem", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // 5. Killer (Slasher character pawn only; ignore hooks/traps/projectiles/powers)
-    if ((icontains_label(raw_name, "Slasher") || icontains_label(raw_name, "Killer")) &&
-        !icontains_label(raw_name, "Hook") &&
-        !icontains_label(raw_name, "Trap") &&
-        !icontains_label(raw_name, "Projectile") &&
-        !icontains_label(raw_name, "Power") &&
-        !icontains_label(raw_name, "Stalker") &&
-        !icontains_label(raw_name, "Interactable")) {
-        std::strncpy(out_label, "Killer", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // 6. Survivors (Camper character pawns only)
-    if ((icontains_label(raw_name, "Camper") || icontains_label(raw_name, "Survivor")) &&
-        !icontains_label(raw_name, "Hook") &&
-        !icontains_label(raw_name, "Interactable")) {
-        std::strncpy(out_label, "Survivor", kMaxLabelLen - 1);
-        out_label[kMaxLabelLen - 1] = '\0';
-        return;
-    }
-
-    // Unrecognized actors are marked Unknown so strict match filtering can ignore clutter
-    std::strncpy(out_label, "Unknown", kMaxLabelLen - 1);
-    out_label[kMaxLabelLen - 1] = '\0';
-}
 
 bool project_to_screen(
     const Vec3&       world_pos,
@@ -467,13 +471,6 @@ bool project_to_screen(
         !std::isfinite(camera.location.x) || !std::isfinite(camera.location.y) || !std::isfinite(camera.location.z)) {
         return false;
     }
-
-    // Apply vertical world-space offset so markers anchor at actor torso/head rather than ground root
-    const Vec3 elevated_world_pos{
-        world_pos.x,
-        world_pos.y,
-        world_pos.z + kActorVerticalOffsetUnits
-    };
 
     // Normalize camera Euler angles into [-180, 180] (with pitch clamped to [-89.9, 89.9] to avoid gimbal flip)
     const float pitch_deg = std::clamp(normalize_euler_angle(camera.rotation.pitch), -89.9f, 89.9f);
@@ -508,13 +505,13 @@ bool project_to_screen(
         cr * cp
     };
 
-    const Vec3 delta = elevated_world_pos - camera.location;
+    const Vec3 delta = world_pos - camera.location;
 
     const float view_x = delta.dot(axis_right);
     const float view_y = delta.dot(axis_up);
     const float view_z = delta.dot(axis_forward);
 
-    // Strict near-plane guard: discard any node behind or too close to the camera plane
+    // Strict near-plane guard: discard any vertex behind or too close to the camera plane
     if (!std::isfinite(view_z) || view_z < kNearClipPlaneUnits) {
         return false;
     }
@@ -538,7 +535,7 @@ bool project_to_screen(
         return false;
     }
 
-    // Strict viewport frustum guard: prevent markers or text from clamping/sticking to screen edges
+    // Strict viewport frustum guard
     if (proj_x < 0.0f || proj_x > screen_width ||
         proj_y < 0.0f || proj_y > screen_height) {
         return false;
@@ -552,14 +549,22 @@ bool project_to_screen(
 void render_hud_frame(float width, float height) noexcept {
     SceneTelemetryData& data = get_telemetry_data();
 
-    // Snapshot nodes and camera state under lock to minimize contention during draw list submission
+    // Snapshot nodes, camera, and category visibility under lock to minimize contention
     CameraView  cam_snapshot{};
     SceneNode   nodes_snapshot[kMaxSceneNodes]{};
     std::size_t count_snapshot      = 0;
     bool        match_live_snapshot = false;
     bool        draw_markers        = true;
     float       max_dist_m          = 250.0f;
-    char        filter_snapshot[kMaxLabelLen]{};
+
+    bool show_antagonist    = true;
+    bool show_teammates     = true;
+    bool show_power_nodes   = true;
+    bool show_shrines       = true;
+    bool show_containers    = true;
+    bool show_barriers      = true;
+    bool show_portals       = true;
+    bool show_special_props = true;
 
     {
         ScopedMutexLock lock(&data.mutex);
@@ -569,30 +574,37 @@ void render_hud_frame(float width, float height) noexcept {
         for (std::size_t i = 0; i < count_snapshot; ++i) {
             nodes_snapshot[i] = data.nodes[i];
         }
-        draw_markers = data.draw_2d_node_markers;
-        max_dist_m   = data.max_render_distance_m;
-        std::memcpy(filter_snapshot, data.label_filter, kMaxLabelLen);
-        filter_snapshot[kMaxLabelLen - 1] = '\0';
-    }
-
-    float touch_x_snapshot = -1000.0f;
-    float touch_y_snapshot = -1000.0f;
-    {
-        ScopedMutexLock touch_lock(&g_touch.mutex);
-        touch_x_snapshot = g_touch.x;
-        touch_y_snapshot = g_touch.y;
+        draw_markers       = data.draw_2d_node_markers;
+        max_dist_m         = data.max_render_distance_m;
+        show_antagonist    = data.show_antagonist;
+        show_teammates     = data.show_teammates;
+        show_power_nodes   = data.show_power_nodes;
+        show_shrines       = data.show_shrines;
+        show_containers    = data.show_containers;
+        show_barriers      = data.show_barriers;
+        show_portals       = data.show_portals;
+        show_special_props = data.show_special_props;
     }
 
     std::size_t visible_markers_rendered = 0;
 
-    // 1. Background 2D Aura Marker Rendering (ONLY when an active match is in progress)
+    // 1. Minimalist Text + Directional Tracer Line + Thin 14-Joint Skeleton Rendering
     if (draw_markers && match_live_snapshot && count_snapshot > 0) {
         ImDrawList* bg_draw_list = ImGui::GetBackgroundDrawList();
-        const ImU32 col_shadow   = IM_COL32(0, 0, 0, 210);
-        const float center_x     = width * 0.5f;
-        const float center_y     = height * 0.5f;
 
-        bool killer_rendered_this_frame = false;
+        // Color Palette
+        const ImU32 col_antagonist   = IM_COL32(255, 42, 42, 255);   // Red #FF2A2A
+        const ImU32 col_teammate     = IM_COL32(0, 229, 255, 255);   // Cyan/Blue #00E5FF
+        const ImU32 col_power_node   = IM_COL32(46, 204, 113, 255);  // Green #2ECC71
+        const ImU32 col_power_tracer = IM_COL32(46, 204, 113, 110);  // Subtle Green tracer
+        const ImU32 col_shrine       = IM_COL32(241, 196, 15, 255);  // Yellow #F1C40F
+        const ImU32 col_barrier      = IM_COL32(255, 241, 118, 255); // Light Yellow/Gold #FFF176
+        const ImU32 col_container    = IM_COL32(255, 152, 0, 255);   // Orange #FF9800
+        const ImU32 col_portal       = IM_COL32(224, 64, 251, 255);  // Purple #E040FB
+        const ImU32 col_special_prop = IM_COL32(180, 210, 240, 230); // Subtle Light Blue
+
+        const ImVec2 screen_bottom_center{width * 0.5f, height};
+        bool         antagonist_rendered = false;
 
         for (std::size_t i = 0; i < count_snapshot; ++i) {
             const SceneNode& node = nodes_snapshot[i];
@@ -601,200 +613,563 @@ void render_hud_frame(float width, float height) noexcept {
                 continue;
             }
 
-            char clean_label[kMaxLabelLen]{};
-            if (std::strcmp(node.label, "Killer") == 0 ||
-                std::strcmp(node.label, "Survivor") == 0 ||
-                std::strcmp(node.label, "Generator") == 0 ||
-                std::strcmp(node.label, "Hatch") == 0 ||
-                std::strcmp(node.label, "Chest") == 0 ||
-                std::strcmp(node.label, "Totem") == 0) {
-                std::strncpy(clean_label, node.label, kMaxLabelLen - 1);
-                clean_label[kMaxLabelLen - 1] = '\0';
-            } else {
-                format_friendly_node_label(node.label, clean_label);
-            }
+            const NodeCategory cat = resolve_node_category(node);
 
-            if (std::strcmp(clean_label, "Unknown") == 0) {
+            // Check category visibility filter
+            bool category_enabled = false;
+            switch (cat) {
+                case NodeCategory::Antagonist:  category_enabled = show_antagonist;    break;
+                case NodeCategory::Teammate:    category_enabled = show_teammates;     break;
+                case NodeCategory::PowerNode:   category_enabled = show_power_nodes;   break;
+                case NodeCategory::Shrine:      category_enabled = show_shrines;       break;
+                case NodeCategory::Container:   category_enabled = show_containers;    break;
+                case NodeCategory::Barrier:     category_enabled = show_barriers;      break;
+                case NodeCategory::Portal:      category_enabled = show_portals;       break;
+                case NodeCategory::SpecialProp: category_enabled = show_special_props; break;
+            }
+            if (!category_enabled) {
                 continue;
             }
 
-            // Guarantee at most ONE Killer aura marker is rendered per frame
-            const bool is_killer = (std::strcmp(clean_label, "Killer") == 0);
-            if (is_killer) {
-                if (killer_rendered_this_frame) {
+            if (cat == NodeCategory::Antagonist) {
+                if (antagonist_rendered) {
                     continue;
                 }
-                killer_rendered_this_frame = true;
+                antagonist_rendered = true;
             }
 
-            if (!icontains_label(clean_label, filter_snapshot) &&
-                !icontains_label(node.label, filter_snapshot)) {
-                continue;
-            }
+            const int dist_int = static_cast<int>(std::lround(std::max(0.0f, node.distance_m)));
 
-            ImVec2 screen_pos{};
-            if (!project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
-                continue;
-            }
+            // ----------------------------------------------------------------
+            // Category A: Antagonist (#FF2A2A) & Teammate (#00E5FF)
+            // 1.5px directional tracer line + bone-matrix world skeleton (or dynamic 8-corner upright capsule box) + clean foot label
+            // ----------------------------------------------------------------
+            if (cat == NodeCategory::Antagonist || cat == NodeCategory::Teammate) {
+                const bool  is_antagonist = (cat == NodeCategory::Antagonist);
+                const ImU32 primary_col   = is_antagonist ? col_antagonist : col_teammate;
 
-            // Select Aura palette by entity classification:
-            // - Killer:    Crimson Red
-            // - Survivor:  Emerald Green / Cyan-Teal
-            // - Generator: Golden Yellow
-            // - Hatch:     Vibrant Purple
-            // - Chest:     Clean Pure White
-            // - Totem:     Soft Amber/Orange
-            ImU32 col_core       = IM_COL32(52, 152, 219, 235);
-            ImU32 col_inner_glow = IM_COL32(52, 152, 219, 95);
-            ImU32 col_outer_glow = IM_COL32(52, 152, 219, 38);
-            ImU32 col_ring       = IM_COL32(52, 152, 219, 175);
-            float base_radius    = 6.0f;
-
-            if (is_killer) {
-                col_core       = IM_COL32(255, 45, 55, 245);
-                col_inner_glow = IM_COL32(255, 45, 55, 110);
-                col_outer_glow = IM_COL32(255, 20, 30, 48);
-                col_ring       = IM_COL32(255, 110, 110, 210);
-                base_radius    = 7.5f;
-            } else if (std::strcmp(clean_label, "Survivor") == 0) {
-                col_core       = IM_COL32(46, 224, 130, 240);
-                col_inner_glow = IM_COL32(46, 224, 130, 95);
-                col_outer_glow = IM_COL32(46, 224, 130, 38);
-                col_ring       = IM_COL32(110, 255, 180, 185);
-                base_radius    = 6.5f;
-            } else if (std::strcmp(clean_label, "Generator") == 0) {
-                col_core       = IM_COL32(255, 210, 40, 235);
-                col_inner_glow = IM_COL32(255, 210, 40, 85);
-                col_outer_glow = IM_COL32(255, 190, 20, 34);
-                col_ring       = IM_COL32(255, 230, 110, 170);
-                base_radius    = 6.0f;
-            } else if (std::strcmp(clean_label, "Hatch") == 0) {
-                col_core       = IM_COL32(195, 90, 255, 240);
-                col_inner_glow = IM_COL32(195, 90, 255, 100);
-                col_outer_glow = IM_COL32(175, 60, 255, 42);
-                col_ring       = IM_COL32(225, 150, 255, 195);
-                base_radius    = 6.5f;
-            } else if (std::strcmp(clean_label, "Chest") == 0) {
-                col_core       = IM_COL32(248, 250, 255, 235);
-                col_inner_glow = IM_COL32(235, 242, 255, 85);
-                col_outer_glow = IM_COL32(215, 230, 255, 32);
-                col_ring       = IM_COL32(255, 255, 255, 180);
-                base_radius    = 5.5f;
-            } else if (std::strcmp(clean_label, "Totem") == 0) {
-                col_core       = IM_COL32(255, 145, 50, 230);
-                col_inner_glow = IM_COL32(255, 145, 50, 85);
-                col_outer_glow = IM_COL32(255, 120, 30, 32);
-                col_ring       = IM_COL32(255, 180, 100, 170);
-                base_radius    = 5.0f;
-            }
-
-            // Draw multi-layered glowing Aura orb (outer halo + inner glow + crisp ring + bright core)
-            bg_draw_list->AddCircleFilled(screen_pos, base_radius * 2.5f, col_outer_glow, 24);
-            bg_draw_list->AddCircleFilled(screen_pos, base_radius * 1.6f, col_inner_glow, 20);
-            bg_draw_list->AddCircle(screen_pos, base_radius + 2.2f, col_ring, 20, 1.5f);
-            bg_draw_list->AddCircleFilled(screen_pos, base_radius, col_core, 16);
-
-            // Clean Viewport Text Policy:
-            // Show text label (Name + Distance) ONLY when:
-            //  - Entity is the Killer, OR
-            //  - Entity is in close proximity (<= 32m for Survivors, <= 22m for objects), OR
-            //  - The player's crosshair (screen center) or touch cursor is hovering near the aura (<= 75px)
-            const float dx_center = screen_pos.x - center_x;
-            const float dy_center = screen_pos.y - center_y;
-            const bool  near_reticle = ((dx_center * dx_center + dy_center * dy_center) <= (75.0f * 75.0f));
-
-            const float dx_touch = screen_pos.x - touch_x_snapshot;
-            const float dy_touch = screen_pos.y - touch_y_snapshot;
-            const bool  near_touch = ((dx_touch * dx_touch + dy_touch * dy_touch) <= (75.0f * 75.0f));
-
-            const float proximity_limit = (std::strcmp(clean_label, "Survivor") == 0) ? 32.0f : 22.0f;
-            const bool  show_full_label =
-                is_killer || (node.distance_m <= proximity_limit) || near_reticle || near_touch;
-
-            if (show_full_label) {
-                char formatted_tag[96]{};
-                std::snprintf(
-                    formatted_tag,
-                    sizeof(formatted_tag),
-                    "%s %.0fm",
-                    clean_label,
-                    static_cast<double>(node.distance_m));
-
-                const ImVec2 text_size = ImGui::CalcTextSize(formatted_tag);
-                const ImVec2 text_pos{
-                    screen_pos.x - (text_size.x * 0.5f),
-                    screen_pos.y - (base_radius * 2.3f) - text_size.y
+                const float yaw_rad  = deg_to_rad(normalize_euler_angle(node.yaw_deg));
+                const float half_yaw = yaw_rad * 0.5f;
+                const BoneTransform comp_to_world{
+                    0.0f,
+                    0.0f,
+                    std::sin(half_yaw),
+                    std::cos(half_yaw),
+                    node.world_pos,
+                    Vec3{1.0f, 1.0f, 1.0f}
                 };
-                bg_draw_list->AddText(ImVec2(text_pos.x + 1.0f, text_pos.y + 1.0f), col_shadow, formatted_tag);
-                bg_draw_list->AddText(text_pos, col_core, formatted_tag);
+
+                const bool actor_far_from_origin =
+                    (std::abs(node.world_pos.x) > 250.0f ||
+                     std::abs(node.world_pos.y) > 250.0f ||
+                     std::abs(node.world_pos.z) > 250.0f);
+
+                std::array<Vec3, kSkeletonJointCount> joints{};
+                std::size_t valid_bone_inputs = 0;
+                float       min_world_z       =  1e9f;
+                float       max_world_z       = -1e9f;
+
+                if (node.has_skeleton) {
+                    for (std::size_t b = 0; b < kSkeletonJointCount; ++b) {
+                        const Vec3& raw_j = node.bone_joints[b];
+                        if (!is_nonzero_vec3(raw_j)) {
+                            continue;
+                        }
+                        const bool is_local_component_space =
+                            actor_far_from_origin &&
+                            std::abs(raw_j.x) < 220.0f &&
+                            std::abs(raw_j.y) < 220.0f &&
+                            std::abs(raw_j.z) < 220.0f;
+
+                        const Vec3 world_j = is_local_component_space
+                            ? transform_bone_local_to_world(raw_j, comp_to_world)
+                            : raw_j;
+
+                        if (is_valid_bone_world_pos(world_j, node.world_pos)) {
+                            joints[b]   = world_j;
+                            min_world_z = std::min(min_world_z, world_j.z);
+                            max_world_z = std::max(max_world_z, world_j.z);
+                            ++valid_bone_inputs;
+                        }
+                    }
+                }
+
+                const float min_foot_z = std::min(joints[12].z, joints[13].z);
+                const bool  has_anatomical_order =
+                    is_nonzero_vec3(joints[0]) &&
+                    is_nonzero_vec3(joints[3]) &&
+                    (is_nonzero_vec3(joints[12]) || is_nonzero_vec3(joints[13])) &&
+                    (joints[0].z > joints[3].z + 15.0f) &&
+                    (joints[3].z > min_foot_z + 15.0f);
+
+                const bool has_valid_bone_rig =
+                    (valid_bone_inputs >= 10) &&
+                    ((max_world_z - min_world_z) >= 35.0f) &&
+                    ((max_world_z - min_world_z) <= 220.0f) &&
+                    has_anatomical_order;
+
+                // If bone indices are uninitialized or return zero/collapsed vectors, construct a dynamic
+                // upright bounding box + articulated limbs anchored at actor_pos (Z - 45.0f to Z + 45.0f)
+                if (!has_valid_bone_rig) {
+                    const std::array<Vec3, kBoundingCornerCount> local_corners{{
+                        {-kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
+                        { kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
+                        { kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
+                        {-kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
+                        {-kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm},
+                        { kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm},
+                        { kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm},
+                        {-kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm}
+                    }};
+                    std::array<ImVec2, kBoundingCornerCount> proj_corners{};
+                    std::array<bool, kBoundingCornerCount>   corner_ok{};
+                    std::size_t valid_corners = 0;
+                    for (std::size_t c = 0; c < kBoundingCornerCount; ++c) {
+                        const Vec3 wc = transform_bone_local_to_world(local_corners[c], comp_to_world);
+                        if (project_to_screen(wc, cam_snapshot, width, height, proj_corners[c])) {
+                            corner_ok[c] = true;
+                            ++valid_corners;
+                        }
+                    }
+                    if (valid_corners >= 4) {
+                        auto draw_box_edge = [&](std::size_t a, std::size_t b) noexcept {
+                            if (corner_ok[a] && corner_ok[b]) {
+                                bg_draw_list->AddLine(proj_corners[a], proj_corners[b], primary_col, 1.2f);
+                            }
+                        };
+                        draw_box_edge(0, 1); draw_box_edge(1, 2); draw_box_edge(2, 3); draw_box_edge(3, 0);
+                        draw_box_edge(4, 5); draw_box_edge(5, 6); draw_box_edge(6, 7); draw_box_edge(7, 4);
+                        draw_box_edge(0, 4); draw_box_edge(1, 5); draw_box_edge(2, 6); draw_box_edge(3, 7);
+                    }
+
+                    joints[0]  = transform_bone_local_to_world({0.0f,   0.0f,  kCapsuleHalfHeightCm}, comp_to_world);  // Head (+45.0f)
+                    joints[1]  = transform_bone_local_to_world({0.0f,   0.0f,  32.0f},                comp_to_world);  // Neck
+                    joints[2]  = transform_bone_local_to_world({0.0f,   0.0f,  15.0f},                comp_to_world);  // Spine
+                    joints[3]  = transform_bone_local_to_world({0.0f,   0.0f,   0.0f},                comp_to_world);  // Pelvis
+                    joints[4]  = transform_bone_local_to_world({0.0f, -16.0f,  30.0f},                comp_to_world);  // LShoulder
+                    joints[5]  = transform_bone_local_to_world({0.0f,  16.0f,  30.0f},                comp_to_world);  // RShoulder
+                    joints[6]  = transform_bone_local_to_world({0.0f, -22.0f,  12.0f},                comp_to_world);  // LElbow
+                    joints[7]  = transform_bone_local_to_world({0.0f,  22.0f,  12.0f},                comp_to_world);  // RElbow
+                    joints[8]  = transform_bone_local_to_world({5.0f, -24.0f,  -4.0f},                comp_to_world);  // LHand
+                    joints[9]  = transform_bone_local_to_world({5.0f,  24.0f,  -4.0f},                comp_to_world);  // RHand
+                    joints[10] = transform_bone_local_to_world({3.0f, -10.0f, -22.0f},                comp_to_world);  // LKnee
+                    joints[11] = transform_bone_local_to_world({3.0f,  10.0f, -22.0f},                comp_to_world);  // RKnee
+                    joints[12] = transform_bone_local_to_world({4.0f, -12.0f, -kCapsuleHalfHeightCm}, comp_to_world);  // LFoot (-45.0f)
+                    joints[13] = transform_bone_local_to_world({4.0f,  12.0f, -kCapsuleHalfHeightCm}, comp_to_world);  // RFoot (-45.0f)
+                }
+
+                std::array<ImVec2, kSkeletonJointCount> proj_bones{};
+                std::array<bool, kSkeletonJointCount>   valid_bones{};
+                float       min_x       = width;
+                float       max_x       = 0.0f;
+                float       max_y       = 0.0f;
+                std::size_t valid_count = 0;
+
+                for (std::size_t b = 0; b < kSkeletonJointCount; ++b) {
+                    if (is_nonzero_vec3(joints[b]) &&
+                        project_to_screen(joints[b], cam_snapshot, width, height, proj_bones[b])) {
+                        valid_bones[b] = true;
+                        min_x = std::min(min_x, proj_bones[b].x);
+                        max_x = std::max(max_x, proj_bones[b].x);
+                        max_y = std::max(max_y, proj_bones[b].y);
+                        ++valid_count;
+                    } else {
+                        valid_bones[b] = false;
+                    }
+                }
+
+                ImVec2 foot_anchor{};
+                bool   has_foot_anchor = false;
+
+                if (valid_count >= 2) {
+                    auto draw_limb = [&](std::size_t a, std::size_t b) noexcept {
+                        if (a < kSkeletonJointCount && b < kSkeletonJointCount &&
+                            valid_bones[a] && valid_bones[b]) {
+                            bg_draw_list->AddLine(proj_bones[a], proj_bones[b], primary_col, 1.5f);
+                        }
+                    };
+
+                    if (is_nonzero_vec3(joints[13])) {
+                        // 14-joint layout
+                        draw_limb(0, 1);   // Head -> Neck
+                        draw_limb(1, 2);   // Neck -> Spine
+                        draw_limb(2, 3);   // Spine -> Pelvis
+                        draw_limb(1, 4);   // Neck -> L_Shoulder
+                        draw_limb(4, 6);   // L_Shoulder -> L_Elbow
+                        draw_limb(6, 8);   // L_Elbow -> L_Hand
+                        draw_limb(1, 5);   // Neck -> R_Shoulder
+                        draw_limb(5, 7);   // R_Shoulder -> R_Elbow
+                        draw_limb(7, 9);   // R_Elbow -> R_Hand
+                        draw_limb(3, 10);  // Pelvis -> L_Knee
+                        draw_limb(10, 12); // L_Knee -> L_Foot
+                        draw_limb(3, 11);  // Pelvis -> R_Knee
+                        draw_limb(11, 13); // R_Knee -> R_Foot
+                    } else {
+                        // 13-joint layout
+                        draw_limb(0, 1);   // Head -> Neck
+                        draw_limb(1, 2);   // Neck -> Pelvis
+                        draw_limb(1, 3);   // Neck -> L_Shoulder
+                        draw_limb(3, 5);   // L_Shoulder -> L_Elbow
+                        draw_limb(5, 7);   // L_Elbow -> L_Hand
+                        draw_limb(1, 4);   // Neck -> R_Shoulder
+                        draw_limb(4, 6);   // R_Shoulder -> R_Elbow
+                        draw_limb(6, 8);   // R_Elbow -> R_Hand
+                        draw_limb(2, 9);   // Pelvis -> L_Knee
+                        draw_limb(9, 11);  // L_Knee -> L_Foot
+                        draw_limb(2, 10);  // Pelvis -> R_Knee
+                        draw_limb(10, 12); // R_Knee -> R_Foot
+                    }
+
+                    if (valid_bones[0]) {
+                        bg_draw_list->AddCircle(proj_bones[0], 3.5f, primary_col, 14, 1.5f);
+                    }
+
+                    if (valid_bones[12] && valid_bones[13]) {
+                        foot_anchor = ImVec2(
+                            (proj_bones[12].x + proj_bones[13].x) * 0.5f,
+                            std::max(proj_bones[12].y, proj_bones[13].y));
+                    } else {
+                        foot_anchor = ImVec2((min_x + max_x) * 0.5f, max_y);
+                    }
+                    has_foot_anchor = true;
+                } else {
+                    const Vec3 world_feet{node.world_pos.x, node.world_pos.y, node.world_pos.z - kCapsuleHalfHeightCm};
+                    if (project_to_screen(world_feet, cam_snapshot, width, height, foot_anchor) ||
+                        project_to_screen(node.world_pos, cam_snapshot, width, height, foot_anchor)) {
+                        has_foot_anchor = true;
+                    }
+                }
+
+                if (has_foot_anchor) {
+                    // 1.5px directional tracer line (snapline) from bottom-center of screen to character root foot coordinates
+                    bg_draw_list->AddLine(screen_bottom_center, foot_anchor, primary_col, 1.5f);
+
+                    char tag[128]{};
+                    if (is_antagonist) {
+                        std::snprintf(tag, sizeof(tag), "assassino [%dm]", dist_int);
+                    } else {
+                        const bool has_custom_label =
+                            (node.label[0] != '\0' &&
+                             std::strcmp(node.label, "Survivor") != 0 &&
+                             std::strcmp(node.label, "Sobrevivente") != 0);
+                        const char* display_name = has_custom_label ? node.label : "sobrevivente";
+                        std::snprintf(tag, sizeof(tag), "%s [%dm]", display_name, dist_int);
+                    }
+                    draw_centered_label_below(bg_draw_list, foot_anchor, primary_col, tag);
+                    ++visible_markers_rendered;
+                }
+                continue;
             }
 
-            ++visible_markers_rendered;
+            // ----------------------------------------------------------------
+            // Category B: PowerNode / Generator (Green #2ECC71)
+            // Auto-hide completed nodes (progress_pct >= 99.5f); clean text + subtle tracer
+            // ----------------------------------------------------------------
+            if (cat == NodeCategory::PowerNode) {
+                if (std::isfinite(node.progress_pct) && node.progress_pct >= 99.5f) {
+                    continue;
+                }
+
+                ImVec2 screen_pos{};
+                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
+                    const float clamped_pct = std::clamp(
+                        std::isfinite(node.progress_pct) && node.progress_pct >= 0.0f ? node.progress_pct : 0.0f,
+                        0.0f,
+                        100.0f);
+
+                    bg_draw_list->AddLine(screen_bottom_center, screen_pos, col_power_tracer, 1.0f);
+
+                    char tag[128]{};
+                    std::snprintf(
+                        tag,
+                        sizeof(tag),
+                        "gerador %.0f%% [%dm]",
+                        static_cast<double>(clamped_pct),
+                        dist_int);
+                    draw_centered_label_below(bg_draw_list, screen_pos, col_power_node, tag);
+                    ++visible_markers_rendered;
+                }
+                continue;
+            }
+
+            // ----------------------------------------------------------------
+            // Category C: Shrine / Totem (Yellow #F1C40F)
+            // Auto-hide if inactive (progress_pct < 0.0f or destroyed); clean Yellow text only
+            // ----------------------------------------------------------------
+            if (cat == NodeCategory::Shrine) {
+                if (!std::isfinite(node.progress_pct) ||
+                    node.progress_pct < 0.0f ||
+                    icontains_label(node.label, "Destroyed") ||
+                    icontains_label(node.label, "Cleansed") ||
+                    icontains_label(node.label, "Broken")) {
+                    continue;
+                }
+
+                ImVec2 screen_pos{};
+                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
+                    char tag[96]{};
+                    std::snprintf(tag, sizeof(tag), "totem [%dm]", dist_int);
+                    draw_centered_label_below(bg_draw_list, screen_pos, col_shrine, tag);
+                    ++visible_markers_rendered;
+                }
+                continue;
+            }
+
+            // ----------------------------------------------------------------
+            // Category D: Barrier / Active Pallet Only (Light Yellow/Gold #FFF176)
+            // Windows/Vaults and broken/fallen/illusionary pallets are never rendered
+            // ----------------------------------------------------------------
+            if (cat == NodeCategory::Barrier) {
+                if (!std::isfinite(node.progress_pct) ||
+                    node.progress_pct < 0.0f ||
+                    icontains_label(node.label, "Window") ||
+                    icontains_label(node.label, "Vault") ||
+                    icontains_label(node.label, "Janela") ||
+                    icontains_label(node.label, "Broken") ||
+                    icontains_label(node.label, "Destroyed") ||
+                    icontains_label(node.label, "Fallen") ||
+                    icontains_label(node.label, "Illusion") ||
+                    icontains_label(node.label, "Fake")) {
+                    continue;
+                }
+
+                ImVec2 screen_pos{};
+                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
+                    char tag[96]{};
+                    std::snprintf(tag, sizeof(tag), "pallet [%dm]", dist_int);
+                    draw_centered_label_below(bg_draw_list, screen_pos, col_barrier, tag);
+                    ++visible_markers_rendered;
+                }
+                continue;
+            }
+
+            // ----------------------------------------------------------------
+            // Category E: Container (Orange #FF9800) & Portal (Purple #E040FB)
+            // Clean compact text only: "bau [%dm]", "alcapao [%dm]", "portao [%dm]"
+            // ----------------------------------------------------------------
+            if (cat == NodeCategory::Container) {
+                ImVec2 screen_pos{};
+                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
+                    char tag[96]{};
+                    std::snprintf(tag, sizeof(tag), "bau [%dm]", dist_int);
+                    draw_centered_label_below(bg_draw_list, screen_pos, col_container, tag);
+                    ++visible_markers_rendered;
+                }
+                continue;
+            }
+
+            if (cat == NodeCategory::Portal) {
+                ImVec2 screen_pos{};
+                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
+                    const bool is_hatch = icontains_label(node.label, "Hatch") ||
+                                          icontains_label(node.label, "Alcapao") ||
+                                          icontains_label(node.label, "Alçapão");
+                    char tag[96]{};
+                    std::snprintf(
+                        tag,
+                        sizeof(tag),
+                        "%s [%dm]",
+                        is_hatch ? "alcapao" : "portao",
+                        dist_int);
+                    draw_centered_label_below(bg_draw_list, screen_pos, col_portal, tag);
+                    ++visible_markers_rendered;
+                }
+                continue;
+            }
+
+            // ----------------------------------------------------------------
+            // Category F: SpecialProp
+            // Clean compact text only (no 3D box)
+            // ----------------------------------------------------------------
+            {
+                ImVec2 screen_pos{};
+                if (project_to_screen(node.world_pos, cam_snapshot, width, height, screen_pos)) {
+                    const char* prop_name = (node.label[0] != '\0') ? node.label : "objeto";
+                    char        tag[128]{};
+                    std::snprintf(tag, sizeof(tag), "%s [%dm]", prop_name, dist_int);
+                    draw_centered_label_below(bg_draw_list, screen_pos, col_special_prop, tag);
+                    ++visible_markers_rendered;
+                }
+            }
         }
     }
 
-    // 2. Control Panel HUD Window
+    // 2. Control Panel HUD Window (Fully Localized in Brazilian Portuguese - PT-BR)
     ScopedMutexLock lock(&data.mutex);
     if (!data.hud_open) {
+        ImGui::SetNextWindowPos(ImVec2(24.0f, 24.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(210.0f, 64.0f), ImGuiCond_Always);
+        if (ImGui::Begin(
+                "##DBDMFloatingTogglePill",
+                nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar)) {
+            if (ImGui::Button("Abrir Painel 3D", ImVec2(-1.0f, -1.0f))) {
+                data.hud_open = true;
+            }
+        }
+        const ImVec2 pill_pos  = ImGui::GetWindowPos();
+        const ImVec2 pill_size = ImGui::GetWindowSize();
+        ImGui::End();
+
         ScopedMutexLock touch_lock(&g_touch.mutex);
-        g_touch.want_capture_mouse = false;
-        g_touch.captured_by_hud    = false;
+        g_touch.win_pos            = pill_pos;
+        g_touch.win_size           = pill_size;
+        g_touch.want_capture_mouse = point_in_rect(g_touch.x, g_touch.y, pill_pos, pill_size);
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(520.0f, 640.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(580.0f, 740.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(24.0f, 24.0f), ImGuiCond_FirstUseEver);
 
-    if (ImGui::Begin("GLES3 Scene Telemetry & Control Panel", &data.hud_open)) {
-        // Section 1: Telemetry Status Counters
-        if (ImGui::CollapsingHeader("1. Telemetry Status Counters", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::Begin("Painel de Telemetria e Visualização 3D (GLES3)", &data.hud_open)) {
+        // Section 1: Telemetry Status Counters (PT-BR)
+        if (ImGui::CollapsingHeader("1. Status da Telemetria e Câmera", ImGuiTreeNodeFlags_DefaultOpen)) {
             const ImGuiIO& io = ImGui::GetIO();
-            ImGui::Text("EGL Viewport: %.0f x %.0f (%.1f FPS)",
+            ImGui::Text("Viewport EGL: %.0f x %.0f (%.1f FPS)",
                         static_cast<double>(width),
                         static_cast<double>(height),
                         static_cast<double>(io.Framerate));
-            ImGui::Text("Touch Scale: %.3f x %.3f (Phys: %.0f x %.0f)",
+            ImGui::Text("Escala de Toque: %.3f x %.3f (Físico: %.0f x %.0f)",
                         static_cast<double>(g_touch.scale_x),
                         static_cast<double>(g_touch.scale_y),
                         static_cast<double>(g_touch.phys_width),
                         static_cast<double>(g_touch.phys_height));
-            ImGui::Text("Player Name: %s",
-                        data.custom_player_name[0] != '\0' ? data.custom_player_name : "(In-Game Default)");
-            ImGui::Text("Match State: %s | Active Nodes: %zu / %zu",
-                        match_live_snapshot ? "IN MATCH (ACTIVE)" : "LOBBY / LOADING (STANDBY)",
+            ImGui::Text("Nome do Jogador: %s",
+                        data.custom_player_name[0] != '\0' ? data.custom_player_name : "(Padrão do Jogo)");
+            ImGui::Text("Estado da Partida: %s | Nós Ativos: %zu / %zu",
+                        match_live_snapshot ? "EM PARTIDA (ATIVO)" : "LOBBY / AGUARDANDO",
                         count_snapshot,
                         kMaxSceneNodes);
-            ImGui::Text("Projected Auras Visible: %zu", visible_markers_rendered);
+            ImGui::Text("Elementos 3D Renderizados: %zu", visible_markers_rendered);
             ImGui::Separator();
-            ImGui::Text("Camera Pos: (%.1f, %.1f, %.1f)",
+            ImGui::Text("Posição da Câmera: (%.1f, %.1f, %.1f)",
                         static_cast<double>(data.current_camera.location.x),
                         static_cast<double>(data.current_camera.location.y),
                         static_cast<double>(data.current_camera.location.z));
-            ImGui::Text("Camera Rot: Pitch %.1f | Yaw %.1f | Roll %.1f | FOV %.1f",
+            ImGui::Text("Rotação da Câmera: Pitch %.1f | Yaw %.1f | Roll %.1f | FOV %.1f",
                         static_cast<double>(normalize_euler_angle(data.current_camera.rotation.pitch)),
                         static_cast<double>(normalize_euler_angle(data.current_camera.rotation.yaw)),
                         static_cast<double>(normalize_euler_angle(data.current_camera.rotation.roll)),
                         static_cast<double>(data.current_camera.fov));
         }
 
-        // Section 2: Physics Parameter Sliders
-        if (ImGui::CollapsingHeader("2. Kinematics & Physics Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Apply Custom Kinematics", &data.apply_custom_kinematics);
-            ImGui::SliderFloat("Walk Speed", &data.walk_speed, 100.0f, 3000.0f, "%.0f u/s");
-            ImGui::SliderFloat("Max Acceleration", &data.max_acceleration, 512.0f, 8192.0f, "%.0f u/s^2");
-            ImGui::SliderFloat("Jump Velocity", &data.jump_velocity, 200.0f, 2500.0f, "%.0f u/s");
-            ImGui::SliderFloat("Time Scale", &data.time_scale, 0.1f, 5.0f, "%.2fx");
+        // Section 2: Percentage Physics Sliders (PT-BR)
+        if (ImGui::CollapsingHeader("2. Parâmetros Físicos e Cinemática (%)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Ativar Cinemática Personalizada", &data.apply_custom_kinematics);
+
+            ImGui::SliderFloat("Velocidade de Movimento (%)", &data.walk_speed_pct, 100.0f, 250.0f, "%.0f%%");
+            ImGui::SliderFloat("Aceleração Máxima (%)", &data.accel_pct, 100.0f, 300.0f, "%.0f%%");
+            ImGui::SliderFloat("Força do Pulo (%)", &data.jump_pct, 100.0f, 250.0f, "%.0f%%");
+            ImGui::SliderFloat("Escala de Tempo (%)", &data.time_scale_pct, 50.0f, 200.0f, "%.0f%%");
+
+            // Keep raw physical units synchronized with percentage sliders
+            data.walk_speed       = 600.0f  * (data.walk_speed_pct / 100.0f);
+            data.max_acceleration = 2048.0f * (data.accel_pct / 100.0f);
+            data.jump_velocity    = 420.0f  * (data.jump_pct / 100.0f);
+            data.time_scale       = data.time_scale_pct / 100.0f;
         }
 
-        // Section 3: Viewport Marker & Player Identity Settings
-        if (ImGui::CollapsingHeader("3. Viewport Marker Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Draw 2D Node Markers", &data.draw_2d_node_markers);
-            ImGui::SliderFloat("Max Render Distance", &data.max_render_distance_m, 1.0f, 1000.0f, "%.1f m");
-            ImGui::InputText("Label Filter", data.label_filter, sizeof(data.label_filter));
+        // Section 3: 3D Category Filters & Player Identity (PT-BR)
+        if (ImGui::CollapsingHeader("3. Filtros Visuais 3D e Identidade", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Ativar Indicadores e Linhas Guia", &data.draw_2d_node_markers);
+            ImGui::SliderFloat("Distância Máxima de Renderização", &data.max_render_distance_m, 10.0f, 1000.0f, "%.0f m");
+
             ImGui::Separator();
-            ImGui::Checkbox("Override Player Name", &data.apply_custom_player_name);
-            ImGui::InputText("Player Display Name", data.custom_player_name, sizeof(data.custom_player_name));
+            ImGui::Text("Categorias de Entidades 3D:");
+            ImGui::Checkbox("Mostrar Assassino (Esqueleto 3D)", &data.show_antagonist);
+            ImGui::Checkbox("Mostrar Sobreviventes (Esqueleto 3D)", &data.show_teammates);
+            ImGui::Checkbox("Mostrar Geradores (% + Silhueta 3D)", &data.show_power_nodes);
+            ImGui::Checkbox("Mostrar Totens", &data.show_shrines);
+            ImGui::Checkbox("Mostrar Baús e Itens", &data.show_containers);
+            ImGui::Checkbox("Mostrar Pallets", &data.show_barriers);
+            ImGui::Checkbox("Mostrar Alçapão e Portões", &data.show_portals);
+            ImGui::Checkbox("Mostrar Objetos Especiais", &data.show_special_props);
+
+            ImGui::Separator();
+            ImGui::Checkbox("Substituir Nome do Jogador", &data.apply_custom_player_name);
+            ImGui::InputText("Nome de Exibição", data.custom_player_name, sizeof(data.custom_player_name));
+            if (ImGui::IsItemActivated() || ImGui::IsItemClicked()) {
+                g_show_touch_keypad = true;
+                request_soft_keyboard(true);
+            }
+
+            ImGui::Spacing();
+            if (ImGui::Button("Teclado do Sistema (IME)")) {
+                request_soft_keyboard(true);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button(g_show_touch_keypad ? "Ocultar Teclado Virtual" : "Mostrar Teclado Virtual")) {
+                g_show_touch_keypad = !g_show_touch_keypad;
+            }
+
+            if (g_show_touch_keypad) {
+                char*             target_buf = data.custom_player_name;
+                const std::size_t max_cap    = sizeof(data.custom_player_name);
+
+                auto append_char = [target_buf, max_cap](char ch) noexcept {
+                    const std::size_t len = std::strlen(target_buf);
+                    if (len + 1 < max_cap) {
+                        target_buf[len]     = ch;
+                        target_buf[len + 1] = '\0';
+                    }
+                };
+
+                ImGui::Separator();
+                ImGui::Text("Editando [Nome de Exibição]: %s_", target_buf);
+
+                static constexpr const char* kRowsLower[4] = {
+                    "1234567890",
+                    "qwertyuiop",
+                    "asdfghjkl_",
+                    "zxcvbnm-."
+                };
+                static constexpr const char* kRowsUpper[4] = {
+                    "1234567890",
+                    "QWERTYUIOP",
+                    "ASDFGHJKL_",
+                    "ZXCVBNM-."
+                };
+
+                const char* const* rows = g_keypad_uppercase ? kRowsUpper : kRowsLower;
+                for (int r = 0; r < 4; ++r) {
+                    const char* row_str = rows[r];
+                    for (int c = 0; row_str[c] != '\0'; ++c) {
+                        if (c > 0) {
+                            ImGui::SameLine(0.0f, 4.0f);
+                        }
+                        char btn_lbl[8]{row_str[c], '\0'};
+                        if (ImGui::Button(btn_lbl, ImVec2(40.0f, 38.0f))) {
+                            append_char(row_str[c]);
+                        }
+                    }
+                }
+
+                if (ImGui::Button(g_keypad_uppercase ? "MAIÚSC: ATIVO" : "MAIÚSC: INATIVO", ImVec2(125.0f, 38.0f))) {
+                    g_keypad_uppercase = !g_keypad_uppercase;
+                }
+                ImGui::SameLine(0.0f, 6.0f);
+                if (ImGui::Button("ESPAÇO", ImVec2(105.0f, 38.0f))) {
+                    append_char(' ');
+                }
+                ImGui::SameLine(0.0f, 6.0f);
+                if (ImGui::Button("APAGAR", ImVec2(105.0f, 38.0f))) {
+                    const std::size_t len = std::strlen(target_buf);
+                    if (len > 0) {
+                        target_buf[len - 1] = '\0';
+                    }
+                }
+                ImGui::SameLine(0.0f, 6.0f);
+                if (ImGui::Button("LIMPAR", ImVec2(90.0f, 38.0f))) {
+                    target_buf[0] = '\0';
+                }
+            }
         }
+    }
+
+    const bool want_text_now  = ImGui::GetIO().WantTextInput;
+    const bool prev_want_text = g_last_want_text_input.exchange(want_text_now, std::memory_order_acq_rel);
+    if (want_text_now && !prev_want_text) {
+        request_soft_keyboard(true);
     }
 
     const ImVec2 cur_win_pos  = ImGui::GetWindowPos();
@@ -879,13 +1254,51 @@ void on_egl_frame_swap(EGLDisplay dpy, EGLSurface surface) noexcept {
             io.AddMousePosEvent(g_touch.x, g_touch.y);
             io.AddMouseButtonEvent(0, g_touch.is_down);
 
-            // If a rapid tap (DOWN + UP) completed before this frame, hold DOWN for 1 frame
-            // and release on the subsequent frame so Dear ImGui widgets register the click.
             if (g_touch.pending_tap_release) {
                 g_touch.is_down             = false;
                 g_touch.pending_tap_release = false;
             }
         }
+    }
+
+    // Drain any queued Android AKeyEvent / soft-keyboard events into ImGuiIO
+    {
+        ScopedMutexLock key_lock(&g_key_queue.mutex);
+        for (std::size_t i = 0; i < g_key_queue.count; ++i) {
+            const QueuedKeyEvent& ev = g_key_queue.events[i];
+            const bool is_down = (ev.action == AKEY_EVENT_ACTION_DOWN);
+            const bool shift   = (ev.meta_state & AMETA_SHIFT_ON) != 0;
+
+            if (ev.key_code == AKEYCODE_DEL) {
+                io.AddKeyEvent(ImGuiKey_Backspace, is_down);
+            } else if (ev.key_code == AKEYCODE_ENTER || ev.key_code == AKEYCODE_NUMPAD_ENTER) {
+                io.AddKeyEvent(ImGuiKey_Enter, is_down);
+            } else if (ev.key_code == AKEYCODE_ESCAPE || ev.key_code == AKEYCODE_BACK) {
+                io.AddKeyEvent(ImGuiKey_Escape, is_down);
+            } else if (ev.key_code == AKEYCODE_DPAD_LEFT) {
+                io.AddKeyEvent(ImGuiKey_LeftArrow, is_down);
+            } else if (ev.key_code == AKEYCODE_DPAD_RIGHT) {
+                io.AddKeyEvent(ImGuiKey_RightArrow, is_down);
+            }
+
+            if (is_down) {
+                if (ev.unicode_char > 0) {
+                    io.AddInputCharacter(static_cast<unsigned int>(ev.unicode_char));
+                } else if (ev.key_code >= AKEYCODE_A && ev.key_code <= AKEYCODE_Z) {
+                    const char base = shift ? 'A' : 'a';
+                    io.AddInputCharacter(static_cast<unsigned int>(base + (ev.key_code - AKEYCODE_A)));
+                } else if (ev.key_code >= AKEYCODE_0 && ev.key_code <= AKEYCODE_9) {
+                    io.AddInputCharacter(static_cast<unsigned int>('0' + (ev.key_code - AKEYCODE_0)));
+                } else if (ev.key_code == AKEYCODE_SPACE) {
+                    io.AddInputCharacter(' ');
+                } else if (ev.key_code == AKEYCODE_MINUS) {
+                    io.AddInputCharacter(shift ? '_' : '-');
+                } else if (ev.key_code == AKEYCODE_PERIOD) {
+                    io.AddInputCharacter('.');
+                }
+            }
+        }
+        g_key_queue.count = 0;
     }
 
     ImGui_ImplOpenGL3_NewFrame();
@@ -927,8 +1340,6 @@ void on_touch_event(int action, float x, float y) noexcept {
 
     ScopedMutexLock touch_lock(&g_touch.mutex);
 
-    // If raw coordinates exceed the currently assumed physical bounds (e.g. before JNI metrics resolved),
-    // dynamically expand physical bounds and recompute scale_x / scale_y.
     if (g_touch.egl_width > 1.0f && g_touch.egl_height > 1.0f) {
         if (x > g_touch.phys_width) {
             g_touch.phys_width = x;
@@ -961,7 +1372,6 @@ void on_touch_event(int action, float x, float y) noexcept {
         }
         g_touch.is_down = true;
     } else {
-        // UP / POINTER_UP / CANCEL
         if (was_down) {
             g_touch.pending_tap_release = true;
         }
@@ -980,14 +1390,6 @@ void on_touch_event(int action, float x, float y) noexcept {
 }
 
 bool should_consume_touch(int action, float x, float y) noexcept {
-    {
-        SceneTelemetryData& data = get_telemetry_data();
-        ScopedMutexLock data_lock(&data.mutex);
-        if (!data.hud_open) {
-            return false;
-        }
-    }
-
     ScopedMutexLock touch_lock(&g_touch.mutex);
     const float mapped_x   = (x - g_touch.offset_x) * g_touch.scale_x;
     const float mapped_y   = (y - g_touch.offset_y) * g_touch.scale_y;
@@ -1003,6 +1405,140 @@ bool should_consume_touch(int action, float x, float y) noexcept {
     }
 
     return g_touch.captured_by_hud || inside_hud || g_touch.want_capture_mouse;
+}
+
+void on_key_event(int action, int key_code, int meta_state, int unicode_char) noexcept {
+    if (action != AKEY_EVENT_ACTION_DOWN && action != AKEY_EVENT_ACTION_UP) {
+        return;
+    }
+
+    ScopedMutexLock key_lock(&g_key_queue.mutex);
+    if (g_key_queue.count < 32) {
+        g_key_queue.events[g_key_queue.count++] = QueuedKeyEvent{
+            action,
+            key_code,
+            meta_state,
+            unicode_char
+        };
+    }
+
+    if (action == AKEY_EVENT_ACTION_DOWN) {
+        SceneTelemetryData& data = get_telemetry_data();
+        ScopedMutexLock data_lock(&data.mutex);
+        if (!data.hud_open) {
+            return;
+        }
+        char*             target_buf = data.custom_player_name;
+        const std::size_t max_cap    = sizeof(data.custom_player_name);
+
+        if (key_code == AKEYCODE_DEL) {
+            const std::size_t len = std::strlen(target_buf);
+            if (len > 0) {
+                target_buf[len - 1] = '\0';
+            }
+        } else {
+            char       ch    = '\0';
+            const bool shift = (meta_state & AMETA_SHIFT_ON) != 0;
+            if (unicode_char >= 32 && unicode_char < 127) {
+                ch = static_cast<char>(unicode_char);
+            } else if (key_code >= AKEYCODE_A && key_code <= AKEYCODE_Z) {
+                ch = static_cast<char>((shift ? 'A' : 'a') + (key_code - AKEYCODE_A));
+            } else if (key_code >= AKEYCODE_0 && key_code <= AKEYCODE_9) {
+                ch = static_cast<char>('0' + (key_code - AKEYCODE_0));
+            } else if (key_code == AKEYCODE_SPACE) {
+                ch = ' ';
+            } else if (key_code == AKEYCODE_MINUS) {
+                ch = shift ? '_' : '-';
+            } else if (key_code == AKEYCODE_PERIOD) {
+                ch = '.';
+            }
+            if (ch != '\0') {
+                const std::size_t len = std::strlen(target_buf);
+                if (len + 1 < max_cap) {
+                    target_buf[len]     = ch;
+                    target_buf[len + 1] = '\0';
+                }
+            }
+        }
+    }
+}
+
+void request_soft_keyboard(bool show) noexcept {
+    using GetCreatedJavaVMsFn = jint (*)(JavaVM**, jsize, jsize*);
+    auto get_vms = reinterpret_cast<GetCreatedJavaVMsFn>(
+        ::dlsym(RTLD_DEFAULT, "JNI_GetCreatedJavaVMs"));
+    if (!get_vms) {
+        if (void* art_handle = ::dlopen("libart.so", RTLD_LAZY | RTLD_NOLOAD)) {
+            get_vms = reinterpret_cast<GetCreatedJavaVMsFn>(
+                ::dlsym(art_handle, "JNI_GetCreatedJavaVMs"));
+        }
+    }
+    if (!get_vms) {
+        return;
+    }
+
+    JavaVM* vm       = nullptr;
+    jsize   vm_count = 0;
+    if (get_vms(&vm, 1, &vm_count) != JNI_OK || !vm || vm_count <= 0) {
+        return;
+    }
+
+    JNIEnv* env      = nullptr;
+    bool    attached = false;
+    const jint env_stat = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (env_stat == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) {
+            return;
+        }
+        attached = true;
+    } else if (env_stat != JNI_OK || !env) {
+        return;
+    }
+
+    auto clear_exc = [env]() noexcept -> bool {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            return true;
+        }
+        return false;
+    };
+
+    if (env->PushLocalFrame(16) == JNI_OK) {
+        jclass at_cls = env->FindClass("android/app/ActivityThread");
+        if (!clear_exc() && at_cls) {
+            jmethodID cur_app_mid = env->GetStaticMethodID(
+                at_cls, "currentApplication", "()Landroid/app/Application;");
+            if (!clear_exc() && cur_app_mid) {
+                jobject app_obj = env->CallStaticObjectMethod(at_cls, cur_app_mid);
+                if (!clear_exc() && app_obj) {
+                    jclass ctx_cls = env->FindClass("android/content/Context");
+                    jmethodID get_svc_mid = ctx_cls
+                        ? env->GetMethodID(ctx_cls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;")
+                        : nullptr;
+                    if (!clear_exc() && get_svc_mid) {
+                        jstring imm_str = env->NewStringUTF("input_method");
+                        jobject imm_obj = env->CallObjectMethod(app_obj, get_svc_mid, imm_str);
+                        if (!clear_exc() && imm_obj) {
+                            jclass imm_cls = env->FindClass("android/view/inputmethod/InputMethodManager");
+                            jmethodID toggle_mid = imm_cls
+                                ? env->GetMethodID(imm_cls, "toggleSoftInput", "(II)V")
+                                : nullptr;
+                            if (!clear_exc() && toggle_mid) {
+                                // SHOW_FORCED = 2, HIDE_IMPLICIT_ONLY = 1
+                                env->CallVoidMethod(imm_obj, toggle_mid, show ? 2 : 0, show ? 1 : 0);
+                                (void)clear_exc();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        env->PopLocalFrame(nullptr);
+    }
+
+    if (attached) {
+        vm->DetachCurrentThread();
+    }
 }
 
 } // namespace hud

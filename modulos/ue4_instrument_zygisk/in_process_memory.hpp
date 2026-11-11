@@ -8,6 +8,7 @@
 #pragma once
 
 #include "visibility.hpp"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -35,6 +36,17 @@ enum class Status : uint8_t {
 
 class INSTRUMENT_LOCAL InProcessMemory {
 public:
+    static inline std::atomic<pid_t> s_target_pid{0};
+
+    static void set_target_pid(pid_t pid) noexcept {
+        s_target_pid.store(pid, std::memory_order_release);
+    }
+
+    [[nodiscard]] static pid_t effective_pid() noexcept {
+        const pid_t t = s_target_pid.load(std::memory_order_acquire);
+        return (t > 0) ? t : ::getpid();
+    }
+
     // Strip AArch64 Top-Byte Ignore (TBI / MTE) and upper pointer authentication bits,
     // preserving the 48-bit canonical user-space virtual address.
     [[nodiscard]] static constexpr uintptr_t untag_address(uintptr_t addr) noexcept {
@@ -86,7 +98,7 @@ public:
         };
         const ssize_t transferred = ::syscall(
             SYS_process_vm_readv,
-            ::getpid(),
+            effective_pid(),
             &local_iov, 1UL,
             &remote_iov, 1UL,
             0UL
@@ -125,7 +137,7 @@ public:
         };
         const ssize_t written = ::syscall(
             SYS_process_vm_writev,
-            ::getpid(),
+            effective_pid(),
             &local_iov, 1UL,
             &remote_iov, 1UL,
             0UL

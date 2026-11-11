@@ -1,0 +1,1444 @@
+package com.dbdm.modmenu;
+
+import android.app.ActivityManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Locale;
+
+public final class FloatingModService extends Service {
+    private static final String TARGET_GAME_PACKAGE = "com.netease.dbdena";
+    static {
+        try {
+            System.loadLibrary("instrument_core");
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public static native void nativeSyncConfig(
+        boolean hudOpen,
+        boolean drawMarkers,
+        float maxDist,
+        String labelFilter,
+        boolean overrideName,
+        String playerName,
+        boolean applyKinematics,
+        float walkSpeed,
+        float maxAccel,
+        float jumpVel,
+        float timeScale
+    );
+
+    public static native String nativeGetStatus();
+
+    public static native int nativePollOverlayMarkers(
+        float screenWidth,
+        float screenHeight,
+        float[] outPacked
+    );
+
+    // Paleta de Cores Wdbd (Obsidiana, Carmesim Neon, Brasa, Aço Escovado)
+    private static final int COL_BG_SURFACE    = Color.argb(235, 13, 14, 19);   // #EB0D0E13
+    private static final int COL_BG_INNER      = Color.argb(215, 21, 23, 31);   // #D715171F
+    private static final int COL_BORDER_ACCENT = Color.argb(185, 199, 69, 66);  // #B9C74542
+    private static final int COL_BORDER_SUBTLE = Color.argb(140, 55, 62, 76);   // #8C373E4C
+    private static final int COL_CRIMSON       = Color.rgb(229, 25, 43);        // #E5192B
+    private static final int COL_EMBER         = Color.rgb(255, 109, 36);       // #FF6D24
+    private static final int COL_TEXT_PRIMARY  = Color.rgb(232, 234, 238);      // #E8EAEE
+    private static final int COL_TEXT_MUTED    = Color.rgb(154, 161, 174);      // #9AA1AE
+
+    private WindowManager windowManager;
+    private AuraEspOverlayView espOverlayView;
+    private View rootFloatingView;
+    private WindowManager.LayoutParams espLayoutParams;
+    private WindowManager.LayoutParams windowParams;
+    private LinearLayout expandedPanel;
+    private ImageView collapsedBubbleView;
+    private TextView statusBannerView;
+    private Bitmap logoCircleBitmap;
+
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+    private boolean serviceActive = false;
+
+    // Estado de Visualização 3D e Categorias (PT-BR, espelhado com SceneTelemetryData)
+    private boolean hudOpen          = true;
+    private boolean drawMarkers      = true;
+    private float   maxDist          = 250.0f;
+    private boolean showAntagonist   = true; // "Mostrar Assassino (Esqueleto 3D)"
+    private boolean showTeammates    = true; // "Mostrar Sobreviventes (Esqueleto 3D)"
+    private boolean showPowerNodes   = true; // "Mostrar Geradores (% + Silhueta 3D)"
+    private boolean showShrines      = true; // "Mostrar Totens"
+    private boolean showContainers   = true; // "Mostrar Baús e Itens"
+    private boolean showBarriers     = true; // "Mostrar Pallets e Janelas (Caixa 3D)"
+    private boolean showPortals      = true; // "Mostrar Alçapão e Portões"
+    private boolean showSpecialProps = true; // "Mostrar Objetos Especiais"
+
+    // Estado de Cinemática em Porcentagem (%) (PT-BR, espelhado com SceneTelemetryData)
+    private boolean applyKinematics = false;
+    private float   walkSpeedPct    = 100.0f; // 100% a 250% ("Velocidade de Movimento (%)")
+    private float   accelPct        = 100.0f; // 100% a 300% ("Aceleração Máxima (%)")
+    private float   jumpPct         = 100.0f; // 100% a 250% ("Força do Pulo (%)")
+    private float   timeScalePct    = 100.0f; // 50% a 200%  ("Escala de Tempo (%)")
+
+    // Valores físicos derivados das porcentagens para sincronização IPC
+    private float walkSpeed = 600.0f;
+    private float maxAccel  = 2048.0f;
+    private float jumpVel   = 420.0f;
+    private float timeScale = 1.0f;
+
+    // Identidade do Jogador e Manipulação Avançada de Gameplay
+    private boolean overrideName    = false;
+    private String  playerName      = "";
+    private boolean applyFov        = false;
+    private float   fovValue        = 90.0f;
+    private boolean autoSkillcheck  = false;
+    private boolean trapImmunity    = false;
+    private boolean flyCheat        = false;
+    private boolean forceEscape     = false;
+    private String  immobilizeState = "off";
+    private String  playerRole      = "none";
+
+    // Camada de Overlay Minimalista (Texto + Linha Guia 1.5dp + Esqueleto Fino, PT-BR)
+    private final class AuraEspOverlayView extends View {
+        private final float[] packedMarkers = new float[256 * 4];
+        private int activeMarkerCount = 0;
+
+        private final Paint tracerPaint     = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint skeletonPaint   = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textShadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textPaint       = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        AuraEspOverlayView(Context ctx) {
+            super(ctx);
+            tracerPaint.setStyle(Paint.Style.STROKE);
+            tracerPaint.setStrokeWidth(dpF(1.5f));
+
+            skeletonPaint.setStyle(Paint.Style.STROKE);
+            skeletonPaint.setStrokeWidth(dpF(1.5f));
+
+            textShadowPaint.setColor(Color.argb(230, 0, 0, 0));
+            textShadowPaint.setTextSize(dpF(10.5f));
+            textShadowPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            textShadowPaint.setTextAlign(Paint.Align.CENTER);
+
+            textPaint.setTextSize(dpF(10.5f));
+            textPaint.setTypeface(Typeface.DEFAULT_BOLD);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+        }
+
+        void pollAndInvalidate() {
+            if (!drawMarkers) {
+                if (activeMarkerCount != 0) {
+                    activeMarkerCount = 0;
+                    invalidate();
+                }
+                return;
+            }
+            final int w = getWidth();
+            final int h = getHeight();
+            if (w <= 1 || h <= 1) {
+                return;
+            }
+            try {
+                activeMarkerCount = nativePollOverlayMarkers((float) w, (float) h, packedMarkers);
+            } catch (Throwable ignored) {
+                activeMarkerCount = 0;
+            }
+            invalidate();
+        }
+
+        private boolean isCategoryVisible(int catId) {
+            switch (catId) {
+                case 1:  return showAntagonist;   // Assassino
+                case 2:  return showTeammates;    // Sobreviventes
+                case 3:  return showPowerNodes;   // Geradores
+                case 4:  return showPortals;      // Alçapão
+                case 5:  return showContainers;   // Baús
+                case 6:  return showShrines;      // Totens
+                case 7:  return showBarriers;     // Pallets (Sem janelas)
+                case 9:  return showSpecialProps; // Ganchos / Objetos Especiais
+                case 10: return showPortals;      // Portão de Saída
+                default: return false;
+            }
+        }
+
+        // Desenha o esqueleto 3D dinâmico + caixa delimitadora vertical ancorados na base do pé (footX, footY)
+        // com altura proporcional à projeção 3D da cápsula do personagem (Z - 45cm até Z + 45cm)
+        private void drawCharacterSkeletonAndBounds(
+            Canvas canvas,
+            float footX,
+            float footY,
+            float heightPx,
+            int color
+        ) {
+            final float h         = Math.max(dpF(18.0f), Math.min(dpF(340.0f), heightPx));
+            final float topY      = footY - h;
+            final float halfW     = h * 0.28f;
+
+            // Caixa delimitadora vertical dinâmica ancorada na cápsula (Z - 45cm .. Z + 45cm)
+            final int boxColor = Color.argb(135, Color.red(color), Color.green(color), Color.blue(color));
+            skeletonPaint.setColor(boxColor);
+            canvas.drawRect(footX - halfW, topY, footX + halfW, footY, skeletonPaint);
+
+            // Articulações do esqueleto escaladas proporcionalmente à cápsula 3D projetada
+            skeletonPaint.setColor(color);
+            final float headR     = Math.max(dpF(2.0f), h * 0.085f);
+            final float headY     = topY + headR * 1.15f;
+            final float neckY     = topY + h * 0.19f;
+            final float spineY    = topY + h * 0.36f;
+            final float pelvisY   = topY + h * 0.52f;
+            final float kneeY     = topY + h * 0.76f;
+
+            final float shoulderX = h * 0.19f;
+            final float elbowX    = h * 0.26f;
+            final float elbowY    = topY + h * 0.35f;
+            final float handX     = h * 0.29f;
+            final float handY     = topY + h * 0.52f;
+            final float kneeX     = h * 0.11f;
+            final float ankleX    = h * 0.13f;
+
+            // Cabeça e Coluna (Head -> Neck -> Spine -> Pelvis)
+            canvas.drawCircle(footX, headY, headR, skeletonPaint);
+            canvas.drawLine(footX, headY + headR, footX, neckY, skeletonPaint);
+            canvas.drawLine(footX, neckY, footX, spineY, skeletonPaint);
+            canvas.drawLine(footX, spineY, footX, pelvisY, skeletonPaint);
+
+            // Braço Esquerdo e Direito
+            canvas.drawLine(footX, neckY, footX - shoulderX, neckY + h * 0.03f, skeletonPaint);
+            canvas.drawLine(footX - shoulderX, neckY + h * 0.03f, footX - elbowX, elbowY, skeletonPaint);
+            canvas.drawLine(footX - elbowX, elbowY, footX - handX, handY, skeletonPaint);
+
+            canvas.drawLine(footX, neckY, footX + shoulderX, neckY + h * 0.03f, skeletonPaint);
+            canvas.drawLine(footX + shoulderX, neckY + h * 0.03f, footX + elbowX, elbowY, skeletonPaint);
+            canvas.drawLine(footX + elbowX, elbowY, footX + handX, handY, skeletonPaint);
+
+            // Perna Esquerda e Direita terminando exatamente na base (footY)
+            canvas.drawLine(footX, pelvisY, footX - kneeX, kneeY, skeletonPaint);
+            canvas.drawLine(footX - kneeX, kneeY, footX - ankleX, footY, skeletonPaint);
+
+            canvas.drawLine(footX, pelvisY, footX + kneeX, kneeY, skeletonPaint);
+            canvas.drawLine(footX + kneeX, kneeY, footX + ankleX, footY, skeletonPaint);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            if (!drawMarkers || activeMarkerCount <= 0) {
+                return;
+            }
+
+            final float canvasW = (float) getWidth();
+            final float canvasH = (float) getHeight();
+            final float bottomCenterX = canvasW * 0.5f;
+            final float bottomCenterY = canvasH;
+            boolean killerRendered = false;
+
+            for (int i = 0; i < activeMarkerCount; ++i) {
+                final int base       = i * 4;
+                final float sx       = packedMarkers[base];
+                final float sy       = packedMarkers[base + 1];
+                final float distM    = packedMarkers[base + 2];
+                final float rawCat   = packedMarkers[base + 3];
+                final int catId      = (int) (rawCat + 0.00005f);
+
+                if (distM > maxDist || !isCategoryVisible(catId)) {
+                    continue;
+                }
+
+                final int distInt = Math.max(0, Math.round(distM));
+                final float decodedHeightPx = (rawCat - (float) catId) * 10000.0f;
+                final float projHeightPx = (decodedHeightPx >= 12.0f && decodedHeightPx <= 500.0f)
+                    ? decodedHeightPx
+                    : Math.max(dpF(22.0f), Math.min(dpF(220.0f), dpF(950.0f) / Math.max(5.0f, distM)));
+
+                String tag;
+                int colPrimary;
+                float textY;
+
+                switch (catId) {
+                    case 1: { // Assassino (Vermelho #FF2A2A: Linha Guia 1.5dp + Esqueleto 3D + "assassino [%dm]")
+                        if (killerRendered) {
+                            continue;
+                        }
+                        killerRendered = true;
+                        colPrimary = Color.rgb(255, 42, 42);
+                        drawCharacterSkeletonAndBounds(canvas, sx, sy, projHeightPx, colPrimary);
+                        tracerPaint.setColor(Color.argb(220, 255, 42, 42));
+                        canvas.drawLine(bottomCenterX, bottomCenterY, sx, sy, tracerPaint);
+                        tag = String.format(Locale.US, "assassino [%dm]", distInt);
+                        textY = sy + dpF(12.0f);
+                        break;
+                    }
+
+                    case 2: { // Sobrevivente (Ciano #00E5FF: Linha Guia 1.5dp + Esqueleto 3D + "sobrevivente [%dm]")
+                        colPrimary = Color.rgb(0, 229, 255);
+                        drawCharacterSkeletonAndBounds(canvas, sx, sy, projHeightPx, colPrimary);
+                        tracerPaint.setColor(Color.argb(195, 0, 229, 255));
+                        canvas.drawLine(bottomCenterX, bottomCenterY, sx, sy, tracerPaint);
+                        tag = String.format(Locale.US, "sobrevivente [%dm]", distInt);
+                        textY = sy + dpF(12.0f);
+                        break;
+                    }
+
+                    case 3: { // Gerador (Verde #2ECC71: Somente Texto "gerador %.0f%% [%dm]")
+                        colPrimary = Color.rgb(46, 204, 113);
+                        final int genPct = Math.max(0, Math.min(99, Math.round((rawCat - 3.0f) * 1000.0f)));
+                        tag = String.format(Locale.US, "gerador %d%% [%dm]", genPct, distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+                    }
+
+                    case 4: // Alçapão (Roxo #E040FB: Somente Texto "alcapao [%dm]")
+                        colPrimary = Color.rgb(224, 64, 251);
+                        tag = String.format(Locale.US, "alcapao [%dm]", distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+
+                    case 5: // Baú (Laranja #FF9800: Somente Texto "bau [%dm]")
+                        colPrimary = Color.rgb(255, 152, 0);
+                        tag = String.format(Locale.US, "bau [%dm]", distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+
+                    case 6: // Totem (Amarelo #F1C40F: Somente Texto "totem [%dm]")
+                        colPrimary = Color.rgb(241, 196, 15);
+                        tag = String.format(Locale.US, "totem [%dm]", distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+
+                    case 7: // Pallet (Amarelo Claro #FFF176: Somente Texto "pallet [%dm]")
+                        colPrimary = Color.rgb(255, 241, 118);
+                        tag = String.format(Locale.US, "pallet [%dm]", distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+
+                    case 9: // Objeto Especial / Gancho
+                        colPrimary = Color.rgb(120, 200, 255);
+                        tag = String.format(Locale.US, "gancho [%dm]", distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+
+                    case 10: // Portão de Saída (Roxo #E040FB: Somente Texto "portao [%dm]")
+                        colPrimary = Color.rgb(224, 64, 251);
+                        tag = String.format(Locale.US, "portao [%dm]", distInt);
+                        textY = sy + dpF(4.0f);
+                        break;
+
+                    default:
+                        continue;
+                }
+
+                canvas.drawText(tag, sx + 1.2f, textY + 1.2f, textShadowPaint);
+                textPaint.setColor(colPrimary);
+                canvas.drawText(tag, sx, textY, textPaint);
+            }
+        }
+    }
+
+    private final Runnable frameLoopRunnable = new Runnable() {
+        private int statusTick = 0;
+
+        @Override
+        public void run() {
+            if (!serviceActive) {
+                return;
+            }
+            if (espOverlayView != null) {
+                espOverlayView.pollAndInvalidate();
+            }
+            if ((++statusTick & 0x0F) == 0 && statusBannerView != null) {
+                if ((statusTick & 0x1F) == 0) {
+                    pushConfigToNative();
+                }
+                try {
+                    String st = nativeGetStatus();
+                    if (st != null) {
+                        String ptStatus = st
+                            .replace("IPC: ONLINE", "IPC: CONECTADO")
+                            .replace("IN MATCH (ACTIVE)", "EM PARTIDA (ATIVO)")
+                            .replace("LOBBY / STANDBY", "LOBBY / AGUARDANDO")
+                            .replace("Nodes:", "Nós:")
+                            .replace("Gens:", "Geradores:")
+                            .replace("Player:", "Jogador:")
+                            .replace("(In-Game Default)", "(Padrão do Jogo)")
+                            .replace("IPC: WAITING FOR GAME (com.netease.dbdena)", "IPC: AGUARDANDO JOGO (com.netease.dbdena)");
+                        statusBannerView.setText(ptStatus);
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            uiHandler.postDelayed(this, 16L); // ~60 Hz
+        }
+    };
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        loadLogoBitmap();
+        buildEspOverlayLayer();
+        buildFloatingMenuUi();
+        pushConfigToNative();
+        serviceActive = true;
+        uiHandler.post(frameLoopRunnable);
+        ensureTargetGameLaunched();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        ensureTargetGameLaunched();
+        return START_STICKY;
+    }
+
+    private boolean isTargetGameRunning() {
+        try {
+            String st = nativeGetStatus();
+            if (st != null && st.contains("IPC: ONLINE")) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                List<ActivityManager.RunningAppProcessInfo> procs = am.getRunningAppProcesses();
+                if (procs != null) {
+                    for (ActivityManager.RunningAppProcessInfo info : procs) {
+                        if (info != null && info.processName != null &&
+                            info.processName.startsWith(TARGET_GAME_PACKAGE) &&
+                            !info.processName.endsWith(":PushService")) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private void ensureTargetGameLaunched() {
+        try {
+            if (isTargetGameRunning()) {
+                return;
+            }
+            Intent launchIntent = getPackageManager().getLaunchIntentForPackage(TARGET_GAME_PACKAGE);
+            if (launchIntent != null) {
+                launchIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK |
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                );
+                startActivity(launchIntent);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void loadLogoBitmap() {
+        try (InputStream is = getAssets().open("wdbd_logo_circle.png")) {
+            logoCircleBitmap = BitmapFactory.decodeStream(is);
+        } catch (Throwable ignored) {
+            try {
+                int id = getResources().getIdentifier("ic_launcher_round", "mipmap", getPackageName());
+                if (id != 0) {
+                    logoCircleBitmap = BitmapFactory.decodeResource(getResources(), id);
+                }
+            } catch (Throwable ignored2) {
+            }
+        }
+    }
+
+    private int dp(int v) {
+        return (int) TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            v,
+            getResources().getDisplayMetrics()
+        );
+    }
+
+    private float dpF(float v) {
+        return TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP,
+            v,
+            getResources().getDisplayMetrics()
+        );
+    }
+
+    private void styleMinimalCheckBox(CheckBox cb, String label, boolean checked) {
+        cb.setText(label);
+        cb.setTextColor(COL_TEXT_PRIMARY);
+        cb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.0f);
+        cb.setChecked(checked);
+        cb.setMinHeight(dp(23));
+        cb.setMinimumHeight(dp(23));
+        cb.setPadding(dp(2), 0, dp(2), 0);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            int[][] states = new int[][]{
+                new int[]{android.R.attr.state_checked},
+                new int[]{-android.R.attr.state_checked}
+            };
+            int[] colors = new int[]{COL_CRIMSON, COL_TEXT_MUTED};
+            cb.setButtonTintList(new ColorStateList(states, colors));
+        }
+    }
+
+    private void styleMinimalSeekBar(SeekBar sb) {
+        sb.setPadding(dp(6), dp(2), dp(6), dp(3));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            sb.setProgressTintList(ColorStateList.valueOf(COL_CRIMSON));
+            sb.setThumbTintList(ColorStateList.valueOf(COL_EMBER));
+            sb.setProgressBackgroundTintList(ColorStateList.valueOf(Color.rgb(45, 50, 62)));
+        }
+    }
+
+    private TextView buildMinimalSliderLabel(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(COL_TEXT_MUTED);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        tv.setPadding(dp(2), dp(2), dp(2), 0);
+        return tv;
+    }
+
+    private void styleMinimalEditText(EditText et, String hint) {
+        et.setHint(hint);
+        et.setTextColor(COL_TEXT_PRIMARY);
+        et.setHintTextColor(Color.rgb(105, 112, 125));
+        et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.0f);
+        et.setSingleLine(true);
+        et.setMinHeight(dp(26));
+        et.setMinimumHeight(dp(26));
+        et.setPadding(dp(6), dp(3), dp(6), dp(3));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(COL_BG_INNER);
+        bg.setCornerRadius(dp(4));
+        bg.setStroke(1, COL_BORDER_SUBTLE);
+        et.setBackground(bg);
+    }
+
+    private Button buildTabButton(String title, boolean active) {
+        Button btn = new Button(this);
+        btn.setText(title);
+        btn.setAllCaps(false);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        btn.setTypeface(Typeface.DEFAULT_BOLD);
+        btn.setPadding(dp(4), dp(2), dp(4), dp(2));
+        btn.setMinHeight(0);
+        btn.setMinimumHeight(0);
+        btn.setMinWidth(0);
+        btn.setMinimumWidth(0);
+        styleTabButton(btn, active);
+        return btn;
+    }
+
+    private void styleTabButton(Button btn, boolean active) {
+        btn.setTextColor(active ? COL_TEXT_PRIMARY : COL_TEXT_MUTED);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(active ? Color.argb(210, 199, 30, 45) : COL_BG_INNER);
+        bg.setCornerRadius(dp(4));
+        bg.setStroke(1, active ? COL_EMBER : COL_BORDER_SUBTLE);
+        btn.setBackground(bg);
+    }
+
+    private void setWindowFocusableForKeyboard(boolean focusable) {
+        if (windowParams == null || rootFloatingView == null) {
+            return;
+        }
+        if (focusable) {
+            windowParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            windowParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN;
+        } else {
+            windowParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        }
+        try {
+            windowManager.updateViewLayout(rootFloatingView, windowParams);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private int computeCategoryVisibilityMask() {
+        int catMask = 0;
+        if (showAntagonist)   catMask |= 0x01;
+        if (showTeammates)    catMask |= 0x02;
+        if (showPowerNodes)   catMask |= 0x04;
+        if (showShrines)      catMask |= 0x08;
+        if (showContainers)   catMask |= 0x10;
+        if (showBarriers)     catMask |= 0x20;
+        if (showPortals)      catMask |= 0x40;
+        if (showSpecialProps) catMask |= 0x80;
+        return catMask;
+    }
+
+    private String buildCompactGpPayload() {
+        final int catMask = computeCategoryVisibilityMask();
+        final float clampedFov = Math.max(80.0f, Math.min(120.0f, fovValue));
+        final String immToken  = (immobilizeState != null && !immobilizeState.isEmpty()) ? immobilizeState : "off";
+        final String roleToken = (playerRole != null && !playerRole.isEmpty()) ? playerRole : "none";
+        // Compact payload (< 56 bytes) so it never truncates inside ControlPayload::label_filter[64]
+        return String.format(
+            Locale.US,
+            "@gp:f=%d:%.0f;s=%d;t=%d;y=%d;e=%d;i=%s;r=%s;c=%02X",
+            applyFov ? 1 : 0,
+            clampedFov,
+            autoSkillcheck ? 1 : 0,
+            trapImmunity ? 1 : 0,
+            flyCheat ? 1 : 0,
+            forceEscape ? 1 : 0,
+            immToken,
+            roleToken,
+            catMask
+        );
+    }
+
+    private void pushConfigToNative() {
+        walkSpeed = 600.0f  * (walkSpeedPct / 100.0f);
+        maxAccel  = 2048.0f * (accelPct / 100.0f);
+        jumpVel   = 420.0f  * (jumpPct / 100.0f);
+        timeScale = timeScalePct / 100.0f;
+
+        final String gpPayload = buildCompactGpPayload();
+
+        try {
+            nativeSyncConfig(
+                hudOpen,
+                drawMarkers,
+                maxDist,
+                gpPayload,
+                overrideName,
+                playerName != null ? playerName : "",
+                applyKinematics,
+                walkSpeedPct,
+                accelPct,
+                jumpPct,
+                timeScalePct
+            );
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void buildEspOverlayLayer() {
+        final int overlayType = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            : WindowManager.LayoutParams.TYPE_PHONE;
+
+        espLayoutParams = new WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        );
+        espLayoutParams.gravity = Gravity.TOP | Gravity.START;
+        espOverlayView = new AuraEspOverlayView(this);
+        windowManager.addView(espOverlayView, espLayoutParams);
+    }
+
+    private void buildFloatingMenuUi() {
+        final int overlayType = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            : WindowManager.LayoutParams.TYPE_PHONE;
+
+        windowParams = new WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        );
+        windowParams.gravity = Gravity.TOP | Gravity.START;
+        windowParams.x = dp(16);
+        windowParams.y = dp(32);
+
+        LinearLayout container = new LinearLayout(this);
+        container.setOrientation(LinearLayout.VERTICAL);
+
+        // 1. Ícone Flutuante Minimizado Discreto (34dp x 34dp)
+        collapsedBubbleView = new ImageView(this);
+        collapsedBubbleView.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        if (logoCircleBitmap != null) {
+            collapsedBubbleView.setImageBitmap(logoCircleBitmap);
+        }
+        GradientDrawable bubbleBg = new GradientDrawable();
+        bubbleBg.setShape(GradientDrawable.OVAL);
+        bubbleBg.setColor(Color.argb(235, 14, 15, 20));
+        bubbleBg.setStroke(dp(1), COL_CRIMSON);
+        collapsedBubbleView.setBackground(bubbleBg);
+        collapsedBubbleView.setPadding(dp(2), dp(2), dp(2), dp(2));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            collapsedBubbleView.setElevation(dp(5));
+        }
+        LinearLayout.LayoutParams bubbleLp = new LinearLayout.LayoutParams(dp(34), dp(34));
+        collapsedBubbleView.setLayoutParams(bubbleLp);
+        collapsedBubbleView.setVisibility(View.GONE);
+
+        // 2. Painel Expandido Compacto (Totalmente em Português - PT-BR)
+        expandedPanel = new LinearLayout(this);
+        expandedPanel.setOrientation(LinearLayout.VERTICAL);
+        expandedPanel.setPadding(dp(8), dp(6), dp(8), dp(8));
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(COL_BG_SURFACE);
+        cardBg.setCornerRadius(dp(8));
+        cardBg.setStroke(1, COL_BORDER_ACCENT);
+        expandedPanel.setBackground(cardBg);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            expandedPanel.setElevation(dp(8));
+        }
+
+        // Cabeçalho Compacto (Logo + Título "Wdbd" + Botão Minimizar)
+        LinearLayout headerBar = new LinearLayout(this);
+        headerBar.setOrientation(LinearLayout.HORIZONTAL);
+        headerBar.setGravity(Gravity.CENTER_VERTICAL);
+        headerBar.setPadding(0, 0, 0, dp(3));
+
+        if (logoCircleBitmap != null) {
+            ImageView headerLogo = new ImageView(this);
+            headerLogo.setImageBitmap(logoCircleBitmap);
+            headerLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            LinearLayout.LayoutParams hLogoLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+            hLogoLp.setMarginEnd(dp(6));
+            headerBar.addView(headerLogo, hLogoLp);
+        }
+
+        TextView titleView = new TextView(this);
+        titleView.setText("Wdbd • Painel 3D");
+        titleView.setTextColor(COL_TEXT_PRIMARY);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        headerBar.addView(titleView, titleLp);
+
+        Button minBtn = new Button(this);
+        minBtn.setText("—");
+        minBtn.setTextColor(COL_TEXT_PRIMARY);
+        minBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.0f);
+        minBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        minBtn.setPadding(0, 0, 0, 0);
+        minBtn.setMinHeight(0);
+        minBtn.setMinimumHeight(0);
+        minBtn.setMinWidth(0);
+        minBtn.setMinimumWidth(0);
+        GradientDrawable minBtnBg = new GradientDrawable();
+        minBtnBg.setColor(COL_BG_INNER);
+        minBtnBg.setCornerRadius(dp(4));
+        minBtnBg.setStroke(1, COL_BORDER_ACCENT);
+        minBtn.setBackground(minBtnBg);
+        LinearLayout.LayoutParams minBtnLp = new LinearLayout.LayoutParams(dp(24), dp(20));
+        minBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                setWindowFocusableForKeyboard(false);
+                expandedPanel.setVisibility(View.GONE);
+                collapsedBubbleView.setVisibility(View.VISIBLE);
+            }
+        });
+        headerBar.addView(minBtn, minBtnLp);
+        expandedPanel.addView(headerBar);
+
+        View divider = new View(this);
+        divider.setBackgroundColor(COL_BORDER_SUBTLE);
+        expandedPanel.addView(divider, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
+
+        statusBannerView = new TextView(this);
+        statusBannerView.setText("IPC: Conectando...");
+        statusBannerView.setTextColor(COL_EMBER);
+        statusBannerView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.0f);
+        statusBannerView.setPadding(0, dp(3), 0, dp(3));
+        expandedPanel.addView(statusBannerView);
+
+        // Barra de Abas (PT-BR): Visuais 3D | Física (%) | Identidade
+        LinearLayout tabBar = new LinearLayout(this);
+        tabBar.setOrientation(LinearLayout.HORIZONTAL);
+        tabBar.setPadding(0, dp(1), 0, dp(4));
+
+        final Button tabVisualsBtn    = buildTabButton("Visuais 3D", true);
+        final Button tabKinematicsBtn = buildTabButton("Física (%)", false);
+        final Button tabIdentityBtn   = buildTabButton("Identidade", false);
+
+        LinearLayout.LayoutParams tabLp1 = new LinearLayout.LayoutParams(0, dp(24), 1.0f);
+        tabLp1.setMarginEnd(dp(3));
+        LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(0, dp(24), 1.0f);
+        tabLp2.setMarginEnd(dp(3));
+        LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(0, dp(24), 1.0f);
+
+        tabBar.addView(tabVisualsBtn, tabLp1);
+        tabBar.addView(tabKinematicsBtn, tabLp2);
+        tabBar.addView(tabIdentityBtn, tabLp3);
+        expandedPanel.addView(tabBar);
+
+        final ScrollView scrollView = new ScrollView(this);
+        scrollView.setFillViewport(true);
+        scrollView.setClipToPadding(false);
+        scrollView.setVerticalScrollBarEnabled(true);
+        scrollView.setScrollbarFadingEnabled(false);
+        scrollView.setOverScrollMode(View.OVER_SCROLL_ALWAYS);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setClipToPadding(false);
+        content.setPadding(dp(2), dp(4), dp(4), dp(28));
+
+        final LinearLayout sectionVisuals    = new LinearLayout(this);
+        final LinearLayout sectionKinematics = new LinearLayout(this);
+        final LinearLayout sectionIdentity   = new LinearLayout(this);
+        sectionVisuals.setOrientation(LinearLayout.VERTICAL);
+        sectionKinematics.setOrientation(LinearLayout.VERTICAL);
+        sectionIdentity.setOrientation(LinearLayout.VERTICAL);
+
+        sectionVisuals.setVisibility(View.VISIBLE);
+        sectionKinematics.setVisibility(View.GONE);
+        sectionIdentity.setVisibility(View.GONE);
+
+        tabVisualsBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                setWindowFocusableForKeyboard(false);
+                sectionVisuals.setVisibility(View.VISIBLE);
+                sectionKinematics.setVisibility(View.GONE);
+                sectionIdentity.setVisibility(View.GONE);
+                styleTabButton(tabVisualsBtn, true);
+                styleTabButton(tabKinematicsBtn, false);
+                styleTabButton(tabIdentityBtn, false);
+                scrollView.scrollTo(0, 0);
+            }
+        });
+        tabKinematicsBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                setWindowFocusableForKeyboard(false);
+                sectionVisuals.setVisibility(View.GONE);
+                sectionKinematics.setVisibility(View.VISIBLE);
+                sectionIdentity.setVisibility(View.GONE);
+                styleTabButton(tabVisualsBtn, false);
+                styleTabButton(tabKinematicsBtn, true);
+                styleTabButton(tabIdentityBtn, false);
+                scrollView.scrollTo(0, 0);
+            }
+        });
+        tabIdentityBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                sectionVisuals.setVisibility(View.GONE);
+                sectionKinematics.setVisibility(View.GONE);
+                sectionIdentity.setVisibility(View.VISIBLE);
+                styleTabButton(tabVisualsBtn, false);
+                styleTabButton(tabKinematicsBtn, false);
+                styleTabButton(tabIdentityBtn, true);
+                scrollView.scrollTo(0, 0);
+            }
+        });
+
+        // ====================================================================
+        // ABA 1: VISUAIS 3D (Indicadores, Linhas Guia, FOV Changer e Categorias)
+        // ====================================================================
+        CheckBox cbDrawMarkers = new CheckBox(this);
+        styleMinimalCheckBox(cbDrawMarkers, "Ativar Indicadores e Linhas Guia", drawMarkers);
+        cbDrawMarkers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                drawMarkers = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) {
+                    espOverlayView.invalidate();
+                }
+            }
+        });
+        sectionVisuals.addView(cbDrawMarkers);
+
+        final TextView tvMaxDist = buildMinimalSliderLabel("Distância Máxima de Renderização: 250 m");
+        sectionVisuals.addView(tvMaxDist);
+
+        SeekBar sbMaxDist = new SeekBar(this);
+        sbMaxDist.setMax(990);
+        sbMaxDist.setProgress(240);
+        styleMinimalSeekBar(sbMaxDist);
+        sbMaxDist.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                maxDist = 10.0f + progress;
+                tvMaxDist.setText("Distância Máxima de Renderização: " + (int) maxDist + " m");
+                pushConfigToNative();
+                if (espOverlayView != null) {
+                    espOverlayView.invalidate();
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        sectionVisuals.addView(sbMaxDist);
+
+        // FOV Changer (80° a 120°)
+        CheckBox cbFov = new CheckBox(this);
+        styleMinimalCheckBox(cbFov, "Ativar Campo de Visão (FOV)", applyFov);
+        cbFov.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                applyFov = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionVisuals.addView(cbFov);
+
+        final TextView tvFov = buildMinimalSliderLabel("Campo de Visão (FOV): 90°");
+        sectionVisuals.addView(tvFov);
+
+        SeekBar sbFov = new SeekBar(this);
+        sbFov.setMax(40); // 80 + [0..40] = 80°..120°
+        sbFov.setProgress(10);
+        styleMinimalSeekBar(sbFov);
+        sbFov.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                fovValue = 80.0f + progress;
+                tvFov.setText("Campo de Visão (FOV): " + (int) fovValue + "°");
+                pushConfigToNative();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        sectionVisuals.addView(sbFov);
+
+        CheckBox cbAntagonist = new CheckBox(this);
+        styleMinimalCheckBox(cbAntagonist, "Mostrar Assassino (Linha + Esqueleto)", showAntagonist);
+        cbAntagonist.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showAntagonist = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbAntagonist);
+
+        CheckBox cbTeammates = new CheckBox(this);
+        styleMinimalCheckBox(cbTeammates, "Mostrar Sobreviventes (Linha + Esqueleto)", showTeammates);
+        cbTeammates.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showTeammates = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbTeammates);
+
+        CheckBox cbPowerNodes = new CheckBox(this);
+        styleMinimalCheckBox(cbPowerNodes, "Mostrar Geradores (% + Distância)", showPowerNodes);
+        cbPowerNodes.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showPowerNodes = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbPowerNodes);
+
+        CheckBox cbShrines = new CheckBox(this);
+        styleMinimalCheckBox(cbShrines, "Mostrar Totens", showShrines);
+        cbShrines.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showShrines = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbShrines);
+
+        CheckBox cbContainers = new CheckBox(this);
+        styleMinimalCheckBox(cbContainers, "Mostrar Baús", showContainers);
+        cbContainers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showContainers = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbContainers);
+
+        CheckBox cbBarriers = new CheckBox(this);
+        styleMinimalCheckBox(cbBarriers, "Mostrar Pallets", showBarriers);
+        cbBarriers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showBarriers = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbBarriers);
+
+        CheckBox cbPortals = new CheckBox(this);
+        styleMinimalCheckBox(cbPortals, "Mostrar Alçapão e Portões", showPortals);
+        cbPortals.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showPortals = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbPortals);
+
+        CheckBox cbSpecialProps = new CheckBox(this);
+        styleMinimalCheckBox(cbSpecialProps, "Mostrar Objetos Especiais", showSpecialProps);
+        cbSpecialProps.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                showSpecialProps = isChecked;
+                pushConfigToNative();
+                if (espOverlayView != null) espOverlayView.invalidate();
+            }
+        });
+        sectionVisuals.addView(cbSpecialProps);
+
+        // ====================================================================
+        // ABA 2: FÍSICA E CINEMÁTICA EM PORCENTAGEM (%) + GAMEPLAY
+        // ====================================================================
+        CheckBox cbKinematics = new CheckBox(this);
+        styleMinimalCheckBox(cbKinematics, "Ativar Cinemática Personalizada", applyKinematics);
+        cbKinematics.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                applyKinematics = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbKinematics);
+
+        // 1. Velocidade de Movimento (%): 100% a 250%
+        final TextView tvWalkSpeed = buildMinimalSliderLabel("Velocidade de Movimento (%): 100%");
+        sectionKinematics.addView(tvWalkSpeed);
+
+        SeekBar sbWalkSpeed = new SeekBar(this);
+        sbWalkSpeed.setMax(150); // 100 + [0..150] = 100%..250%
+        sbWalkSpeed.setProgress(0);
+        styleMinimalSeekBar(sbWalkSpeed);
+        sbWalkSpeed.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                walkSpeedPct = 100.0f + progress;
+                tvWalkSpeed.setText("Velocidade de Movimento (%): " + (int) walkSpeedPct + "%");
+                pushConfigToNative();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        sectionKinematics.addView(sbWalkSpeed);
+
+        // 2. Aceleração Máxima (%): 100% a 300%
+        final TextView tvMaxAccel = buildMinimalSliderLabel("Aceleração Máxima (%): 100%");
+        sectionKinematics.addView(tvMaxAccel);
+
+        SeekBar sbMaxAccel = new SeekBar(this);
+        sbMaxAccel.setMax(200); // 100 + [0..200] = 100%..300%
+        sbMaxAccel.setProgress(0);
+        styleMinimalSeekBar(sbMaxAccel);
+        sbMaxAccel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                accelPct = 100.0f + progress;
+                tvMaxAccel.setText("Aceleração Máxima (%): " + (int) accelPct + "%");
+                pushConfigToNative();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        sectionKinematics.addView(sbMaxAccel);
+
+        // 3. Força do Pulo (%): 100% a 250%
+        final TextView tvJumpVel = buildMinimalSliderLabel("Força do Pulo (%): 100%");
+        sectionKinematics.addView(tvJumpVel);
+
+        SeekBar sbJumpVel = new SeekBar(this);
+        sbJumpVel.setMax(150); // 100 + [0..150] = 100%..250%
+        sbJumpVel.setProgress(0);
+        styleMinimalSeekBar(sbJumpVel);
+        sbJumpVel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                jumpPct = 100.0f + progress;
+                tvJumpVel.setText("Força do Pulo (%): " + (int) jumpPct + "%");
+                pushConfigToNative();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        sectionKinematics.addView(sbJumpVel);
+
+        // 4. Escala de Tempo (%): 50% a 200%
+        final TextView tvTimeScale = buildMinimalSliderLabel("Escala de Tempo (%): 100%");
+        sectionKinematics.addView(tvTimeScale);
+
+        SeekBar sbTimeScale = new SeekBar(this);
+        sbTimeScale.setMax(150); // 50 + [0..150] = 50%..200%
+        sbTimeScale.setProgress(50);
+        styleMinimalSeekBar(sbTimeScale);
+        sbTimeScale.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                timeScalePct = 50.0f + progress;
+                tvTimeScale.setText("Escala de Tempo (%): " + (int) timeScalePct + "%");
+                pushConfigToNative();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        sectionKinematics.addView(sbTimeScale);
+
+        // Recursos Avançados de Gameplay (Skillcheck, Armadilhas, Modo Voo, Fuga)
+        CheckBox cbAutoSkillcheck = new CheckBox(this);
+        styleMinimalCheckBox(cbAutoSkillcheck, "Auto Skillcheck (100% Ótimo)", autoSkillcheck);
+        cbAutoSkillcheck.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                autoSkillcheck = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbAutoSkillcheck);
+
+        CheckBox cbTrapImmunity = new CheckBox(this);
+        styleMinimalCheckBox(cbTrapImmunity, "Imunidade a Armadilhas (BearTrap)", trapImmunity);
+        cbTrapImmunity.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                trapImmunity = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbTrapImmunity);
+
+        CheckBox cbFlyCheat = new CheckBox(this);
+        styleMinimalCheckBox(cbFlyCheat, "Modo Voo (MOVE_Flying)", flyCheat);
+        cbFlyCheat.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                flyCheat = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbFlyCheat);
+
+        CheckBox cbForceEscape = new CheckBox(this);
+        styleMinimalCheckBox(cbForceEscape, "Forçar Fuga Imediata (Portão/Alçapão)", forceEscape);
+        cbForceEscape.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                forceEscape = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbForceEscape);
+
+        // ====================================================================
+        // ABA 3: IDENTIDADE DO JOGADOR, PAPEL (ROLE) E ESTADO DE IMOBILIZAÇÃO
+        // ====================================================================
+        CheckBox cbOverrideName = new CheckBox(this);
+        styleMinimalCheckBox(cbOverrideName, "Substituir Nome do Jogador", overrideName);
+        cbOverrideName.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                overrideName = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionIdentity.addView(cbOverrideName);
+
+        TextView lblNameHint = buildMinimalSliderLabel("Nome de Exibição Personalizado:");
+        sectionIdentity.addView(lblNameHint);
+
+        final EditText etPlayerName = new EditText(this);
+        styleMinimalEditText(etPlayerName, "Digite o nome do jogador...");
+        etPlayerName.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    setWindowFocusableForKeyboard(true);
+                    etPlayerName.requestFocus();
+                    InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) {
+                        imm.showSoftInput(etPlayerName, InputMethodManager.SHOW_FORCED);
+                    }
+                }
+                return false;
+            }
+        });
+        etPlayerName.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            @Override
+            public void afterTextChanged(Editable s) {
+                playerName = s.toString();
+                pushConfigToNative();
+            }
+        });
+        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        );
+        nameLp.topMargin = dp(2);
+        nameLp.bottomMargin = dp(4);
+        sectionIdentity.addView(etPlayerName, nameLp);
+
+        Button doneTypingBtn = new Button(this);
+        doneTypingBtn.setText("Aplicar e Ocultar Teclado");
+        doneTypingBtn.setTextColor(COL_TEXT_PRIMARY);
+        doneTypingBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        doneTypingBtn.setAllCaps(false);
+        doneTypingBtn.setMinHeight(0);
+        doneTypingBtn.setMinimumHeight(0);
+        doneTypingBtn.setPadding(dp(8), dp(3), dp(8), dp(3));
+        GradientDrawable btnBg = new GradientDrawable();
+        btnBg.setColor(COL_BG_INNER);
+        btnBg.setCornerRadius(dp(4));
+        btnBg.setStroke(1, COL_BORDER_ACCENT);
+        doneTypingBtn.setBackground(btnBg);
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(26)
+        );
+        btnLp.bottomMargin = dp(4);
+        doneTypingBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (imm != null) {
+                    imm.hideSoftInputFromWindow(rootFloatingView.getWindowToken(), 0);
+                }
+                setWindowFocusableForKeyboard(false);
+                pushConfigToNative();
+            }
+        });
+        sectionIdentity.addView(doneTypingBtn, btnLp);
+
+        // Seletor de Estado de Imobilização (EImmobilizeState)
+        final String[] immKeys   = new String[]{"off", "none", "hooked", "trapped", "hiding", "dead", "caged"};
+        final String[] immLabels = new String[]{
+            "Imobilização: Desativado",
+            "Imobilização: Livre (none)",
+            "Imobilização: Gancho (hooked)",
+            "Imobilização: Armadilha (trapped)",
+            "Imobilização: Armário (hiding)",
+            "Imobilização: Morto (dead)",
+            "Imobilização: Jaula (caged)"
+        };
+        final Button btnImmobilize = new Button(this);
+        btnImmobilize.setText(immLabels[0]);
+        btnImmobilize.setTextColor(COL_TEXT_PRIMARY);
+        btnImmobilize.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        btnImmobilize.setAllCaps(false);
+        btnImmobilize.setMinHeight(0);
+        btnImmobilize.setMinimumHeight(0);
+        btnImmobilize.setPadding(dp(8), dp(3), dp(8), dp(3));
+        GradientDrawable immBg = new GradientDrawable();
+        immBg.setColor(COL_BG_INNER);
+        immBg.setCornerRadius(dp(4));
+        immBg.setStroke(1, COL_BORDER_SUBTLE);
+        btnImmobilize.setBackground(immBg);
+        btnImmobilize.setOnClickListener(new View.OnClickListener() {
+            private int idx = 0;
+            @Override
+            public void onClick(View v) {
+                idx = (idx + 1) % immKeys.length;
+                immobilizeState = immKeys[idx];
+                btnImmobilize.setText(immLabels[idx]);
+                pushConfigToNative();
+            }
+        });
+        LinearLayout.LayoutParams immLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(26)
+        );
+        immLp.bottomMargin = dp(4);
+        sectionIdentity.addView(btnImmobilize, immLp);
+
+        // Seletor de Papel do Jogador (EPlayerRole)
+        final String[] roleKeys   = new String[]{"none", "camper", "slasher", "observer"};
+        final String[] roleLabels = new String[]{
+            "Papel (Role): Padrão",
+            "Papel: Sobrevivente (camper)",
+            "Papel: Assassino (slasher)",
+            "Papel: Espectador (observer)"
+        };
+        final Button btnRole = new Button(this);
+        btnRole.setText(roleLabels[0]);
+        btnRole.setTextColor(COL_TEXT_PRIMARY);
+        btnRole.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        btnRole.setAllCaps(false);
+        btnRole.setMinHeight(0);
+        btnRole.setMinimumHeight(0);
+        btnRole.setPadding(dp(8), dp(3), dp(8), dp(3));
+        GradientDrawable roleBg = new GradientDrawable();
+        roleBg.setColor(COL_BG_INNER);
+        roleBg.setCornerRadius(dp(4));
+        roleBg.setStroke(1, COL_BORDER_SUBTLE);
+        btnRole.setBackground(roleBg);
+        btnRole.setOnClickListener(new View.OnClickListener() {
+            private int idx = 0;
+            @Override
+            public void onClick(View v) {
+                idx = (idx + 1) % roleKeys.length;
+                playerRole = roleKeys[idx];
+                btnRole.setText(roleLabels[idx]);
+                pushConfigToNative();
+            }
+        });
+        LinearLayout.LayoutParams roleLp = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(26)
+        );
+        roleLp.bottomMargin = dp(4);
+        sectionIdentity.addView(btnRole, roleLp);
+
+        content.addView(sectionVisuals);
+        content.addView(sectionKinematics);
+        content.addView(sectionIdentity);
+
+        scrollView.addView(
+            content,
+            new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT
+            )
+        );
+        final int screenH = getResources().getDisplayMetrics().heightPixels;
+        final int maxScrollHeight = Math.min(dp(220), Math.max(dp(150), (int) (screenH * 0.50f)));
+        expandedPanel.addView(scrollView, new LinearLayout.LayoutParams(dp(250), maxScrollHeight));
+
+        // Arrastar janela pelo cabeçalho e pelo ícone flutuante 34dp x 34dp
+        headerBar.setOnTouchListener(new View.OnTouchListener() {
+            private int initialX;
+            private int initialY;
+            private float touchX;
+            private float touchY;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initialX = windowParams.x;
+                        initialY = windowParams.y;
+                        touchX = event.getRawX();
+                        touchY = event.getRawY();
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        windowParams.x = initialX + (int) (event.getRawX() - touchX);
+                        windowParams.y = initialY + (int) (event.getRawY() - touchY);
+                        windowManager.updateViewLayout(rootFloatingView, windowParams);
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+        });
+
+        collapsedBubbleView.setOnTouchListener(new View.OnTouchListener() {
+            private int initialX;
+            private int initialY;
+            private float touchX;
+            private float touchY;
+            private boolean moved;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        initialX = windowParams.x;
+                        initialY = windowParams.y;
+                        touchX = event.getRawX();
+                        touchY = event.getRawY();
+                        moved = false;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        final int dx = (int) (event.getRawX() - touchX);
+                        final int dy = (int) (event.getRawY() - touchY);
+                        if (Math.abs(dx) > dp(5) || Math.abs(dy) > dp(5)) {
+                            moved = true;
+                        }
+                        windowParams.x = initialX + dx;
+                        windowParams.y = initialY + dy;
+                        windowManager.updateViewLayout(rootFloatingView, windowParams);
+                        return true;
+                    case MotionEvent.ACTION_UP:
+                        if (!moved) {
+                            collapsedBubbleView.setVisibility(View.GONE);
+                            expandedPanel.setVisibility(View.VISIBLE);
+                        }
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+        });
+
+        container.addView(collapsedBubbleView);
+        container.addView(expandedPanel);
+        rootFloatingView = container;
+
+        windowManager.addView(rootFloatingView, windowParams);
+    }
+
+    @Override
+    public void onDestroy() {
+        serviceActive = false;
+        uiHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+        if (windowManager != null) {
+            if (espOverlayView != null) {
+                try {
+                    windowManager.removeView(espOverlayView);
+                } catch (Throwable ignored) {
+                }
+            }
+            if (rootFloatingView != null) {
+                try {
+                    windowManager.removeView(rootFloatingView);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+}

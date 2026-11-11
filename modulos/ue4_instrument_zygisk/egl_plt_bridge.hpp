@@ -31,6 +31,9 @@ using AInputEventGetTypeFn          = int32_t (*)(const AInputEvent* event);
 using AMotionEventGetActionFn       = int32_t (*)(const AInputEvent* motion_event);
 using AMotionEventGetXFn            = float (*)(const AInputEvent* motion_event, size_t pointer_index);
 using AMotionEventGetYFn            = float (*)(const AInputEvent* motion_event, size_t pointer_index);
+using AKeyEventGetActionFn          = int32_t (*)(const AInputEvent* key_event);
+using AKeyEventGetKeyCodeFn         = int32_t (*)(const AInputEvent* key_event);
+using AKeyEventGetMetaStateFn       = int32_t (*)(const AInputEvent* key_event);
 using InitializeMotionEventFn       = int32_t (*)(void* this_consumer, void* motion_event, const void* input_msg);
 
 namespace detail {
@@ -43,9 +46,13 @@ inline std::atomic<AInputEventGetTypeFn>          g_orig_AInputEvent_getType{nul
 inline std::atomic<AMotionEventGetActionFn>       g_orig_AMotionEvent_getAction{nullptr};
 inline std::atomic<AMotionEventGetXFn>            g_orig_AMotionEvent_getX{nullptr};
 inline std::atomic<AMotionEventGetYFn>            g_orig_AMotionEvent_getY{nullptr};
+inline std::atomic<AKeyEventGetActionFn>          g_orig_AKeyEvent_getAction{nullptr};
+inline std::atomic<AKeyEventGetKeyCodeFn>         g_orig_AKeyEvent_getKeyCode{nullptr};
+inline std::atomic<AKeyEventGetMetaStateFn>       g_orig_AKeyEvent_getMetaState{nullptr};
 inline std::atomic<InitializeMotionEventFn>       g_orig_initializeMotionEvent{nullptr};
 
 inline std::atomic<const AInputEvent*>            g_last_motion_event{nullptr};
+inline std::atomic<const AInputEvent*>            g_last_key_event{nullptr};
 inline std::atomic<bool>                          g_bridge_installed{false};
 
 [[nodiscard]] inline std::uintptr_t resolve_dynamic_ptr(
@@ -132,6 +139,25 @@ inline void extract_and_forward_motion_event(
     }
 }
 
+inline void extract_and_forward_key_event(const AInputEvent* event) noexcept {
+    if (!event) {
+        return;
+    }
+    if (g_last_key_event.exchange(event, std::memory_order_acq_rel) == event) {
+        return;
+    }
+
+    auto get_act  = g_orig_AKeyEvent_getAction.load(std::memory_order_acquire);
+    auto get_code = g_orig_AKeyEvent_getKeyCode.load(std::memory_order_acquire);
+    auto get_meta = g_orig_AKeyEvent_getMetaState.load(std::memory_order_acquire);
+
+    const int32_t action   = get_act  ? get_act(event)  : ::AKeyEvent_getAction(event);
+    const int32_t key_code = get_code ? get_code(event) : ::AKeyEvent_getKeyCode(event);
+    const int32_t meta     = get_meta ? get_meta(event) : ::AKeyEvent_getMetaState(event);
+
+    hud::on_key_event(action, key_code, meta, 0);
+}
+
 } // namespace detail
 
 inline EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) noexcept {
@@ -159,6 +185,8 @@ inline int32_t hook_AInputQueue_getEvent(AInputQueue* queue, AInputEvent** outEv
             float   x      = 0.0f;
             float   y      = 0.0f;
             detail::extract_and_forward_motion_event(*outEvent, action, x, y);
+        } else if (ev_type == AINPUT_EVENT_TYPE_KEY) {
+            detail::extract_and_forward_key_event(*outEvent);
         }
     }
     return res;
@@ -193,6 +221,8 @@ inline int32_t hook_AInputQueue_preDispatchEvent(AInputQueue* queue, AInputEvent
                 orig_finish(queue, event, 1);
                 return 1;
             }
+        } else if (ev_type == AINPUT_EVENT_TYPE_KEY) {
+            detail::extract_and_forward_key_event(event);
         }
     }
     return 0;
@@ -354,6 +384,9 @@ inline bool install_egl_bridge(std::uintptr_t module_base) noexcept {
     const auto resolved_get_act   = resolve_android_sym("AMotionEvent_getAction", &::AMotionEvent_getAction);
     const auto resolved_get_x     = resolve_android_sym("AMotionEvent_getX", &::AMotionEvent_getX);
     const auto resolved_get_y     = resolve_android_sym("AMotionEvent_getY", &::AMotionEvent_getY);
+    const auto resolved_key_act   = resolve_android_sym("AKeyEvent_getAction", &::AKeyEvent_getAction);
+    const auto resolved_key_code  = resolve_android_sym("AKeyEvent_getKeyCode", &::AKeyEvent_getKeyCode);
+    const auto resolved_key_meta  = resolve_android_sym("AKeyEvent_getMetaState", &::AKeyEvent_getMetaState);
 
     detail::g_orig_eglSwapBuffers.store(resolved_egl_swap, std::memory_order_release);
     detail::g_orig_AInputQueue_getEvent.store(resolved_get_event, std::memory_order_release);
@@ -363,6 +396,9 @@ inline bool install_egl_bridge(std::uintptr_t module_base) noexcept {
     detail::g_orig_AMotionEvent_getAction.store(resolved_get_act, std::memory_order_release);
     detail::g_orig_AMotionEvent_getX.store(resolved_get_x, std::memory_order_release);
     detail::g_orig_AMotionEvent_getY.store(resolved_get_y, std::memory_order_release);
+    detail::g_orig_AKeyEvent_getAction.store(resolved_key_act, std::memory_order_release);
+    detail::g_orig_AKeyEvent_getKeyCode.store(resolved_key_code, std::memory_order_release);
+    detail::g_orig_AKeyEvent_getMetaState.store(resolved_key_meta, std::memory_order_release);
 
     void* input_handle = ::dlopen("libinput.so", RTLD_NOW | RTLD_NOLOAD);
     InitializeMotionEventFn resolved_init_motion = nullptr;

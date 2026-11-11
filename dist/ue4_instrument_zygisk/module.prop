@@ -1,6 +1,0 @@
-id=ue4_instrument_core
-name=UE4.27 AArch64 Diagnostics & Telemetry Suite
-version=v1.0.0-rev7
-versionCode=107
-author=SystemsEngineering
-description=In-process ELF64 AArch64 telemetry and diagnostic instrumentation for com.netease.dbdena (UE 4.27)
