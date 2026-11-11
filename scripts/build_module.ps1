@@ -158,8 +158,8 @@ $ServiceSh = @"
 #!/system/bin/sh
 MODDIR=`${0%/*}
 chmod 1777 /data/local/tmp 2>/dev/null
-touch /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin 2>/dev/null
-chmod 0666 /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin 2>/dev/null
+touch /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin /data/local/tmp/dbdm_telemetry_shm_v2.bin 2>/dev/null
+chmod 0666 /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin /data/local/tmp/dbdm_telemetry_shm_v2.bin 2>/dev/null
 if [ -x /data/local/tmp/dbdm_telemetry_daemon ]; then
   killall -9 dbdm_telemetry_daemon 2>/dev/null
   /data/local/tmp/dbdm_telemetry_daemon --daemon
@@ -341,29 +341,47 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
     Write-Host "    -> Standalone Floating Mod Menu APK: $ApkOut" -ForegroundColor Green
 }
 
-Write-Host "[6/6] Verificando conexao ADB (192.168.1.68:10001) para deploy..." -ForegroundColor Cyan
+Write-Host "[6/6] Verificando conexao ADB (192.168.1.68:10001 / 192.168.1.8:10001) para deploy..." -ForegroundColor Cyan
+$CandidateIps = @(
+    "192.168.1.68:10001",
+    "192.168.1.8:10001"
+)
 $PrevEapAdb = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& $AdbExe connect 192.168.1.68:10001 *> $null
+foreach ($Ip in $CandidateIps) {
+    & $AdbExe connect $Ip *> $null
+}
 $ErrorActionPreference = $PrevEapAdb
 
 $AdbDevices = (& $AdbExe devices) -join "`n"
 $TargetSerial = $null
-if ($AdbDevices -match "192\.168\.1\.68:10001\s+device") {
-    $TargetSerial = "192.168.1.68:10001"
-} elseif ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
+foreach ($Ip in $CandidateIps) {
+    $EscapedIp = [regex]::Escape($Ip)
+    if ($AdbDevices -match "$EscapedIp\s+device\b") {
+        $TargetSerial = $Ip
+        break
+    }
+}
+if (-not $TargetSerial -and ($AdbDevices -match "(?m)^(\S+)\s+device\b")) {
     $TargetSerial = $Matches[1]
 }
 
 if ($TargetSerial) {
     Write-Host "    -> Dispositivo alvo detectado: $TargetSerial" -ForegroundColor Cyan
+    Write-Host "    -> Desinstalando APK e modulo anteriores..." -ForegroundColor Cyan
+    $PrevEapUninstall = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $AdbExe -s $TargetSerial uninstall com.dbdm.modmenu *> $null
+    & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu >/dev/null 2>&1; su -c 'killall -9 dbdm_telemetry_daemon 2>/dev/null; rm -rf /data/adb/modules/ue4_instrument_core /data/adb/modules_update/ue4_instrument_core /data/local/tmp/dbdm_telemetry_shm*.bin'" *> $null
+    $ErrorActionPreference = $PrevEapUninstall
+
     & $AdbExe -s $TargetSerial push $ZipOut /sdcard/Download/ue4_instrument_zygisk.zip
     & $AdbExe -s $TargetSerial push $ZipOut /data/local/tmp/ue4_instrument_zygisk.zip
     & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64; cp -f /data/local/tmp/ue4_instrument_zygisk.zip /data/adb/modules/ue4_instrument_core/ 2>/dev/null; magisk --install-module /data/local/tmp/ue4_instrument_zygisk.zip'"
     & $AdbExe -s $TargetSerial push $CoreSo /data/local/tmp/libinstrument_core.so
     & $AdbExe -s $TargetSerial push "$StageDir\service.sh" /data/local/tmp/service.sh
     & $AdbExe -s $TargetSerial push "$StageDir\module.prop" /data/local/tmp/module.prop
-    & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64 && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so && cp -f /data/local/tmp/service.sh /data/adb/modules/ue4_instrument_core/service.sh && cp -f /data/local/tmp/module.prop /data/adb/modules/ue4_instrument_core/module.prop && chmod 755 /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so /data/adb/modules/ue4_instrument_core/service.sh && chmod 1777 /data/local/tmp && chmod 666 /data/local/tmp/dbdm_* 2>/dev/null; rm -f /data/adb/modules/ue4_instrument_core/update && rm -rf /data/adb/modules_update/ue4_instrument_core'"
+    & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64 && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so && cp -f /data/local/tmp/service.sh /data/adb/modules/ue4_instrument_core/service.sh && cp -f /data/local/tmp/module.prop /data/adb/modules/ue4_instrument_core/module.prop && chmod 755 /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so /data/adb/modules/ue4_instrument_core/service.sh && chmod 1777 /data/local/tmp && touch /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm_v2.bin && chmod 666 /data/local/tmp/dbdm_* 2>/dev/null; rm -f /data/adb/modules/ue4_instrument_core/update && rm -rf /data/adb/modules_update/ue4_instrument_core'"
     $DaemonBin = Join-Path $BuildDir "dbdm_telemetry_daemon"
     if (Test-Path $DaemonBin) {
         & $LlvmStrip --strip-unneeded $DaemonBin

@@ -114,14 +114,16 @@ struct CameraView {
 };
 
 enum class NodeCategory : std::uint8_t {
-    Antagonist = 0,
-    Teammate,
-    PowerNode,
-    Shrine,
-    Container,
-    Barrier,
-    Portal,
-    SpecialProp
+    Unknown     = 0,
+    Antagonist  = 1,
+    Teammate    = 2,
+    PowerNode   = 3,
+    Portal      = 4,
+    Container   = 5,
+    Shrine      = 6,
+    Barrier     = 7,
+    ExitGate    = 8,
+    SpecialProp = 9
 };
 
 // Bone indices for SceneNode::bone_joints[14]:
@@ -149,7 +151,7 @@ enum class BoneIndex : std::uint8_t {
 struct SceneNode {
     Vec3         world_pos{};
     float        distance_m                      = 0.0f;
-    NodeCategory category                        = NodeCategory::SpecialProp;
+    NodeCategory category                        = NodeCategory::Unknown;
     float        yaw_deg                         = 0.0f;
     float        progress_pct                    = -1.0f;
     bool         is_open                         = false;
@@ -165,12 +167,14 @@ struct SceneTelemetryData {
     CameraView    current_camera{};
     SceneNode     nodes[kMaxSceneNodes]{};
     std::size_t   node_count           = 0;
-    bool          match_active         = true;
+    bool          match_active         = false;
     std::uint64_t uworld_ptr           = 0;
     std::uint64_t ulevel_ptr           = 0;
     std::uint64_t local_pawn           = 0;
     std::uint64_t tick_seq             = 0;
+    std::uint32_t remaining_nodes      = 0;
     std::uint32_t active_generators    = 0;
+    std::uint32_t required_generators  = 0;
     std::uint32_t skillchecks_handled  = 0;
     float         nearest_gen_progress = 0.0f;
 

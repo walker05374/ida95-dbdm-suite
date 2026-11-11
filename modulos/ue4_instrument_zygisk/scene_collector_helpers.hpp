@@ -81,80 +81,151 @@ namespace detail_helpers {
 
 } // namespace detail_helpers
 
-// 1. Case-insensitively maps actor/class names to hud::NodeCategory
+// 1. Strictly maps actor/class names or canonical category IDs to hud::NodeCategory.
+//    Each category matches only its own class or actor ID; unmatched inputs return NodeCategory::Unknown
+//    (never collapsing into SpecialProp / Hook).
 [[nodiscard]] inline hud::NodeCategory classify_node_category(const char* class_name) noexcept {
     if (!detail_helpers::is_readable_string_ptr(class_name) || class_name[0] == '\0') {
+        return hud::NodeCategory::Unknown;
+    }
+
+    // Tier 1: Exact canonical category / UE4 native class match
+    if (std::strcmp(class_name, "Killer") == 0 ||
+        std::strcmp(class_name, "SlasherPlayer") == 0 ||
+        std::strcmp(class_name, "ASlasherPlayer") == 0 ||
+        std::strcmp(class_name, "Assassino") == 0) {
+        return hud::NodeCategory::Antagonist;
+    }
+    if (std::strcmp(class_name, "Survivor") == 0 ||
+        std::strcmp(class_name, "CamperPlayer") == 0 ||
+        std::strcmp(class_name, "ACamperPlayer") == 0 ||
+        std::strcmp(class_name, "Sobrevivente") == 0) {
+        return hud::NodeCategory::Teammate;
+    }
+    if (std::strcmp(class_name, "Generator") == 0 ||
+        std::strcmp(class_name, "AGenerator") == 0 ||
+        std::strcmp(class_name, "Gerador") == 0) {
+        return hud::NodeCategory::PowerNode;
+    }
+    if (std::strcmp(class_name, "Totem") == 0 ||
+        std::strcmp(class_name, "ATotem") == 0) {
+        return hud::NodeCategory::Shrine;
+    }
+    if (std::strcmp(class_name, "Chest") == 0 ||
+        std::strcmp(class_name, "Searchable") == 0 ||
+        std::strcmp(class_name, "ASearchable") == 0 ||
+        std::strcmp(class_name, "Bau") == 0 ||
+        std::strcmp(class_name, "Baú") == 0) {
+        return hud::NodeCategory::Container;
+    }
+    if (std::strcmp(class_name, "Pallet") == 0 ||
+        std::strcmp(class_name, "APallet") == 0 ||
+        std::strcmp(class_name, "Bookshelf") == 0) {
+        return hud::NodeCategory::Barrier;
+    }
+    if (std::strcmp(class_name, "Hatch") == 0 ||
+        std::strcmp(class_name, "AHatch") == 0 ||
+        std::strcmp(class_name, "Alcapao") == 0 ||
+        std::strcmp(class_name, "Alçapão") == 0) {
+        return hud::NodeCategory::Portal;
+    }
+    if (std::strcmp(class_name, "ExitGate") == 0 ||
+        std::strcmp(class_name, "EscapeDoor") == 0 ||
+        std::strcmp(class_name, "AEscapeDoor") == 0 ||
+        std::strcmp(class_name, "Portao") == 0 ||
+        std::strcmp(class_name, "Portão de Saída") == 0) {
+        return hud::NodeCategory::ExitGate;
+    }
+    if (std::strcmp(class_name, "Hook") == 0 ||
+        std::strcmp(class_name, "MeatLocker") == 0 ||
+        std::strcmp(class_name, "AMeatLocker") == 0 ||
+        std::strcmp(class_name, "SmallMeatLocker") == 0 ||
+        std::strcmp(class_name, "Gancho") == 0) {
         return hud::NodeCategory::SpecialProp;
     }
 
-    if (detail_helpers::icontains_bounded(class_name, "Slasher")   ||
-        detail_helpers::icontains_bounded(class_name, "Killer")    ||
-        detail_helpers::icontains_bounded(class_name, "Assassino") ||
-        detail_helpers::icontains_bounded(class_name, "Wraith")    ||
-        detail_helpers::icontains_bounded(class_name, "Trapper")   ||
-        detail_helpers::icontains_bounded(class_name, "Hillbilly") ||
-        detail_helpers::icontains_bounded(class_name, "Nurse")     ||
-        detail_helpers::icontains_bounded(class_name, "Huntress")  ||
-        detail_helpers::icontains_bounded(class_name, "Spirit")    ||
-        detail_helpers::icontains_bounded(class_name, "Myers")     ||
-        detail_helpers::icontains_bounded(class_name, "Shape")     ||
-        detail_helpers::icontains_bounded(class_name, "Cannibal")  ||
-        detail_helpers::icontains_bounded(class_name, "Legion")    ||
-        detail_helpers::icontains_bounded(class_name, "Doctor")    ||
-        detail_helpers::icontains_bounded(class_name, "Haddie")    ||
-        detail_helpers::icontains_bounded(class_name, "Oni")       ||
-        detail_helpers::icontains_bounded(class_name, "Blight")    ||
-        detail_helpers::icontains_bounded(class_name, "Trickster")) {
+    // Tier 2: Strict actor-ID / blueprint name match (mutually exclusive, no cross-category fallback)
+    if ((detail_helpers::icontains_bounded(class_name, "Slasher_Character") ||
+         detail_helpers::icontains_bounded(class_name, "BP_Slasher")        ||
+         detail_helpers::icontains_bounded(class_name, "SlasherPlayer")     ||
+         detail_helpers::icontains_bounded(class_name, "Killer_Character")) &&
+        !detail_helpers::icontains_bounded(class_name, "Trap")       &&
+        !detail_helpers::icontains_bounded(class_name, "Projectile") &&
+        !detail_helpers::icontains_bounded(class_name, "Power")      &&
+        !detail_helpers::icontains_bounded(class_name, "Stalker")    &&
+        !detail_helpers::icontains_bounded(class_name, "Weapon")     &&
+        !detail_helpers::icontains_bounded(class_name, "Mori")) {
         return hud::NodeCategory::Antagonist;
     }
 
-    if (detail_helpers::icontains_bounded(class_name, "Camper")   ||
-        detail_helpers::icontains_bounded(class_name, "Survivor") ||
-        detail_helpers::icontains_bounded(class_name, "Sobrevivente")) {
+    if (detail_helpers::icontains_bounded(class_name, "BP_Camper")        ||
+        detail_helpers::icontains_bounded(class_name, "CamperMale")       ||
+        detail_helpers::icontains_bounded(class_name, "CamperFemale")     ||
+        detail_helpers::icontains_bounded(class_name, "Camper_Character") ||
+        detail_helpers::icontains_bounded(class_name, "CamperPlayer")     ||
+        detail_helpers::icontains_bounded(class_name, "Survivor_Character")) {
         return hud::NodeCategory::Teammate;
     }
 
-    if ((detail_helpers::icontains_bounded(class_name, "Generator") ||
-         detail_helpers::icontains_bounded(class_name, "Gerador")   ||
-         detail_helpers::icontains_bounded(class_name, "PowerNode")) &&
-        !detail_helpers::icontains_bounded(class_name, "LevelGenerator")  &&
-        !detail_helpers::icontains_bounded(class_name, "GeneratorEntity") &&
-        !detail_helpers::icontains_bounded(class_name, "GeneratorDriven") &&
+    if ((detail_helpers::icontains_bounded(class_name, "GeneratorStandard") ||
+         detail_helpers::icontains_bounded(class_name, "GeneratorNoPole")   ||
+         detail_helpers::icontains_bounded(class_name, "GeneratorShort")    ||
+         detail_helpers::icontains_bounded(class_name, "GeneratorIndoor")   ||
+         detail_helpers::icontains_bounded(class_name, "BP_Generator"))     &&
+        !detail_helpers::icontains_bounded(class_name, "LevelGenerator")    &&
+        !detail_helpers::icontains_bounded(class_name, "GeneratorEntity")   &&
+        !detail_helpers::icontains_bounded(class_name, "GeneratorDriven")   &&
         !detail_helpers::icontains_bounded(class_name, "Portal_Generator")) {
         return hud::NodeCategory::PowerNode;
     }
 
     if ((detail_helpers::icontains_bounded(class_name, "Totem")      ||
-         detail_helpers::icontains_bounded(class_name, "Hex")        ||
-         detail_helpers::icontains_bounded(class_name, "Boon")       ||
          detail_helpers::icontains_bounded(class_name, "HexSpawner") ||
-         detail_helpers::icontains_bounded(class_name, "Shrine")) &&
-        !detail_helpers::icontains_bounded(class_name, "Cleansed")  &&
-        !detail_helpers::icontains_bounded(class_name, "Destroyed") &&
+         detail_helpers::icontains_bounded(class_name, "HexTotem")   ||
+         detail_helpers::icontains_bounded(class_name, "BoonTotem")) &&
+        !detail_helpers::icontains_bounded(class_name, "Cleansed")   &&
+        !detail_helpers::icontains_bounded(class_name, "Destroyed")  &&
         !detail_helpers::icontains_bounded(class_name, "Broken")) {
         return hud::NodeCategory::Shrine;
     }
 
-    if (detail_helpers::icontains_bounded(class_name, "Chest")      ||
-        detail_helpers::icontains_bounded(class_name, "Searchable") ||
-        detail_helpers::icontains_bounded(class_name, "Baú")) {
+    if (detail_helpers::icontains_bounded(class_name, "BP_Chest")   ||
+        detail_helpers::icontains_bounded(class_name, "Chest")      ||
+        detail_helpers::icontains_bounded(class_name, "Searchable")) {
         return hud::NodeCategory::Container;
     }
 
-    if (detail_helpers::icontains_bounded(class_name, "Pallet") ||
-        detail_helpers::icontains_bounded(class_name, "Bookshelf")) {
+    if ((detail_helpers::icontains_bounded(class_name, "Pallet")    ||
+         detail_helpers::icontains_bounded(class_name, "Bookshelf")) &&
+        !detail_helpers::icontains_bounded(class_name, "Window")    &&
+        !detail_helpers::icontains_bounded(class_name, "Vault")     &&
+        !detail_helpers::icontains_bounded(class_name, "Broken")    &&
+        !detail_helpers::icontains_bounded(class_name, "Destroyed") &&
+        !detail_helpers::icontains_bounded(class_name, "Fallen")    &&
+        !detail_helpers::icontains_bounded(class_name, "Illusion")  &&
+        !detail_helpers::icontains_bounded(class_name, "Fake")) {
         return hud::NodeCategory::Barrier;
     }
 
-    if (detail_helpers::icontains_bounded(class_name, "Hatch")      ||
-        detail_helpers::icontains_bounded(class_name, "EscapeDoor") ||
-        detail_helpers::icontains_bounded(class_name, "ExitGate")   ||
-        detail_helpers::icontains_bounded(class_name, "Alçapão")    ||
-        detail_helpers::icontains_bounded(class_name, "Portão de Saída")) {
+    if (detail_helpers::icontains_bounded(class_name, "BP_Hatch") ||
+        detail_helpers::icontains_bounded(class_name, "Hatch")) {
         return hud::NodeCategory::Portal;
     }
 
-    return hud::NodeCategory::SpecialProp;
+    if (detail_helpers::icontains_bounded(class_name, "EscapeDoor") ||
+        detail_helpers::icontains_bounded(class_name, "ExitGate")   ||
+        detail_helpers::icontains_bounded(class_name, "BP_Escape")) {
+        return hud::NodeCategory::ExitGate;
+    }
+
+    if ((detail_helpers::icontains_bounded(class_name, "SmallMeatLocker") ||
+         detail_helpers::icontains_bounded(class_name, "MeatLocker")      ||
+         detail_helpers::icontains_bounded(class_name, "MeatHook"))       &&
+        !detail_helpers::icontains_bounded(class_name, "Portal_MeatHook")) {
+        return hud::NodeCategory::SpecialProp;
+    }
+
+    return hud::NodeCategory::Unknown;
 }
 
 // 2. Rejects NaN/Inf coordinates and exact uninitialized (0, 0, 0)
@@ -256,12 +327,10 @@ inline void compute_skeleton_fallback_joints(
     return 0.0f;
 }
 
-// 5. Returns true when a generator's repair progress is invalid or has reached/exceeded 99.5%
-//    (automatic filter/hide condition for completed generators).
+// 5. Returns true only when a generator's repair progress is invalid/negative.
+//    Completed generators (100%) remain visible and render "100% <dist>m".
 [[nodiscard]] inline bool should_hide_generator(float progress_pct) noexcept {
-    return !std::isfinite(progress_pct) ||
-           progress_pct < 0.0f ||
-           progress_pct >= kGeneratorCompleteThresholdPct;
+    return !std::isfinite(progress_pct) || progress_pct < 0.0f;
 }
 
 // 6. Returns true while a Shrine (Totem) node remains standing/uncleansed (progress_pct >= 0.0f)

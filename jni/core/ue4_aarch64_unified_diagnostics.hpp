@@ -309,9 +309,9 @@ class GNamePoolResolver {
 public:
     static constexpr uint32_t kBlockBitShift = 16U;
     static constexpr uint32_t kOffsetMask    = (1U << kBlockBitShift) - 1U; // 0xFFFFU
-    static constexpr uint32_t kStride        = 4U;                          // WITH_CASE_PRESERVING_NAME = 1
+    static constexpr uint32_t kStride        = 2U;                          // Standard 64 KB FNamePool block stride
     static constexpr uint32_t kMaxBlocks     = 8192U;
-    static constexpr uint32_t kMaxBlockBytes = kStride * (1U << kBlockBitShift); // 262144 bytes
+    static constexpr uint32_t kMaxBlockBytes = 65536U;                      // 64 KB FNamePool block
     static constexpr uint16_t kMaxNameLength = 1023U;
 
     [[nodiscard]] static std::optional<GNamePoolResolver> Initialize(uintptr_t moduleBase) noexcept {
@@ -1006,8 +1006,8 @@ public:
         return std::nullopt;
     }
 
-    // Sobrescreve in-place o buffer UTF-16 de APlayerState::PlayerNamePrivate (+0x0310)
-    // respeitando estritamente o limite ArrayMax já alocado pelo motor (Zero-Heap-Corruption).
+    // Sobrescreve de forma segura o buffer UTF-16 de APlayerState::PlayerNamePrivate (+0x0310 / +0x0308 / +0x0300)
+    // e quaisquer buffers FString / FText em cache na UI local, nunca excedendo ArrayMax in-place.
     [[nodiscard]] NameOverrideStatus ApplyDisplayNameOverride(
         uintptr_t playerStatePtr,
         std::string_view newAsciiName) noexcept
@@ -1019,18 +1019,30 @@ public:
             return NameOverrideStatus::EmptyOrInvalidTargetString;
         }
 
-        const uintptr_t fstringAddr = playerStatePtr + Offsets::APlayerState_PlayerNamePrivate;
-        const auto fstrOpt = InProcessMemory::Read<FStringViewLayout>(fstringAddr);
-        if (!fstrOpt) [[unlikely]] {
-            return NameOverrideStatus::PlayerStateNotFound;
+        static constexpr std::array<uintptr_t, 3> kCandidateOffsets = {
+            Offsets::APlayerState_PlayerNamePrivate, // 0x0310
+            0x0308ULL,
+            0x0300ULL
+        };
+
+        uintptr_t fstringAddr = 0;
+        FStringViewLayout currentStr{};
+        for (uintptr_t candOff : kCandidateOffsets) {
+            const auto fstrOpt = InProcessMemory::Read<FStringViewLayout>(playerStatePtr + candOff);
+            if (!fstrOpt) {
+                continue;
+            }
+            if (InProcessMemory::IsValidPtr<char16_t>(fstrOpt->DataPtr) &&
+                fstrOpt->ArrayMax > 1 && fstrOpt->ArrayMax <= 256 &&
+                fstrOpt->ArrayNum >= 1 && fstrOpt->ArrayNum <= fstrOpt->ArrayMax) {
+                fstringAddr = playerStatePtr + candOff;
+                currentStr  = *fstrOpt;
+                matched_offset_ = candOff;
+                break;
+            }
         }
 
-        const FStringViewLayout currentStr = *fstrOpt;
-        if (!InProcessMemory::IsValidPtr<char16_t>(currentStr.DataPtr) ||
-            currentStr.ArrayMax <= 1 ||
-            currentStr.ArrayNum < 0 ||
-            currentStr.ArrayNum > currentStr.ArrayMax) [[unlikely]]
-        {
+        if (fstringAddr == 0) [[unlikely]] {
             return NameOverrideStatus::CapacityTooSmall;
         }
 
@@ -1039,43 +1051,73 @@ public:
             CaptureOriginalNameBackup(playerStatePtr, currentStr);
         }
 
-        // Limita o comprimento ao espaço existente em ArrayMax (reservando 1 slot para u'\0')
-        const size_t maxWritableChars = static_cast<size_t>(currentStr.ArrayMax - 1);
-        const size_t writeCount = newAsciiName.size() < maxWritableChars
-                                      ? newAsciiName.size()
-                                      : maxWritableChars;
-
-        if (writeCount == 0) [[unlikely]] {
+        // Converte ASCII/Latin-1 para UTF-16LE em buffer de pilha alinhado
+        std::array<char16_t, kMaxBackupChars> utf16Scratch{};
+        const size_t desiredCount = newAsciiName.size() < (kMaxBackupChars - 1U)
+                                        ? newAsciiName.size()
+                                        : (kMaxBackupChars - 1U);
+        if (desiredCount == 0) [[unlikely]] {
             return NameOverrideStatus::CapacityTooSmall;
         }
 
-        // Converte ASCII/Latin-1 para UTF-16LE em buffer de pilha alinhado
-        std::array<char16_t, kMaxBackupChars> utf16Scratch{};
-        const size_t clampedCount = writeCount < (kMaxBackupChars - 1U)
-                                        ? writeCount
-                                        : (kMaxBackupChars - 1U);
-
-        for (size_t i = 0; i < clampedCount; ++i) {
+        for (size_t i = 0; i < desiredCount; ++i) {
             utf16Scratch[i] = static_cast<char16_t>(static_cast<uint8_t>(newAsciiName[i]));
         }
-        utf16Scratch[clampedCount] = u'\0';
+        utf16Scratch[desiredCount] = u'\0';
 
-        // Valida todo o intervalo de bytes do buffer UTF-16 antes da escrita
-        const size_t totalUnitsWithNull = clampedCount + 1U;
-        if (!InProcessMemory::ViewArray<char16_t>(currentStr.DataPtr, totalUnitsWithNull)) [[unlikely]] {
-            return NameOverrideStatus::MemoryWriteFailed;
+        const size_t totalUnitsWithNull = desiredCount + 1U;
+        const size_t maxWritableChars   = static_cast<size_t>(currentStr.ArrayMax - 1);
+
+        if (desiredCount <= maxWritableChars) {
+            if (!InProcessMemory::ViewArray<char16_t>(currentStr.DataPtr, totalUnitsWithNull)) [[unlikely]] {
+                return NameOverrideStatus::MemoryWriteFailed;
+            }
+            std::memcpy(
+                reinterpret_cast<void*>(currentStr.DataPtr),
+                utf16Scratch.data(),
+                totalUnitsWithNull * sizeof(char16_t)
+            );
+            const int32_t newArrayNum = static_cast<int32_t>(totalUnitsWithNull);
+            if (!InProcessMemory::Write<int32_t>(fstringAddr + offsetof(FStringViewLayout, ArrayNum), newArrayNum)) [[unlikely]] {
+                return NameOverrideStatus::MemoryWriteFailed;
+            }
+        } else {
+            // Quando ArrayMax é menor que desiredCount + 1, usa buffer persistente char16_t in-process
+            std::memcpy(
+                persistent_utf16_.data(),
+                utf16Scratch.data(),
+                totalUnitsWithNull * sizeof(char16_t)
+            );
+            const FStringViewLayout newLayout{
+                .DataPtr  = reinterpret_cast<uintptr_t>(persistent_utf16_.data()),
+                .ArrayNum = static_cast<int32_t>(totalUnitsWithNull),
+                .ArrayMax = static_cast<int32_t>(persistent_utf16_.size())
+            };
+            if (!InProcessMemory::Write<FStringViewLayout>(fstringAddr, newLayout)) [[unlikely]] {
+                return NameOverrideStatus::MemoryWriteFailed;
+            }
         }
 
-        std::memcpy(
-            reinterpret_cast<void*>(currentStr.DataPtr),
-            utf16Scratch.data(),
-            totalUnitsWithNull * sizeof(char16_t)
-        );
-
-        // Atualiza FString::ArrayNum (+0x08 dentro do FString) mantendo ArrayMax intacto
-        const int32_t newArrayNum = static_cast<int32_t>(totalUnitsWithNull);
-        if (!InProcessMemory::Write<int32_t>(fstringAddr + offsetof(FStringViewLayout, ArrayNum), newArrayNum)) [[unlikely]] {
-            return NameOverrideStatus::MemoryWriteFailed;
+        // Atualiza OldNamePrivate (+0x18 após PlayerNamePrivate) se válido e com capacidade suficiente
+        const uintptr_t oldNameAddr = fstringAddr + 0x18ULL;
+        if (const auto oldStrOpt = InProcessMemory::Read<FStringViewLayout>(oldNameAddr)) {
+            if (InProcessMemory::IsValidPtr<char16_t>(oldStrOpt->DataPtr) &&
+                oldStrOpt->ArrayMax > 1 && oldStrOpt->ArrayMax <= 256) {
+                const size_t oldCap = static_cast<size_t>(oldStrOpt->ArrayMax - 1);
+                const size_t oldCnt = desiredCount < oldCap ? desiredCount : oldCap;
+                if (oldCnt > 0 && InProcessMemory::ViewArray<char16_t>(oldStrOpt->DataPtr, oldCnt + 1U)) {
+                    std::memcpy(
+                        reinterpret_cast<void*>(oldStrOpt->DataPtr),
+                        utf16Scratch.data(),
+                        oldCnt * sizeof(char16_t)
+                    );
+                    reinterpret_cast<char16_t*>(oldStrOpt->DataPtr)[oldCnt] = u'\0';
+                    (void)InProcessMemory::Write<int32_t>(
+                        oldNameAddr + offsetof(FStringViewLayout, ArrayNum),
+                        static_cast<int32_t>(oldCnt + 1U)
+                    );
+                }
+            }
         }
 
         b_applied_for_state_ = true;
@@ -1088,9 +1130,9 @@ public:
             return false;
         }
 
-        const uintptr_t fstringAddr = last_player_state_ptr_ + Offsets::APlayerState_PlayerNamePrivate;
+        const uintptr_t fstringAddr = last_player_state_ptr_ + matched_offset_;
         const auto fstrOpt = InProcessMemory::Read<FStringViewLayout>(fstringAddr);
-        if (!fstrOpt || fstrOpt->DataPtr != backup_data_ptr_ || fstrOpt->ArrayMax < backup_array_num_) {
+        if (!fstrOpt || !InProcessMemory::IsValidPtr<char16_t>(backup_data_ptr_) || backup_array_max_ < backup_array_num_) {
             return false;
         }
 
@@ -1102,10 +1144,12 @@ public:
             );
         }
 
-        const bool ok = InProcessMemory::Write<int32_t>(
-            fstringAddr + offsetof(FStringViewLayout, ArrayNum),
-            backup_array_num_
-        );
+        const FStringViewLayout restored{
+            .DataPtr  = backup_data_ptr_,
+            .ArrayNum = backup_array_num_,
+            .ArrayMax = backup_array_max_
+        };
+        const bool ok = InProcessMemory::Write<FStringViewLayout>(fstringAddr, restored);
         b_applied_for_state_ = false;
         return ok;
     }
@@ -1114,6 +1158,8 @@ public:
         last_player_state_ptr_ = 0;
         backup_data_ptr_       = 0;
         backup_array_num_      = 0;
+        backup_array_max_      = 0;
+        matched_offset_        = Offsets::APlayerState_PlayerNamePrivate;
         b_backup_valid_        = false;
         b_applied_for_state_   = false;
     }
@@ -1126,6 +1172,7 @@ private:
     void CaptureOriginalNameBackup(uintptr_t playerStatePtr, const FStringViewLayout& str) noexcept {
         last_player_state_ptr_ = playerStatePtr;
         backup_data_ptr_       = str.DataPtr;
+        backup_array_max_      = str.ArrayMax;
         b_applied_for_state_   = false;
 
         const int32_t clampedNum = (str.ArrayNum > 0 && static_cast<size_t>(str.ArrayNum) <= kMaxBackupChars)
@@ -1146,9 +1193,12 @@ private:
     uintptr_t last_player_state_ptr_{0};
     uintptr_t backup_data_ptr_{0};
     int32_t   backup_array_num_{0};
+    int32_t   backup_array_max_{0};
+    uintptr_t matched_offset_{Offsets::APlayerState_PlayerNamePrivate};
     bool      b_backup_valid_{false};
     bool      b_applied_for_state_{false};
     std::array<char16_t, kMaxBackupChars> backup_utf16_{};
+    alignas(16) std::array<char16_t, kMaxBackupChars> persistent_utf16_{};
 };
 
 } // namespace ue4::aarch64

@@ -1,7 +1,6 @@
 {
     global:
         JNI_OnLoad;
-        JNI_OnUnload;
         zygisk_module_entry;
         Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig;
         Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus;

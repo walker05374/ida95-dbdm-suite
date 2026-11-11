@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 #include <algorithm>
 #include <atomic>
@@ -260,7 +261,9 @@ struct TelemetrySnapshotPayload {
     std::uint32_t magic                   = kIpcMagicVersion;
     std::uint32_t match_active            = 0;
     std::uint32_t node_count              = 0;
+    std::uint32_t remaining_nodes         = 0;
     std::uint32_t active_generators       = 0;
+    std::uint32_t required_generators     = 0;
     std::uint32_t skillchecks_handled     = 0;
     float         nearest_gen_progress    = 0.0f;
     std::uint64_t tick_seq                = 0;
@@ -298,13 +301,15 @@ inline void fill_snapshot_from_telemetry(TelemetrySnapshotPayload& out) noexcept
 
     out.magic                = kIpcMagicVersion;
     out.match_active         = data.match_active ? 1U : 0U;
-    const std::size_t count  = (data.node_count <= hud::kMaxSceneNodes)
+    const std::size_t count  = (data.match_active && data.node_count <= hud::kMaxSceneNodes)
         ? data.node_count
         : 0U;
     out.node_count           = static_cast<std::uint32_t>(count);
-    out.active_generators    = data.active_generators;
+    out.remaining_nodes      = data.match_active ? data.remaining_nodes : 0U;
+    out.active_generators    = data.match_active ? data.active_generators : 0U;
+    out.required_generators  = data.match_active ? data.required_generators : 0U;
     out.skillchecks_handled  = data.skillchecks_handled;
-    out.nearest_gen_progress = data.nearest_gen_progress;
+    out.nearest_gen_progress = data.match_active ? data.nearest_gen_progress : 0.0f;
     out.tick_seq             = data.tick_seq;
     out.uworld_ptr           = data.uworld_ptr;
     out.ulevel_ptr           = data.ulevel_ptr;
@@ -376,10 +381,23 @@ inline void write_snapshot_file(const TelemetrySnapshotPayload& snap) noexcept {
 }
 
 // Reads the latest TelemetrySnapshotPayload from /data/local/tmp/dbdm_telemetry_shm_v2.bin
-// verifying tick_seq seqlock stability (even and unchanged across the read).
+// verifying tick_seq seqlock stability (even and unchanged across the read) and freshness (< 2s).
 [[nodiscard]] inline bool read_snapshot_file(TelemetrySnapshotPayload& out) noexcept {
     const int fd = ::open(kSharedSnapshotFilePath, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
+        return false;
+    }
+
+    struct stat st{};
+    struct timespec now_ts{};
+    if (::fstat(fd, &st) != 0 || ::clock_gettime(CLOCK_REALTIME, &now_ts) != 0) {
+        ::close(fd);
+        return false;
+    }
+    const std::int64_t age_sec =
+        static_cast<std::int64_t>(now_ts.tv_sec) - static_cast<std::int64_t>(st.st_mtim.tv_sec);
+    if (age_sec > 2) {
+        ::close(fd);
         return false;
     }
 

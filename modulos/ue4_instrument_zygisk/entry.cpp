@@ -80,6 +80,7 @@ struct INSTRUMENT_LOCAL EngineOffsets {
 
     // UWorld
     uintptr_t persistent_level          = 0x0038;     // ULevel* (LDR X0, [X0, #0x38] @ 0x0C78A6C0)
+    uintptr_t world_game_state          = 0x03B0;     // AGameStateBase* UWorld::GameState (+0x3B0)
     uintptr_t owning_game_instance      = 0x0410;     // UGameInstance* (LDR X0, [X0, #0x410] @ 0x0C1BFDFC)
 
     // ULevel
@@ -139,13 +140,31 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t camera_default_fov        = 0x0248;     // float APlayerCameraManager::DefaultFOV (+0x248)
     uintptr_t camera_locked_fov         = 0x0250;     // float APlayerCameraManager::LockedFOV (+0x250)
 
-    // UChargeableComponent / Generator Progress & USkillCheck
-    uintptr_t chargeable_current_charge = 0x0338;     // float (+0x338)
+    // AGenerator & UChargeableComponent / FSpeedBasedNetSyncedValue & USkillCheck (Verified in libUE4.so Build 292949)
+    uintptr_t chargeable_current_charge = 0x0378;     // float AGenerator::NativePercentComplete (+0x378, 0.0f..1.0f)
+    uintptr_t generator_activated       = 0x0368;     // uint8 AGenerator::Activated (+0x368)
+    uintptr_t generator_is_repaired     = 0x0369;     // uint8 AGenerator::IsRepaired (+0x369)
+    uintptr_t generator_native_percent  = 0x0378;     // float AGenerator::NativePercentComplete (+0x378, 0.0f..1.0f)
+    uintptr_t generator_charge_comp     = 0x0520;     // UChargeableComponent* AGenerator::_generatorCharge (+0x520)
+    uintptr_t chargeable_replicated_chg = 0x01B8;     // float UChargeableComponent::_currentCharge._replicatedValue (+0x1A0 + 0x18)
+    uintptr_t chargeable_live_charge    = 0x01BC;     // float UChargeableComponent::_currentCharge live interpolated value (+0x1A0 + 0x1C)
+    uintptr_t chargeable_tunable_data   = 0x02F8;     // TMap<FName, float> UChargeableComponent::_tunableValueMap.Data (+0x2F8)
+    uintptr_t chargeable_tunable_count  = 0x0300;     // int32 UChargeableComponent::_tunableValueMap.ArrayNum (+0x300)
+    uintptr_t chargeable_tunable_val    = 0x000C;     // float first tunable entry value at Data + 0x0C (MaxCharge ~ 90.0f)
     uintptr_t player_interaction_handler= 0x08D0;     // UPlayerInteractionHandler* (+0x8D0)
     uintptr_t skillcheck_component      = 0x02E8;     // USkillCheck* (+0x2E8)
     uintptr_t skillcheck_success_start  = 0x0164;     // float USkillCheck::SuccessZoneStart (+0x164)
     uintptr_t skillcheck_success_length = 0x0168;     // float USkillCheck::SuccessZoneLength (+0x168)
     uintptr_t skillcheck_bonus_length   = 0x016C;     // float USkillCheck::BonusZoneLength (+0x16C)
+
+    // ADBDGameState, ATotem, APallet, ASearchable, AMeatHook Live Match State (Verified in libUE4.so Build 292949)
+    uintptr_t gamestate_activated_gens  = 0x0628;     // int32 ADBDGameState::_activatedGeneratorCount (+0x628)
+    uintptr_t gamestate_required_gens   = 0x062C;     // int32 ADBDGameState::_requiredActivatedGeneratorCount (+0x62C)
+    uintptr_t totem_state               = 0x03A8;     // uint8 ATotem::_totemState (+0x3A8: 0=Cleansed, 1=Dull, 2=Hex, 3=Boon)
+    uintptr_t pallet_state              = 0x0368;     // uint8 APallet::_state (+0x368: 0=Up, 1=Falling, 2=Fallen, 3=Destroyed, 4=Illusionary)
+    uintptr_t searchable_searched       = 0x038C;     // uint8 ASearchable::_hasBeenSearched (+0x38C)
+    uintptr_t meathook_is_sacrificed    = 0x04E2;     // uint8 AMeatHook::_isSacrificed (+0x4E2)
+    uintptr_t meathook_is_sabotaged     = 0x04E4;     // uint8 AMeatHook::_isSabotaged (+0x4E4)
 
     // ACamperPlayer / ADBDPlayerState Gameplay State & Role
     uintptr_t camper_immobilize_state   = 0x1158;     // uint8 EImmobilizeState (+0x1158)
@@ -797,14 +816,125 @@ public:
         return mem::write_data<uint8_t>(local_player_st + off.player_state_game_role, role_byte);
     }
 
-    // Classifies an actor using BOTH its instance FName (Actor->NamePrivate) and its UClass FName (Actor->ClassPrivate->NamePrivate).
-    // Returns canonical category ("Killer", "Survivor", "Generator", "Hatch", "ExitGate", "Totem", "Chest", "Hook", "Pallet", "Window")
-    // and sets *out_priority (1 = highest priority .. 10 = lowest), or returns nullptr if not a valid interactive match entity.
+    // Walks UObject::ClassPrivate (+0x10) and UStruct::SuperStruct (+0x48) up to 6 levels,
+    // writing the leaf UClass name into out_leaf_class and the full inheritance chain
+    // (e.g. "BP_Chest01_C->Searchable->Interactable->Actor") into out_super_chain.
+    // Uses a 128-slot direct-mapped UClass* cache so each UClass hierarchy is walked via
+    // process_vm_readv only once rather than on every actor every tick.
+    struct UClassHierarchyCacheEntry {
+        uintptr_t             cls_ptr{0};
+        std::array<char, 96>  leaf_name{};
+        std::array<char, 224> super_chain{};
+    };
+
+    static void resolve_uclass_hierarchy(
+        uintptr_t actor_ptr,
+        const GNamePoolResolver& name_resolver,
+        std::span<char> out_leaf_class,
+        std::span<char> out_super_chain
+    ) noexcept {
+        if (!out_leaf_class.empty()) {
+            out_leaf_class[0] = '\0';
+        }
+        if (!out_super_chain.empty()) {
+            out_super_chain[0] = '\0';
+        }
+        const auto cls_ptr_opt = mem::read<uintptr_t>(actor_ptr + 0x10U);
+        if (!cls_ptr_opt.has_value() || !InProcessMemory::IsValidPtr(*cls_ptr_opt, 0x50U)) {
+            return;
+        }
+
+        const uintptr_t leaf_cls = *cls_ptr_opt;
+        static std::array<UClassHierarchyCacheEntry, 128> s_cache{};
+        const size_t slot = static_cast<size_t>((leaf_cls >> 4U) ^ (leaf_cls >> 13U)) & (s_cache.size() - 1U);
+        UClassHierarchyCacheEntry& cache_entry = s_cache[slot];
+
+        if (cache_entry.cls_ptr == leaf_cls && cache_entry.leaf_name[0] != '\0') {
+            if (!out_leaf_class.empty()) {
+                std::strncpy(out_leaf_class.data(), cache_entry.leaf_name.data(), out_leaf_class.size() - 1U);
+                out_leaf_class[out_leaf_class.size() - 1U] = '\0';
+            }
+            if (!out_super_chain.empty()) {
+                std::strncpy(out_super_chain.data(), cache_entry.super_chain.data(), out_super_chain.size() - 1U);
+                out_super_chain[out_super_chain.size() - 1U] = '\0';
+            }
+            return;
+        }
+
+        uintptr_t cur_cls = leaf_cls;
+        size_t chain_pos = 0;
+        std::array<char, 96> node_name{};
+        std::array<char, 96> built_leaf{};
+        std::array<char, 224> built_chain{};
+
+        for (size_t depth = 0; depth < 6U && cur_cls != 0; ++depth) {
+            if (!InProcessMemory::IsValidPtr(cur_cls, 0x50U)) {
+                break;
+            }
+            const auto cls_fn = mem::read<uint32_t>(cur_cls + 0x18U);
+            if (!cls_fn.has_value() || *cls_fn == 0U || !name_resolver.resolve_name(*cls_fn, node_name)) {
+                break;
+            }
+            if (depth == 0U) {
+                std::strncpy(built_leaf.data(), node_name.data(), built_leaf.size() - 1U);
+                built_leaf[built_leaf.size() - 1U] = '\0';
+            }
+            if (chain_pos + 4U < built_chain.size()) {
+                if (chain_pos > 0U) {
+                    built_chain[chain_pos++] = '-';
+                    built_chain[chain_pos++] = '>';
+                }
+                const size_t nlen = std::strlen(node_name.data());
+                const size_t avail = built_chain.size() - 1U - chain_pos;
+                const size_t copy_n = std::min(nlen, avail);
+                std::memcpy(built_chain.data() + chain_pos, node_name.data(), copy_n);
+                chain_pos += copy_n;
+                built_chain[chain_pos] = '\0';
+            }
+            if (std::strcmp(node_name.data(), "Actor") == 0 ||
+                std::strcmp(node_name.data(), "Object") == 0) {
+                break;
+            }
+            const auto super_opt = mem::read<uintptr_t>(cur_cls + 0x48U);
+            if (!super_opt.has_value() || *super_opt == cur_cls) {
+                break;
+            }
+            cur_cls = *super_opt;
+        }
+
+        if (built_leaf[0] != '\0') {
+            cache_entry.cls_ptr     = leaf_cls;
+            cache_entry.leaf_name   = built_leaf;
+            cache_entry.super_chain = built_chain;
+        }
+
+        if (!out_leaf_class.empty()) {
+            std::strncpy(out_leaf_class.data(), built_leaf.data(), out_leaf_class.size() - 1U);
+            out_leaf_class[out_leaf_class.size() - 1U] = '\0';
+        }
+        if (!out_super_chain.empty()) {
+            std::strncpy(out_super_chain.data(), built_chain.data(), out_super_chain.size() - 1U);
+            out_super_chain[out_super_chain.size() - 1U] = '\0';
+        }
+    }
+
+    // Classifies an actor using a strict 3-tier resolver:
+    //   Tier 1: Strict UE4 UClass / UStruct::SuperStruct hierarchy type check.
+    //   Tier 2: Strict actor-ID / blueprint name check on Actor->NamePrivate.
+    //   Tier 3: No cross-category fallback; logs unresolved interactive actors to the debug log and returns nullptr.
+    // Returns canonical category ("Killer", "Survivor", "Generator", "Hatch", "ExitGate", "Totem", "Chest", "Hook", "Pallet")
+    // and sets *out_priority (1 = highest priority .. 9 = lowest), or returns nullptr if not a valid target match entity.
     [[nodiscard]] static const char* classify_actor_category(
         std::string_view actor_name,
         std::string_view class_name,
-        int32_t* out_priority = nullptr
+        std::string_view super_chain = {},
+        int32_t* out_priority = nullptr,
+        bool* out_is_unresolved_candidate = nullptr
     ) noexcept {
+        if (out_is_unresolved_candidate != nullptr) {
+            *out_is_unresolved_candidate = false;
+        }
+
         auto icontains = [](std::string_view hay, std::string_view needle) noexcept -> bool {
             if (needle.empty() || needle.size() > hay.size()) {
                 return false;
@@ -828,88 +958,107 @@ public:
             return false;
         };
 
-        auto either_contains = [&](std::string_view needle) noexcept -> bool {
+        const std::string_view type_chain = super_chain.empty() ? class_name : super_chain;
+
+        auto leaf_or_actor_contains = [&](std::string_view needle) noexcept -> bool {
             return icontains(class_name, needle) || icontains(actor_name, needle);
         };
 
-        // 1. Strict exclusion of manager actors, ghost generators, sub-entities, templates, and handheld items
-        if (either_contains("Default__")        ||
-            either_contains("Archetype")        ||
-            either_contains("GEN_VARIABLE")     ||
-            either_contains("LevelGenerator")   ||
-            either_contains("ProceduralLevel")  ||
-            either_contains("GeneratorEntity")  ||
-            either_contains("GeneratorDriven")  ||
-            either_contains("Portal_Generator") ||
-            either_contains("Portal_MeatHook")  ||
-            either_contains("BigThreeEvent")    ||
-            either_contains("BP_Entity_C")      ||
-            either_contains("SacrificeEnd")     ||
-            either_contains("PlayerStart")      ||
-            either_contains("GameRoleFront")    ||
-            either_contains("SlasherMale_REF")  ||
-            either_contains("BP_Menu_")         ||
-            either_contains("Lobby")            ||
-            either_contains("Looby")            ||
-            either_contains("pos_")             ||
-            either_contains("Interactable")     ||
-            either_contains("AIController")     ||
-            either_contains("PlayerController") ||
-            either_contains("PlayerState")      ||
-            either_contains("GameState")        ||
-            either_contains("GameMode")         ||
-            either_contains("Camera")           ||
-            either_contains("KillCam")          ||
-            either_contains("ReactionCam")      ||
-            either_contains("StruggleCam")      ||
-            either_contains("SacrificeCam")     ||
-            either_contains("Status")           ||
-            either_contains("Effect")           ||
-            either_contains("Decal")            ||
-            either_contains("Heartbeat")        ||
-            either_contains("Lighting")         ||
-            either_contains("PostProcess")      ||
-            either_contains("Emitter")          ||
-            either_contains("Particle")         ||
-            either_contains("Audio")            ||
-            either_contains("Sound")            ||
-            either_contains("NavMesh")          ||
-            either_contains("NavData")          ||
-            either_contains("Volume")           ||
-            either_contains("ReflectionCapture")||
-            either_contains("NightmareHusk")    ||
-            either_contains("DreamInducer")     ||
-            either_contains("BlastMine")        ||
-            either_contains("Collectable")      ||
-            either_contains("Medkit")           ||
-            either_contains("Flashlight")       ||
-            either_contains("Toolbox")          ||
-            either_contains("Firecracker")      ||
-            either_contains("DullKey")          ||
-            either_contains("SkeletonKey")      ||
-            either_contains("BrokenKey")        ||
-            either_contains("MapItem")          ||
-            either_contains("Addon")            ||
-            either_contains("BP_Item_")         ||
-            either_contains("_ACC")             ||
-            either_contains("Torso")            ||
-            either_contains("Hair")             ||
-            either_contains("Necklace")         ||
-            either_contains("Bags")             ||
-            either_contains("SkeletalMeshActor")||
-            either_contains("StaticMeshActor")  ||
-            either_contains("ClipManager")      ||
-            either_contains("Outline")          ||
-            either_contains("Blocker")) {
+        auto type_contains = [&](std::string_view needle) noexcept -> bool {
+            return icontains(type_chain, needle) || icontains(class_name, needle);
+        };
+
+        // 1. Strict exclusion of manager actors, ghost generators, sub-entities, templates, windows, hiding closets, and handheld items
+        if (leaf_or_actor_contains("Default__")        ||
+            leaf_or_actor_contains("Archetype")        ||
+            leaf_or_actor_contains("GEN_VARIABLE")     ||
+            leaf_or_actor_contains("LevelGenerator")   ||
+            leaf_or_actor_contains("ProceduralLevel")  ||
+            leaf_or_actor_contains("GeneratorEntity")  ||
+            leaf_or_actor_contains("GeneratorDriven")  ||
+            leaf_or_actor_contains("Portal_Generator") ||
+            leaf_or_actor_contains("Portal_MeatHook")  ||
+            leaf_or_actor_contains("BigThreeEvent")    ||
+            leaf_or_actor_contains("BP_Entity_C")      ||
+            leaf_or_actor_contains("SacrificeEnd")     ||
+            leaf_or_actor_contains("PlayerStart")      ||
+            leaf_or_actor_contains("GameRoleFront")    ||
+            leaf_or_actor_contains("SlasherMale_REF")  ||
+            leaf_or_actor_contains("BP_Menu_")         ||
+            leaf_or_actor_contains("Lobby")            ||
+            leaf_or_actor_contains("Looby")            ||
+            leaf_or_actor_contains("pos_")             ||
+            leaf_or_actor_contains("AIController")     ||
+            leaf_or_actor_contains("PlayerController") ||
+            leaf_or_actor_contains("PlayerState")      ||
+            leaf_or_actor_contains("GameState")        ||
+            leaf_or_actor_contains("GameMode")         ||
+            leaf_or_actor_contains("Camera")           ||
+            leaf_or_actor_contains("KillCam")          ||
+            leaf_or_actor_contains("ReactionCam")      ||
+            leaf_or_actor_contains("StruggleCam")      ||
+            leaf_or_actor_contains("SacrificeCam")     ||
+            leaf_or_actor_contains("Status")           ||
+            leaf_or_actor_contains("Effect")           ||
+            leaf_or_actor_contains("Decal")            ||
+            leaf_or_actor_contains("Heartbeat")        ||
+            leaf_or_actor_contains("Lighting")         ||
+            leaf_or_actor_contains("PostProcess")      ||
+            leaf_or_actor_contains("Emitter")          ||
+            leaf_or_actor_contains("Particle")         ||
+            leaf_or_actor_contains("Audio")            ||
+            leaf_or_actor_contains("Sound")            ||
+            leaf_or_actor_contains("NavMesh")          ||
+            leaf_or_actor_contains("NavData")          ||
+            leaf_or_actor_contains("Volume")           ||
+            leaf_or_actor_contains("ReflectionCapture")||
+            leaf_or_actor_contains("NightmareHusk")    ||
+            leaf_or_actor_contains("DreamInducer")     ||
+            leaf_or_actor_contains("BlastMine")        ||
+            leaf_or_actor_contains("Collectable")      ||
+            leaf_or_actor_contains("Medkit")           ||
+            leaf_or_actor_contains("Flashlight")       ||
+            leaf_or_actor_contains("Toolbox")          ||
+            leaf_or_actor_contains("Firecracker")      ||
+            leaf_or_actor_contains("DullKey")          ||
+            leaf_or_actor_contains("SkeletonKey")      ||
+            leaf_or_actor_contains("BrokenKey")        ||
+            leaf_or_actor_contains("MapItem")          ||
+            leaf_or_actor_contains("Addon")            ||
+            leaf_or_actor_contains("BP_Item_")         ||
+            leaf_or_actor_contains("_ACC")             ||
+            leaf_or_actor_contains("Torso")            ||
+            leaf_or_actor_contains("Hair")             ||
+            leaf_or_actor_contains("Necklace")         ||
+            leaf_or_actor_contains("Bags")             ||
+            leaf_or_actor_contains("SkeletalMeshActor")||
+            leaf_or_actor_contains("StaticMeshActor")  ||
+            leaf_or_actor_contains("ClipManager")      ||
+            leaf_or_actor_contains("Outline")          ||
+            leaf_or_actor_contains("Blocker")          ||
+            leaf_or_actor_contains("WindowStandard")      ||
+            leaf_or_actor_contains("BP_Window")           ||
+            leaf_or_actor_contains("Closet")              ||
+            leaf_or_actor_contains("BP_Locker")           ||
+            leaf_or_actor_contains("Breakable")           ||
+            leaf_or_actor_contains("LevelCrow")           ||
+            leaf_or_actor_contains("PlayerInteractable")  ||
+            leaf_or_actor_contains("CamperInteractable")  ||
+            leaf_or_actor_contains("SlasherInteractable") ||
+            leaf_or_actor_contains("BP_IND_ExitGate")) {
             return nullptr;
         }
 
-        // Reject if the UClass itself is an unspawned Spawner (except HexSpawner/Totem) or Component
+        if (icontains(class_name, "Window") || icontains(actor_name, "Window")) {
+            return nullptr;
+        }
+
+        // Reject if the leaf UClass itself is an unspawned Spawner (except HexSpawner/Totem) or Component
         if (icontains(class_name, "Component") ||
             (icontains(class_name, "Spawner") &&
-             !either_contains("Totem") &&
-             !either_contains("HexSpawner") &&
-             !either_contains("Shrine"))) {
+             !leaf_or_actor_contains("Totem") &&
+             !leaf_or_actor_contains("HexSpawner") &&
+             !leaf_or_actor_contains("Shrine"))) {
             return nullptr;
         }
 
@@ -918,136 +1067,356 @@ public:
             return lbl;
         };
 
-        // Priority 1: Killer (Slasher character pawn)
-        if ((either_contains("Slasher_Character") ||
-             either_contains("BP_Slasher")        ||
-             either_contains("SlasherPlayer")     ||
-             either_contains("Killer_Character")) &&
-            !either_contains("Trap")       &&
-            !either_contains("Projectile") &&
-            !either_contains("Power")      &&
-            !either_contains("Stalker")    &&
-            !either_contains("Weapon")     &&
-            !either_contains("Mori")) {
+        const bool is_sub_weapon_or_trap =
+            leaf_or_actor_contains("Trap")       ||
+            leaf_or_actor_contains("Projectile") ||
+            leaf_or_actor_contains("Power")      ||
+            leaf_or_actor_contains("Stalker")    ||
+            leaf_or_actor_contains("Weapon")     ||
+            leaf_or_actor_contains("Mori");
+
+        // ====================================================================
+        // TIER 1: Strict UE4 UClass / UStruct::SuperStruct Type Check
+        // ====================================================================
+        if (!type_chain.empty()) {
+            // Priority 1: Killer (ASlasherPlayer)
+            if (!is_sub_weapon_or_trap &&
+                (type_contains("SlasherPlayer") ||
+                 type_contains("Slasher_Character") ||
+                 type_contains("Killer_Character"))) {
+                return set_prio(1, "Killer");
+            }
+
+            // Priority 2: Survivor (ACamperPlayer)
+            if (type_contains("CamperPlayer") ||
+                type_contains("Camper_Character") ||
+                type_contains("Survivor_Character")) {
+                return set_prio(2, "Survivor");
+            }
+
+            // Priority 3: Generator (AGenerator)
+            if (type_contains("->Generator->")     ||
+                type_contains("GeneratorStandard") ||
+                type_contains("GeneratorNoPole")   ||
+                type_contains("GeneratorShort")    ||
+                type_contains("GeneratorIndoor")   ||
+                type_contains("BP_Generator")      ||
+                icontains(class_name, "Generator")) {
+                return set_prio(3, "Generator");
+            }
+
+            // Priority 4: Hatch (AHatch)
+            if (type_contains("->Hatch->") ||
+                type_contains("BP_Hatch")  ||
+                icontains(class_name, "Hatch")) {
+                return set_prio(4, "Hatch");
+            }
+
+            // Priority 5: Exit Gate (AEscapeDoor)
+            if (type_contains("->EscapeDoor->") ||
+                type_contains("BP_EscapeBase")  ||
+                icontains(class_name, "EscapeDoor")) {
+                return set_prio(5, "ExitGate");
+            }
+
+            // Priority 6: Totem (ATotem)
+            if (type_contains("->Totem->")  ||
+                type_contains("TotemBase")  ||
+                type_contains("BP_Totem")   ||
+                type_contains("HexSpawner") ||
+                type_contains("HexTotem")   ||
+                type_contains("BoonTotem")  ||
+                icontains(class_name, "Totem")) {
+                if (leaf_or_actor_contains("Cleansed") ||
+                    leaf_or_actor_contains("Destroyed") ||
+                    leaf_or_actor_contains("Broken")) {
+                    return nullptr;
+                }
+                return set_prio(6, "Totem");
+            }
+
+            // Priority 7: Chest (ASearchable / BP_Chest)
+            if (type_contains("->Searchable->") ||
+                type_contains("BP_Chest")       ||
+                icontains(class_name, "Chest")  ||
+                icontains(class_name, "Searchable")) {
+                return set_prio(7, "Chest");
+            }
+
+            // Priority 8: Hook (AMeatHook / AMeatLocker / ASmallMeatLocker)
+            if (type_contains("->MeatHook->")    ||
+                type_contains("SmallMeatLocker") ||
+                type_contains("MeatLocker")      ||
+                type_contains("MeatHook")        ||
+                type_contains("BP_Hook")) {
+                return set_prio(8, "Hook");
+            }
+
+            // Priority 9: Pallet (APallet / Bookshelf)
+            if (type_contains("->Pallet->") ||
+                type_contains("BP_Pallet")  ||
+                type_contains("Bookshelf")  ||
+                icontains(class_name, "Pallet")) {
+                return set_prio(9, "Pallet");
+            }
+
+            // When UClass hierarchy (type_chain) is resolved, do NOT fall back to actor_name
+            // substring guessing (which could misclassify e.g. SearchableSpawner MagicFountains as Chests).
+            if (out_is_unresolved_candidate != nullptr) {
+                if (type_contains("Interactable") || type_contains("DBDPlayer")) {
+                    *out_is_unresolved_candidate = true;
+                }
+            }
+            return nullptr;
+        }
+
+        // ====================================================================
+        // TIER 2: Strict Actor-ID / Instance Name Match (No cross-category fallback)
+        // ====================================================================
+        if (!is_sub_weapon_or_trap &&
+            (icontains(actor_name, "Slasher_Character") ||
+             icontains(actor_name, "BP_Slasher")        ||
+             icontains(actor_name, "SlasherPlayer")     ||
+             icontains(actor_name, "Killer_Character"))) {
             return set_prio(1, "Killer");
         }
 
-        // Priority 2: Survivor (Camper character pawn)
-        if (either_contains("BP_Camper")        ||
-            either_contains("CamperMale")       ||
-            either_contains("CamperFemale")     ||
-            either_contains("Camper_Character") ||
-            either_contains("Survivor_Character")) {
+        if (icontains(actor_name, "BP_Camper")        ||
+            icontains(actor_name, "CamperMale")       ||
+            icontains(actor_name, "CamperFemale")     ||
+            icontains(actor_name, "Camper_Character") ||
+            icontains(actor_name, "Survivor_Character")) {
             return set_prio(2, "Survivor");
         }
 
-        // Priority 3: Generator (Strictly real repairable generators; LevelGenerator & GeneratorEntity already excluded)
-        if (either_contains("GeneratorStandard") ||
-            either_contains("GeneratorNoPole")   ||
-            either_contains("GeneratorShort")    ||
-            either_contains("GeneratorIndoor")   ||
-            either_contains("BP_Generator")      ||
-            icontains(class_name, "Generator")) {
+        if (icontains(actor_name, "GeneratorStandard") ||
+            icontains(actor_name, "GeneratorNoPole")   ||
+            icontains(actor_name, "GeneratorShort")    ||
+            icontains(actor_name, "GeneratorIndoor")   ||
+            icontains(actor_name, "BP_Generator")) {
             return set_prio(3, "Generator");
         }
 
-        // Priority 4: Hatch
-        if (either_contains("Hatch")) {
+        if (icontains(actor_name, "BP_Hatch") ||
+            icontains(actor_name, "Hatch01")  ||
+            icontains(actor_name, "Hatch_")) {
             return set_prio(4, "Hatch");
         }
 
-        // Priority 5: Exit Gate
-        if (either_contains("EscapeDoor") || either_contains("ExitGate")) {
+        if (icontains(actor_name, "EscapeDoor") ||
+            icontains(actor_name, "ExitGate")) {
             return set_prio(5, "ExitGate");
         }
 
-        // Priority 6: Totem (Shrine)
-        if (either_contains("Totem")      ||
-            either_contains("HexSpawner") ||
-            either_contains("Shrine")     ||
-            either_contains("HexTotem")   ||
-            either_contains("BoonTotem")) {
-            if (either_contains("Cleansed") || either_contains("Destroyed") || either_contains("Broken")) {
+        if (icontains(actor_name, "BP_Totem")   ||
+            icontains(actor_name, "TotemBase")  ||
+            icontains(actor_name, "HexSpawner") ||
+            icontains(actor_name, "HexTotem")   ||
+            icontains(actor_name, "BoonTotem")) {
+            if (icontains(actor_name, "Cleansed") ||
+                icontains(actor_name, "Destroyed") ||
+                icontains(actor_name, "Broken")) {
                 return nullptr;
             }
             return set_prio(6, "Totem");
         }
 
-        // Priority 7: Chest
-        if (either_contains("Chest") || either_contains("Searchable")) {
+        if (icontains(actor_name, "BP_Chest") ||
+            icontains(actor_name, "Chest01")  ||
+            icontains(actor_name, "Chest_")   ||
+            icontains(actor_name, "Searchable")) {
             return set_prio(7, "Chest");
         }
 
-        // Priority 8: Hook (MeatLocker / SmallMeatLocker / MeatHook)
-        if (either_contains("SmallMeatLocker") ||
-            either_contains("MeatLocker")      ||
-            either_contains("MeatHook")) {
+        if (icontains(actor_name, "SmallMeatLocker") ||
+            icontains(actor_name, "MeatLocker")      ||
+            icontains(actor_name, "MeatHook")        ||
+            icontains(actor_name, "BP_Hook")) {
             return set_prio(8, "Hook");
         }
 
-        // Priority 9: Pallet (Bookshelf / Pallet)
-        if (either_contains("Bookshelf") || either_contains("Pallet")) {
+        if (icontains(actor_name, "Bookshelf") ||
+            icontains(actor_name, "BP_Pallet") ||
+            icontains(actor_name, "Pallet01")  ||
+            icontains(actor_name, "Pallet_")) {
             return set_prio(9, "Pallet");
         }
 
-        // Priority 10: Window / Vault
-        if (either_contains("WindowStandard") ||
-            either_contains("BP_Window")      ||
-            either_contains("Window")         ||
-            either_contains("Vault")) {
-            return set_prio(10, "Window");
+        // ====================================================================
+        // TIER 3: Unresolved Fallback — Never guess or collapse into another category
+        // ====================================================================
+        if (out_is_unresolved_candidate != nullptr) {
+            if (type_contains("Interactable") || type_contains("DBDPlayer")) {
+                *out_is_unresolved_candidate = true;
+            }
         }
 
         return nullptr;
     }
 
-    // Reads active generator repair progress float (0.0f to 100.0f) directly from the
-    // interaction/component offset (+0x0338) or its attached UChargeableComponent instance.
+    // Per-generator component & tunable MaxCharge cache (keyed by actor_ptr, 100ms pointer/tunable refresh).
+    // Live progress fields (IsRepaired +0x369, NativePercentComplete +0x378, and UChargeableComponent::_currentCharge +0x1BC/+0x1B8)
+    // are read directly every frame so repairing/regressing/completed generators update in real time.
+    struct GeneratorProgressCacheEntry {
+        uintptr_t actor_ptr{0};
+        uintptr_t charge_comp_ptr{0};
+        float     max_charge{90.0f};
+        float     last_logged_pct{-10.0f};
+        uint64_t  last_comp_refresh_ms{0};
+    };
+
+    [[nodiscard]] static uint64_t monotonic_now_ms() noexcept {
+        struct timespec ts{};
+        if (::clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+            return 0ULL;
+        }
+        return static_cast<uint64_t>(ts.tv_sec) * 1000ULL +
+               static_cast<uint64_t>(ts.tv_nsec / 1000000L);
+    }
+
     [[nodiscard]] static float read_generator_progress_pct(
         uintptr_t actor_ptr,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
-        if (!InProcessMemory::IsValidPtr(actor_ptr, off.chargeable_current_charge + sizeof(uintptr_t))) {
+        if (!InProcessMemory::IsValidPtr(actor_ptr, off.generator_charge_comp + sizeof(uintptr_t))) {
             return 0.0f;
         }
 
-        // 1. Check if the interaction/chargeable offset on AGenerator holds a live 8-byte aligned UChargeableComponent* pointer
-        if (const auto maybe_comp = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
-            maybe_comp.has_value())
-        {
-            const uintptr_t untagged_comp = *maybe_comp & 0x00FFFFFFFFFFFFFFULL;
-            if ((untagged_comp & 0x7ULL) == 0ULL &&
-                untagged_comp >= 0x0000000100000000ULL &&
-                untagged_comp <= 0x00007FFFFFFFFFFFULL &&
-                validate_canonical_uobject(*maybe_comp, off.chargeable_current_charge + sizeof(float) * 2U, guobjectarray_abs, off))
+        static std::array<GeneratorProgressCacheEntry, 16> s_gen_cache{};
+        const uint64_t now_ms = monotonic_now_ms();
+
+        size_t slot = s_gen_cache.size();
+        size_t oldest_slot = 0;
+        uint64_t oldest_ms = UINT64_MAX;
+        for (size_t i = 0; i < s_gen_cache.size(); ++i) {
+            if (s_gen_cache[i].actor_ptr == actor_ptr) {
+                slot = i;
+                break;
+            }
+            if (s_gen_cache[i].actor_ptr == 0) {
+                oldest_slot = i;
+                oldest_ms   = 0;
+            } else if (s_gen_cache[i].last_comp_refresh_ms < oldest_ms) {
+                oldest_ms   = s_gen_cache[i].last_comp_refresh_ms;
+                oldest_slot = i;
+            }
+        }
+        if (slot == s_gen_cache.size()) {
+            slot = oldest_slot;
+            s_gen_cache[slot] = GeneratorProgressCacheEntry{};
+            s_gen_cache[slot].actor_ptr = actor_ptr;
+        }
+
+        GeneratorProgressCacheEntry& entry = s_gen_cache[slot];
+        if (entry.last_comp_refresh_ms == 0ULL || (now_ms - entry.last_comp_refresh_ms) >= 100ULL) {
+            entry.last_comp_refresh_ms = now_ms;
+            uintptr_t resolved_comp = 0;
+            float     resolved_max  = 90.0f;
+
+            if (const auto maybe_comp = mem::read<uintptr_t>(actor_ptr + off.generator_charge_comp);
+                maybe_comp.has_value())
             {
-                if (const auto comp_chg = mem::read<float>(*maybe_comp + off.chargeable_current_charge);
-                    comp_chg.has_value() && std::isfinite(*comp_chg) && *comp_chg >= 0.0f && *comp_chg <= 100.0f)
+                const uintptr_t untagged_comp = *maybe_comp & 0x00FFFFFFFFFFFFFFULL;
+                if ((untagged_comp & 0x7ULL) == 0ULL &&
+                    untagged_comp >= 0x0000000100000000ULL &&
+                    untagged_comp <= 0x00007FFFFFFFFFFFULL &&
+                    validate_canonical_uobject(
+                        *maybe_comp,
+                        off.chargeable_tunable_count + sizeof(int32_t),
+                        guobjectarray_abs,
+                        off))
                 {
-                    float max_chg = 0.0f;
-                    if (const auto m = mem::read<float>(*maybe_comp + off.chargeable_current_charge + sizeof(float));
-                        m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
-                        max_chg = *m;
+                    resolved_comp = *maybe_comp;
+                    const auto map_data  = mem::read<uintptr_t>(resolved_comp + off.chargeable_tunable_data);
+                    const auto map_count = mem::read<int32_t>(resolved_comp + off.chargeable_tunable_count);
+                    if (map_data.has_value() && map_count.has_value() &&
+                        *map_count > 0 && *map_count <= 64 &&
+                        InProcessMemory::IsValidPtr(*map_data, off.chargeable_tunable_val + sizeof(float)))
+                    {
+                        if (const auto tunable_max = mem::read<float>(*map_data + off.chargeable_tunable_val);
+                            tunable_max.has_value() && std::isfinite(*tunable_max) &&
+                            *tunable_max >= 10.0f && *tunable_max <= 200.0f)
+                        {
+                            resolved_max = *tunable_max;
+                        }
                     }
-                    return hud::adapter::normalize_generator_progress_pct(*comp_chg, max_chg);
+                }
+            }
+            entry.charge_comp_ptr = resolved_comp;
+            entry.max_charge      = resolved_max;
+        }
+
+        // 1. Live completion flags on AGenerator: IsRepaired (+0x0369) or Activated (+0x0368)
+        const uint8_t is_repaired = mem::read<uint8_t>(actor_ptr + off.generator_is_repaired).value_or(0U);
+        const uint8_t activated   = mem::read<uint8_t>(actor_ptr + off.generator_activated).value_or(0U);
+
+        // 2. Live AGenerator::NativePercentComplete (+0x0378, float in [0.0f, 1.0f])
+        float native_pct   = -1.0f;
+        float native_ratio = -1.0f;
+        if (const auto raw_native = mem::read<float>(actor_ptr + off.generator_native_percent);
+            raw_native.has_value() && std::isfinite(*raw_native) &&
+            *raw_native >= 0.0f && *raw_native <= 1.05f)
+        {
+            native_ratio = *raw_native;
+            native_pct   = hud::adapter::normalize_generator_progress_pct(*raw_native, 1.0f);
+        }
+
+        // 3. Live UChargeableComponent::_currentCharge (FSpeedBasedNetSyncedValue at +0x01BC live / +0x01B8 replicated)
+        float charge_pct = -1.0f;
+        float raw_charge = -1.0f;
+        if (entry.charge_comp_ptr != 0) {
+            const float max_chg = (entry.max_charge >= 10.0f && entry.max_charge <= 200.0f) ? entry.max_charge : 90.0f;
+            if (const auto live_chg = mem::read<float>(entry.charge_comp_ptr + off.chargeable_live_charge);
+                live_chg.has_value() && std::isfinite(*live_chg) &&
+                *live_chg >= 0.0f && *live_chg <= max_chg * 1.05f)
+            {
+                raw_charge = *live_chg;
+                charge_pct = hud::adapter::normalize_generator_progress_pct(*live_chg, max_chg);
+            }
+            if (const auto rep_chg = mem::read<float>(entry.charge_comp_ptr + off.chargeable_replicated_chg);
+                rep_chg.has_value() && std::isfinite(*rep_chg) &&
+                *rep_chg >= 0.0f && *rep_chg <= max_chg * 1.05f)
+            {
+                const float rep_pct = hud::adapter::normalize_generator_progress_pct(*rep_chg, max_chg);
+                if (charge_pct < 0.0f || (charge_pct == 0.0f && rep_pct > 0.0f)) {
+                    raw_charge = *rep_chg;
+                    charge_pct = rep_pct;
                 }
             }
         }
 
-        // 2. Read the active repair progress float (0.0f to 100.0f) directly from actor_ptr + off.chargeable_current_charge (+0x0338)
-        if (const auto raw_chg = mem::read<float>(actor_ptr + off.chargeable_current_charge);
-            raw_chg.has_value() && std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f)
-        {
-            float max_chg = 0.0f;
-            if (const auto m = mem::read<float>(actor_ptr + off.chargeable_current_charge + sizeof(float));
-                m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
-                max_chg = *m;
+        float final_pct = 0.0f;
+        if ((is_repaired & 0x01U) != 0U || (activated & 0x01U) != 0U) {
+            final_pct = 100.0f;
+        } else if (charge_pct >= 0.0f && native_pct >= 0.0f) {
+            // Prefer live FSpeedBasedNetSyncedValue when non-zero; fall back to NativePercentComplete when component is 0
+            final_pct = (charge_pct > 0.0f) ? charge_pct : native_pct;
+            if (native_pct >= 99.9f || charge_pct >= 99.9f) {
+                final_pct = 100.0f;
             }
-            return hud::adapter::normalize_generator_progress_pct(*raw_chg, max_chg);
+        } else if (charge_pct >= 0.0f) {
+            final_pct = (charge_pct >= 99.9f) ? 100.0f : charge_pct;
+        } else if (native_pct >= 0.0f) {
+            final_pct = (native_pct >= 99.9f) ? 100.0f : native_pct;
         }
 
-        return 0.0f;
+        if (std::fabs(final_pct - entry.last_logged_pct) >= 1.0f) {
+            entry.last_logged_pct = final_pct;
+            DIAG_LOGI(
+                "[GEN-PROGRESS] Gen=0x%llX Progress=%.1f%% | NativeRatio=%.4f | ChargeComp=0x%llX RawCharge=%.2f/%.1f | IsRepaired=%u Activated=%u",
+                static_cast<unsigned long long>(actor_ptr),
+                static_cast<double>(final_pct),
+                static_cast<double>(native_ratio),
+                static_cast<unsigned long long>(entry.charge_comp_ptr),
+                static_cast<double>(raw_charge),
+                static_cast<double>(entry.max_charge),
+                static_cast<unsigned>(is_repaired),
+                static_cast<unsigned>(activated)
+            );
+        }
+
+        return std::clamp(final_pct, 0.0f, 100.0f);
     }
 
     // Reads Shrine (Totem) state & interaction flags. Returns >= 0.0f while the totem is active/standing
@@ -1067,7 +1436,15 @@ public:
             return -1.0f;
         }
 
-        // Verify RootComponent visibility flags: if bHiddenInGame (0x1000) is set and bVisible (0x0040) is cleared,
+        // 1. Check ATotem::_totemState (+0x03A8): 0 = ETotemState::Cleansed, 1 = Dull, 2 = Hex, 3 = Boon
+        if (InProcessMemory::IsValidPtr(actor_ptr, off.totem_state + sizeof(uint8_t))) {
+            if (const auto t_state = mem::read<uint8_t>(actor_ptr + off.totem_state);
+                t_state.has_value() && (*t_state == 0U || *t_state > 3U)) {
+                return -1.0f;
+            }
+        }
+
+        // 2. Verify RootComponent visibility flags: if bHiddenInGame (0x1000) is set and bVisible (0x0040) is cleared,
         // the totem has been cleansed/deactivated.
         if (const auto root_comp = mem::read<uintptr_t>(actor_ptr + off.root_component);
             root_comp.has_value() && InProcessMemory::IsValidPtr(*root_comp, off.scene_comp_flags + sizeof(uint16_t))) {
@@ -1077,28 +1454,6 @@ public:
             if (const auto vis_flags = mem::read<uint16_t>(*root_comp + off.scene_comp_flags);
                 vis_flags.has_value() && ((*vis_flags & 0x1000U) != 0U) && ((*vis_flags & 0x0040U) == 0U)) {
                 return -1.0f;
-            }
-        }
-
-        // Check interaction/cleanse progress at chargeable offset (+0x0338) if mapped
-        if (InProcessMemory::IsValidPtr(actor_ptr, off.chargeable_current_charge + sizeof(uintptr_t))) {
-            const auto raw_u64 = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
-            const bool is_ptr  = raw_u64.has_value() &&
-                validate_canonical_uobject(*raw_u64, sizeof(UObjectHeaderSnapshot), guobjectarray_abs, off);
-            if (!is_ptr) {
-                if (const auto raw_chg = mem::read<float>(actor_ptr + off.chargeable_current_charge);
-                    raw_chg.has_value() && std::isfinite(*raw_chg)) {
-                    if (*raw_chg < 0.0f) {
-                        return -1.0f;
-                    }
-                    if (*raw_chg <= 100.0f) {
-                        const float pct = hud::adapter::normalize_generator_progress_pct(*raw_chg);
-                        if (pct >= hud::adapter::kGeneratorCompleteThresholdPct) {
-                            return -1.0f;
-                        }
-                        return pct;
-                    }
-                }
             }
         }
 
@@ -1123,6 +1478,9 @@ public:
         size_t collected = 0;
         std::array<char, 128> name_buf{};
         std::array<char, 128> class_buf{};
+        std::array<char, 256> super_chain_buf{};
+        static std::array<uint32_t, 64> s_logged_unresolved_fnames{};
+        static size_t s_logged_unresolved_count = 0;
 
         for (uintptr_t ulevel_addr : ulevels) {
             if (!InProcessMemory::IsValidPtr(ulevel_addr, 0xB0U)) {
@@ -1156,18 +1514,60 @@ public:
                     continue;
                 }
 
-                class_buf[0] = '\0';
-                if (const auto cls_ptr = mem::read<uintptr_t>(*actor_ptr + 0x10U);
-                    cls_ptr.has_value() && InProcessMemory::IsValidPtr(*cls_ptr, 0x28U)) {
-                    if (const auto cls_fn = mem::read<uint32_t>(*cls_ptr + 0x18U)) {
-                        (void)name_resolver.resolve_name(*cls_fn, class_buf);
-                    }
-                }
+                resolve_uclass_hierarchy(*actor_ptr, name_resolver, class_buf, super_chain_buf);
 
                 int32_t prio = 99;
-                const char* cat_label = classify_actor_category(name_buf.data(), class_buf.data(), &prio);
+                bool is_unresolved = false;
+                const char* cat_label = classify_actor_category(
+                    name_buf.data(),
+                    class_buf.data(),
+                    super_chain_buf.data(),
+                    &prio,
+                    &is_unresolved);
                 if (cat_label == nullptr) {
+                    if (is_unresolved && class_buf[0] != '\0') {
+                        bool already_logged = false;
+                        for (size_t u = 0; u < s_logged_unresolved_count; ++u) {
+                            if (s_logged_unresolved_fnames[u] == fname_idx) {
+                                already_logged = true;
+                                break;
+                            }
+                        }
+                        if (!already_logged && s_logged_unresolved_count < s_logged_unresolved_fnames.size()) {
+                            s_logged_unresolved_fnames[s_logged_unresolved_count++] = fname_idx;
+                            DIAG_LOGW(
+                                "[CATEGORY-UNRESOLVED] Actor=0x%llX FName=\"%s\" Class=\"%s\" SuperChain=\"%s\"",
+                                static_cast<unsigned long long>(*actor_ptr),
+                                name_buf.data(),
+                                class_buf.data(),
+                                super_chain_buf.data()
+                            );
+                        }
+                    }
                     continue;
+                }
+
+                static std::array<uint32_t, 64> s_logged_matched_fnames{};
+                static size_t s_logged_matched_count = 0;
+                {
+                    bool match_logged = false;
+                    for (size_t m = 0; m < s_logged_matched_count; ++m) {
+                        if (s_logged_matched_fnames[m] == fname_idx) {
+                            match_logged = true;
+                            break;
+                        }
+                    }
+                    if (!match_logged && s_logged_matched_count < s_logged_matched_fnames.size()) {
+                        s_logged_matched_fnames[s_logged_matched_count++] = fname_idx;
+                        DIAG_LOGI(
+                            "[CATEGORY-MATCH] Cat=%s (prio=%d) | FName=\"%s\" | Class=\"%s\" | SuperChain=\"%s\"",
+                            cat_label,
+                            static_cast<int>(prio),
+                            name_buf.data(),
+                            class_buf.data(),
+                            super_chain_buf.data()
+                        );
+                    }
                 }
 
                 const auto pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
@@ -1187,15 +1587,22 @@ public:
                 }
 
                 float gen_pct = -1.0f;
-                if (prio == 3) {
+                if (prio == 2) {
+                    // Exclude sacrificed/dead survivors (EImmobilizeState::Dead == 4)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.camper_immobilize_state + sizeof(uint8_t))) {
+                        if (const auto imm = mem::read<uint8_t>(*actor_ptr + off.camper_immobilize_state);
+                            imm.has_value() && *imm == static_cast<uint8_t>(hud::ImmobilizeState::Dead)) {
+                            continue;
+                        }
+                    }
+                } else if (prio == 3) {
                     gen_pct = read_generator_progress_pct(*actor_ptr, guobjectarray_abs, off);
-                    // Automatic filter/hide condition when generator repair progress reaches or exceeds 99.5%
                     if (hud::adapter::should_hide_generator(gen_pct)) {
                         continue;
                     }
                 } else if (prio == 6) {
                     // Preserve Shrine (Totem) nodes in the telemetry array with progress_pct >= 0.0f
-                    // until interaction flags confirm cleansing (progress_pct < 0.0f)
+                    // until ATotem::_totemState (+0x03A8) or visibility flags confirm cleansing (progress_pct < 0.0f)
                     gen_pct = read_totem_state_progress(
                         *actor_ptr,
                         guobjectarray_abs,
@@ -1205,7 +1612,31 @@ public:
                     if (!hud::adapter::is_totem_active(gen_pct, cat_label)) {
                         continue;
                     }
+                } else if (prio == 7) {
+                    // Exclude already searched/opened Chests (ASearchable::_hasBeenSearched at +0x038C)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.searchable_searched + sizeof(uint8_t))) {
+                        if (const auto searched = mem::read<uint8_t>(*actor_ptr + off.searchable_searched);
+                            searched.has_value() && (*searched & 0x01U) != 0U) {
+                            continue;
+                        }
+                    }
+                } else if (prio == 8) {
+                    // Exclude sacrificed or sabotaged Hooks (AMeatHook::_isSacrificed +0x04E2, _isSabotaged +0x04E4)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.meathook_is_sabotaged + sizeof(uint8_t))) {
+                        const uint8_t sac = mem::read<uint8_t>(*actor_ptr + off.meathook_is_sacrificed).value_or(0U);
+                        const uint8_t sab = mem::read<uint8_t>(*actor_ptr + off.meathook_is_sabotaged).value_or(0U);
+                        if ((sac & 0x01U) != 0U || (sab & 0x01U) != 0U) {
+                            continue;
+                        }
+                    }
                 } else if (prio == 9) {
+                    // Exclude destroyed or illusionary Pallets (APallet::_state at +0x0368: 3=Destroyed, 4=Illusionary)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.pallet_state + sizeof(uint8_t))) {
+                        if (const auto p_state = mem::read<uint8_t>(*actor_ptr + off.pallet_state);
+                            p_state.has_value() && *p_state >= 3U) {
+                            continue;
+                        }
+                    }
                     gen_pct = 0.0f;
                 }
 
@@ -1875,6 +2306,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         pthread_mutex_lock(&hud_data.mutex);
         hud_data.match_active            = false;
         hud_data.node_count              = 0;
+        hud_data.remaining_nodes         = 0;
+        hud_data.active_generators       = 0;
+        hud_data.required_generators     = 0;
+        hud_data.nearest_gen_progress    = 0.0f;
         hud_data.uworld_ptr              = 0;
         hud_data.ulevel_ptr              = 0;
         hud_data.local_pawn              = 0;
@@ -1909,6 +2344,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         pthread_mutex_lock(&hud_data.mutex);
         hud_data.match_active            = false;
         hud_data.node_count              = 0;
+        hud_data.remaining_nodes         = 0;
+        hud_data.active_generators       = 0;
+        hud_data.required_generators     = 0;
+        hud_data.nearest_gen_progress    = 0.0f;
         hud_data.uworld_ptr              = *uworld;
         hud_data.ulevel_ptr              = ulevel.value_or(0ULL);
         hud_data.local_pawn              = 0;
@@ -2124,10 +2563,18 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     }
 
     // 2b. Scan active ULevel::Actors (+0xA0) across PersistentLevel and streaming sublevels for:
-    //     - Fallback Pawn / PlayerState / CameraManager when in Lobby or Custom Match
-    //     - Active Generator Chargeable Progress (+0x0338) & Skillcheck Handler (Item 4)
+    //     - Fallback Pawn / PlayerState / CameraManager / ADBDGameState when in Lobby or Custom Match
     //     - Diagnostic actor dump on level change
     uint32_t active_gen_count     = 0;
+    uint32_t required_gen_count   = 0;
+    uintptr_t local_game_state    = 0;
+    if (const auto gs = mem::read<uintptr_t>(*uworld + off.world_game_state);
+        gs.has_value() &&
+        InProcessMemory::IsValidPtr(*gs, off.gamestate_required_gens + sizeof(int32_t)) &&
+        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*gs, guobjectarray_abs, off, nullptr))
+    {
+        local_game_state = *gs;
+    }
     float    nearest_gen_pct      = 0.0f;
     float    nearest_gen_dist_sq  = 1e18f;
     static uint32_t s_skillchecks_handled = 0;
@@ -2145,10 +2592,6 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             ue4::SpatialAndKinematicPipeline::kMaxActorsPerTick);
         std::array<char, 128> scan_name{};
         std::array<char, 128> cls_name{};
-
-        const ue4::FVector ref_origin = (local_pawn != 0)
-            ? local_origin
-            : ue4::FVector{cam_view.location.x, cam_view.location.y, cam_view.location.z};
 
         for (size_t i = 0; i < scan_limit; ++i) {
             const auto a_ptr = mem::read<uintptr_t>(actor_arr->data_ptr + i * sizeof(uintptr_t));
@@ -2203,6 +2646,14 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 local_player_st = *a_ptr;
             }
 
+            // Fallback ADBDGameState discovery in ULevel::Actors
+            if (local_game_state == 0 &&
+                (hud::detail::icontains_str(scan_name.data(), "DBDGameState") ||
+                 hud::detail::icontains_str(cls_name.data(), "DBDGameState")) &&
+                InProcessMemory::IsValidPtr(*a_ptr, off.gamestate_required_gens + sizeof(int32_t))) {
+                local_game_state = *a_ptr;
+            }
+
             // Fallback CameraManager discovery in ULevel::Actors
             if (!has_valid_camera &&
                 (hud::detail::icontains_str(scan_name.data(), "CameraManager") ||
@@ -2236,32 +2687,6 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                                 ps.has_value() && is_valid_player_state(*ps)) {
                                 local_player_st = *ps;
                                 break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Item 4: Generator Progress (+0x0338) & Skillcheck Handler (strictly real interactive Generators only!)
-            const char* cat = ue4::SpatialAndKinematicPipeline::classify_actor_category(scan_name.data(), cls_name.data());
-            if (cat != nullptr && std::strcmp(cat, "Generator") == 0) {
-                if (const auto gpos = ue4::SpatialAndKinematicPipeline::read_actor_location(*a_ptr, guobjectarray_abs, off)) {
-                    const float origin_sq = gpos->x * gpos->x + gpos->y * gpos->y + gpos->z * gpos->z;
-                    const bool is_ghost_pos =
-                        (std::fabs(gpos->x - 330.0f) < 5.0f &&
-                         std::fabs(gpos->y - 180.0f) < 5.0f &&
-                         std::fabs(gpos->z - 20.0f) < 5.0f);
-                    if (origin_sq >= 100.0f && !is_ghost_pos) {
-                        const float gen_pct = ue4::SpatialAndKinematicPipeline::read_generator_progress_pct(
-                            *a_ptr,
-                            guobjectarray_abs,
-                            off);
-                        if (!hud::adapter::should_hide_generator(gen_pct)) {
-                            ++active_gen_count;
-                            const float dsq = ref_origin.dist_squared(*gpos);
-                            if (dsq < nearest_gen_dist_sq) {
-                                nearest_gen_dist_sq = dsq;
-                                nearest_gen_pct     = gen_pct;
                             }
                         }
                     }
@@ -2362,6 +2787,17 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         );
 
         for (size_t i = 0; i < collected_count; ++i) {
+            if (s_snapshots_pool[i].priority_rank == 3 &&
+                std::isfinite(s_snapshots_pool[i].progress_pct) &&
+                s_snapshots_pool[i].progress_pct >= 0.0f)
+            {
+                ++active_gen_count;
+                const float dsq = s_snapshots_pool[i].distance_meters * s_snapshots_pool[i].distance_meters;
+                if (dsq < nearest_gen_dist_sq) {
+                    nearest_gen_dist_sq = dsq;
+                    nearest_gen_pct     = s_snapshots_pool[i].progress_pct;
+                }
+            }
             (void)hud::adapter::push_static_entity_sample(
                 tick_pool,
                 s_snapshots_pool[i].world_pos.x,
@@ -2411,21 +2847,152 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         target_player_name.size()
     );
 
-    // Update pointers & Generator/Skillcheck telemetry in SceneTelemetryData
-    size_t final_node_count = 0;
-    bool   final_match_active = false;
+    // Update pointers & live Match State counters (Remaining Nodes & Remaining/Required Generators) in SceneTelemetryData
+    size_t   final_node_count     = 0;
+    uint32_t final_rem_nodes      = 0;
+    bool     final_match_active   = false;
+    uint32_t cnt_killer           = 0;
+    uint32_t cnt_survivor         = 0;
+    uint32_t cnt_generator        = 0;
+    uint32_t cnt_completed_gen    = 0;
+    uint32_t cnt_totem            = 0;
+    uint32_t cnt_chest            = 0;
+    uint32_t cnt_pallet           = 0;
+    uint32_t cnt_hatch            = 0;
+    uint32_t cnt_exitgate         = 0;
+    uint32_t cnt_hook             = 0;
+
+    int32_t gs_activated_gens = -1;
+    int32_t gs_required_gens  = -1;
+    if (local_game_state != 0 &&
+        InProcessMemory::IsValidPtr(local_game_state, off.gamestate_required_gens + sizeof(int32_t)))
+    {
+        gs_activated_gens = mem::read<int32_t>(local_game_state + off.gamestate_activated_gens).value_or(-1);
+        gs_required_gens  = mem::read<int32_t>(local_game_state + off.gamestate_required_gens).value_or(-1);
+    }
+
     {
         hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
         pthread_mutex_lock(&hud_data.mutex);
-        hud_data.uworld_ptr           = *uworld;
-        hud_data.ulevel_ptr           = *ulevel;
-        hud_data.local_pawn           = local_pawn;
-        hud_data.active_generators    = active_gen_count;
-        hud_data.nearest_gen_progress = nearest_gen_pct;
-        hud_data.skillchecks_handled  = s_skillchecks_handled;
-        final_node_count              = hud_data.node_count;
-        final_match_active            = hud_data.match_active;
+        hud_data.uworld_ptr        = *uworld;
+        hud_data.ulevel_ptr        = *ulevel;
+        hud_data.local_pawn        = local_pawn;
+        hud_data.skillchecks_handled = s_skillchecks_handled;
+
+        if (is_lobby_level || collected_count == 0) {
+            hud_data.match_active         = false;
+            hud_data.node_count           = 0;
+            hud_data.remaining_nodes      = 0;
+            hud_data.active_generators    = 0;
+            hud_data.required_generators  = 0;
+            hud_data.nearest_gen_progress = 0.0f;
+            final_node_count              = 0;
+            final_match_active            = false;
+        } else {
+            final_node_count   = hud_data.node_count;
+            final_match_active = hud_data.match_active;
+            for (size_t i = 0; i < final_node_count && i < hud::kMaxSceneNodes; ++i) {
+                const hud::SceneNode& nd = hud_data.nodes[i];
+                switch (nd.category) {
+                    case hud::NodeCategory::Antagonist:  ++cnt_killer;    ++final_rem_nodes; break;
+                    case hud::NodeCategory::Teammate:    ++cnt_survivor;  ++final_rem_nodes; break;
+                    case hud::NodeCategory::PowerNode:
+                        ++cnt_generator;
+                        if (std::isfinite(nd.progress_pct) && nd.progress_pct >= 99.9f) {
+                            ++cnt_completed_gen;
+                        } else {
+                            ++final_rem_nodes;
+                        }
+                        break;
+                    case hud::NodeCategory::Shrine:      ++cnt_totem;     ++final_rem_nodes; break;
+                    case hud::NodeCategory::Container:   ++cnt_chest;     ++final_rem_nodes; break;
+                    case hud::NodeCategory::Barrier:     ++cnt_pallet;    ++final_rem_nodes; break;
+                    case hud::NodeCategory::Portal:      ++cnt_hatch;     ++final_rem_nodes; break;
+                    case hud::NodeCategory::ExitGate:    ++cnt_exitgate;  ++final_rem_nodes; break;
+                    case hud::NodeCategory::SpecialProp: ++cnt_hook;      ++final_rem_nodes; break;
+                    default: break;
+                }
+            }
+
+            if (final_match_active) {
+                if (gs_required_gens >= 1 && gs_required_gens <= 10) {
+                    required_gen_count = static_cast<uint32_t>(gs_required_gens);
+                } else if (cnt_generator > 0U) {
+                    required_gen_count = (cnt_generator >= 5U) ? 5U : cnt_generator;
+                } else {
+                    required_gen_count = 0U;
+                }
+
+                uint32_t completed_total = cnt_completed_gen;
+                if (gs_activated_gens >= 0 && gs_activated_gens <= 10 && cnt_generator < required_gen_count) {
+                    completed_total = std::max<uint32_t>(completed_total, static_cast<uint32_t>(gs_activated_gens));
+                }
+                active_gen_count = (required_gen_count > completed_total)
+                    ? (required_gen_count - completed_total)
+                    : 0U;
+
+                hud_data.remaining_nodes      = final_rem_nodes;
+                hud_data.active_generators    = active_gen_count;
+                hud_data.required_generators  = required_gen_count;
+                hud_data.nearest_gen_progress = nearest_gen_pct;
+            } else {
+                hud_data.remaining_nodes      = 0;
+                hud_data.active_generators    = 0;
+                hud_data.required_generators  = 0;
+                hud_data.nearest_gen_progress = 0.0f;
+            }
+        }
         pthread_mutex_unlock(&hud_data.mutex);
+    }
+
+    static uint32_t s_prev_rem_nodes = UINT32_MAX;
+    static uint32_t s_prev_rem_gens  = UINT32_MAX;
+    static uint32_t s_prev_req_gens  = UINT32_MAX;
+    if (final_rem_nodes != s_prev_rem_nodes ||
+        active_gen_count != s_prev_rem_gens ||
+        required_gen_count != s_prev_req_gens)
+    {
+        s_prev_rem_nodes = final_rem_nodes;
+        s_prev_rem_gens  = active_gen_count;
+        s_prev_req_gens  = required_gen_count;
+        DIAG_LOGI(
+            "[MATCH-COUNTERS] MatchActive=%d | RemainingNodes=%u (TotalRenderNodes=%zu) | Generators=%u/%u (MapGens=%u, Completed=%u, GameState=%d/%d)",
+            final_match_active ? 1 : 0,
+            final_rem_nodes,
+            final_node_count,
+            active_gen_count,
+            required_gen_count,
+            cnt_generator,
+            cnt_completed_gen,
+            static_cast<int>(gs_activated_gens),
+            static_cast<int>(gs_required_gens)
+        );
+    }
+
+    // Print per-category counts at match start (and when map actor spawn completes)
+    static uintptr_t s_cat_logged_ulevel = 0;
+    static size_t    s_cat_logged_nodes  = 0;
+    if (final_match_active && final_node_count > 0 &&
+        (*ulevel != s_cat_logged_ulevel || (s_cat_logged_nodes < 10 && final_node_count >= 10))) {
+        s_cat_logged_ulevel = *ulevel;
+        s_cat_logged_nodes  = final_node_count;
+        DIAG_LOGI(
+            "[MATCH-CATEGORY-COUNTS] ULevel=0x%llX TotalNodes=%zu | Killer=%u | Survivor=%u | Generator=%u | Totem=%u | Chest=%u | Pallet=%u | Hatch=%u | ExitGate=%u | Hook=%u",
+            static_cast<unsigned long long>(*ulevel),
+            final_node_count,
+            cnt_killer,
+            cnt_survivor,
+            cnt_generator,
+            cnt_totem,
+            cnt_chest,
+            cnt_pallet,
+            cnt_hatch,
+            cnt_exitgate,
+            cnt_hook
+        );
+    } else if (!final_match_active) {
+        s_cat_logged_ulevel = 0;
+        s_cat_logged_nodes  = 0;
     }
 
     const bool write_safe = (!is_lobby_level && local_pawn != 0) && (s_teardown_write_lock_ticks == 0U);
@@ -2673,6 +3240,22 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             static_cast<double>(nearest_gen_pct),
             static_cast<unsigned>(s_skillchecks_handled)
         );
+        if (final_match_active) {
+            DIAG_LOGI(
+                "[MATCH-CATEGORY-COUNTS] ULevel=0x%llX TotalNodes=%zu | Killer=%u | Survivor=%u | Generator=%u | Totem=%u | Chest=%u | Pallet=%u | Hatch=%u | ExitGate=%u | Hook=%u",
+                static_cast<unsigned long long>(*ulevel),
+                final_node_count,
+                cnt_killer,
+                cnt_survivor,
+                cnt_generator,
+                cnt_totem,
+                cnt_chest,
+                cnt_pallet,
+                cnt_hatch,
+                cnt_exitgate,
+                cnt_hook
+            );
+        }
     }
 
     // Publish lockless shared telemetry snapshot (/data/local/tmp/dbdm_telemetry_shm.bin) for 60 FPS APK overlay
@@ -2736,9 +3319,11 @@ INSTRUMENT_LOCAL static void* ipc_server_worker_entry(void* /*arg*/) noexcept {
                     pthread_mutex_unlock(&hud_data.mutex);
                 }
             }
-            ipc::TelemetrySnapshotPayload resp{};
-            ipc::fill_snapshot_from_telemetry(resp);
-            (void)::send(client_fd, &resp, sizeof(resp), MSG_NOSIGNAL);
+            if (g_state.ue4_module.base_address != 0) {
+                ipc::TelemetrySnapshotPayload resp{};
+                ipc::fill_snapshot_from_telemetry(resp);
+                (void)::send(client_fd, &resp, sizeof(resp), MSG_NOSIGNAL);
+            }
         }
 
         ::close(client_fd);
@@ -3185,17 +3770,20 @@ Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus(JNIEnv* env, jclass /*c
     ipc::TelemetrySnapshotPayload snap{};
     char buf[256]{};
     if (ipc::client_exchange_packet(nullptr, &snap)) {
+        const unsigned rem_nodes = snap.match_active ? static_cast<unsigned>(snap.remaining_nodes) : 0U;
+        const unsigned rem_gens  = snap.match_active ? static_cast<unsigned>(snap.active_generators) : 0U;
+        const unsigned req_gens  = snap.match_active ? static_cast<unsigned>(snap.required_generators) : 0U;
         std::snprintf(
             buf,
             sizeof(buf),
-            "IPC: ONLINE | %s | Nodes: %u | Gens: %u (%.0f%%) | Player: %s",
+            "IPC: ONLINE | %s | Nodes: %u | Gens: %u/%u | Player: %s",
             snap.match_active ? "IN MATCH (ACTIVE)" : "LOBBY / STANDBY",
-            static_cast<unsigned>(snap.node_count),
-            static_cast<unsigned>(snap.active_generators),
-            static_cast<double>(snap.nearest_gen_progress),
+            rem_nodes,
+            rem_gens,
+            req_gens,
             snap.active_player_name[0] != '\0' ? snap.active_player_name : "(In-Game Default)");
     } else {
-        std::snprintf(buf, sizeof(buf), "IPC: WAITING FOR GAME (com.netease.dbdena)");
+        std::snprintf(buf, sizeof(buf), "IPC: WAITING FOR GAME (com.netease.dbdena) | Nodes: 0 | Gens: 0/0");
     }
     return env->NewStringUTF(buf);
 }
@@ -3293,7 +3881,9 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
                                                  if (!hud::adapter::is_totem_active(wn.progress_pct, wn.label)) continue;
                                                  cat_id = 6.0f; break;
             case hud::NodeCategory::Barrier:     if (!show_barriers)      continue; cat_id = 7.0f; break;
+            case hud::NodeCategory::ExitGate:    if (!show_portals)       continue; cat_id = 8.0f; break;
             case hud::NodeCategory::SpecialProp: if (!show_special_props) continue; cat_id = 9.0f; break;
+            case hud::NodeCategory::Unknown:
             default: continue;
         }
         if (wn.label[0] == '\0' ||
@@ -3424,9 +4014,29 @@ INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
         pthread_detach(ipc_tid);
     }
 
+    auto reset_telemetry_on_disconnect = []() noexcept {
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud_data.match_active         = false;
+        hud_data.node_count           = 0;
+        hud_data.remaining_nodes      = 0;
+        hud_data.active_generators    = 0;
+        hud_data.required_generators  = 0;
+        hud_data.nearest_gen_progress = 0.0f;
+        hud_data.uworld_ptr           = 0;
+        hud_data.ulevel_ptr           = 0;
+        hud_data.local_pawn           = 0;
+        ++hud_data.tick_seq;
+        pthread_mutex_unlock(&hud_data.mutex);
+        (void)::unlink(ipc::kSharedSnapshotFilePath);
+    };
+
     while (g_state.running.load(std::memory_order_acquire)) {
         const pid_t game_pid = find_game_process_pid();
         if (game_pid <= 0) {
+            if (InProcessMemory::effective_pid() != 0 || g_state.ue4_module.base_address != 0) {
+                reset_telemetry_on_disconnect();
+            }
             InProcessMemory::set_target_pid(0);
             g_state.ue4_module = {};
             g_state.last_logged_uworld = 0;
@@ -3437,6 +4047,7 @@ INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
         }
 
         if (InProcessMemory::effective_pid() != game_pid || g_state.ue4_module.base_address == 0) {
+            reset_telemetry_on_disconnect();
             InProcessMemory::set_target_pid(game_pid);
             const auto mod = elf::find_module("libUE4.so");
             if (!mod.has_value() || mod->base_address == 0) {
@@ -3457,6 +4068,7 @@ INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
         }
 
         if (::kill(game_pid, 0) != 0) {
+            reset_telemetry_on_disconnect();
             InProcessMemory::set_target_pid(0);
             g_state.ue4_module = {};
             continue;

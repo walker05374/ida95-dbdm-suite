@@ -120,7 +120,9 @@ chmod 0755 \
     zygisk
 )
 
-echo "[5/6] Enviando ${ZIP_OUT} via ADB e executando instalacao no Magisk..."
+echo "[5/6] Enviando ${ZIP_OUT} via ADB (192.168.1.68:10001 / 192.168.1.8:10001) e executando instalacao no Magisk..."
+adb connect 192.168.1.68:10001 >/dev/null 2>&1 || true
+adb connect 192.168.1.8:10001 >/dev/null 2>&1 || true
 if adb get-state >/dev/null 2>&1; then
   adb push "${ZIP_OUT}" /data/local/tmp/ue4_instrument_zygisk.zip
   adb shell "su -c 'magisk --install-module /data/local/tmp/ue4_instrument_zygisk.zip'"

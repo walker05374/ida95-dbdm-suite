@@ -200,26 +200,28 @@ inline constexpr float kNearClipPlaneUnits = 1.0f;
     };
 }
 
-// Draws a centered text tag with a crisp 1px drop shadow below a given 2D anchor point
-inline void draw_centered_label_below(
+// Draws a compact single-line label outside the top-right corner of the box (offset 2px) with a 1px dark outline
+inline void draw_label_top_right(
     ImDrawList*   draw_list,
-    const ImVec2& anchor_bottom,
+    const ImVec2& box_top_right,
     ImU32         text_color,
     const char*   text) noexcept {
     if (!draw_list || !text || text[0] == '\0') {
         return;
     }
-    const ImVec2 text_size = ImGui::CalcTextSize(text);
     const ImVec2 pos{
-        anchor_bottom.x - (text_size.x * 0.5f),
-        anchor_bottom.y + 4.0f
+        box_top_right.x + 2.0f,
+        box_top_right.y
     };
-    const ImU32 shadow_col = IM_COL32(0, 0, 0, 225);
-    draw_list->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), shadow_col, text);
+    const ImU32 outline_col = IM_COL32(0, 0, 0, 235);
+    draw_list->AddText(ImVec2(pos.x - 1.0f, pos.y), outline_col, text);
+    draw_list->AddText(ImVec2(pos.x + 1.0f, pos.y), outline_col, text);
+    draw_list->AddText(ImVec2(pos.x, pos.y - 1.0f), outline_col, text);
+    draw_list->AddText(ImVec2(pos.x, pos.y + 1.0f), outline_col, text);
     draw_list->AddText(pos, text_color, text);
 }
 
-// Resolves effective NodeCategory from node.category and/or node.label
+// Resolves effective NodeCategory from node.category and/or node.label without cross-category fallback
 [[nodiscard]] inline NodeCategory resolve_node_category(const SceneNode& node) noexcept {
     if (icontains_label(node.label, "Killer") ||
         icontains_label(node.label, "Slasher") ||
@@ -250,13 +252,21 @@ inline void draw_centered_label_below(
         return NodeCategory::Barrier;
     }
     if (icontains_label(node.label, "Hatch") ||
-        icontains_label(node.label, "ExitGate") ||
-        icontains_label(node.label, "EscapeDoor") ||
         icontains_label(node.label, "Alcapao") ||
-        icontains_label(node.label, "Alçapão") ||
+        icontains_label(node.label, "Alçapão")) {
+        return NodeCategory::Portal;
+    }
+    if (icontains_label(node.label, "ExitGate") ||
+        icontains_label(node.label, "EscapeDoor") ||
         icontains_label(node.label, "Portao") ||
         icontains_label(node.label, "Portão")) {
-        return NodeCategory::Portal;
+        return NodeCategory::ExitGate;
+    }
+    if (icontains_label(node.label, "Hook") ||
+        icontains_label(node.label, "MeatLocker") ||
+        icontains_label(node.label, "SmallMeatLocker") ||
+        icontains_label(node.label, "Gancho")) {
+        return NodeCategory::SpecialProp;
     }
     return node.category;
 }
@@ -639,7 +649,9 @@ void render_hud_frame(float width, float height) noexcept {
                 case NodeCategory::Container:   category_enabled = show_containers;    break;
                 case NodeCategory::Barrier:     category_enabled = show_barriers;      break;
                 case NodeCategory::Portal:      category_enabled = show_portals;       break;
+                case NodeCategory::ExitGate:    category_enabled = show_portals;       break;
                 case NodeCategory::SpecialProp: category_enabled = show_special_props; break;
+                case NodeCategory::Unknown:     category_enabled = false;              break;
             }
             if (!category_enabled) {
                 continue;
@@ -655,23 +667,15 @@ void render_hud_frame(float width, float height) noexcept {
             const int dist_int = static_cast<int>(std::lround(std::max(0.0f, node.distance_m)));
 
             ImU32 primary_col = col_special_prop;
-            char  tag[128]{};
+            char  tag[32]{};
 
             if (cat == NodeCategory::Antagonist) {
                 primary_col = col_antagonist;
-                std::snprintf(tag, sizeof(tag), "assassino [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Teammate) {
                 primary_col = col_teammate;
-                const bool has_custom_label =
-                    (node.label[0] != '\0' &&
-                     std::strcmp(node.label, "Survivor") != 0 &&
-                     std::strcmp(node.label, "Sobrevivente") != 0);
-                const char* display_name = has_custom_label ? node.label : "sobrevivente";
-                std::snprintf(tag, sizeof(tag), "%s [%dm]", display_name, dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::PowerNode) {
-                if (std::isfinite(node.progress_pct) && node.progress_pct >= 99.5f) {
-                    continue;
-                }
                 primary_col = col_power_node;
                 const float clamped_pct = std::clamp(
                     std::isfinite(node.progress_pct) && node.progress_pct >= 0.0f ? node.progress_pct : 0.0f,
@@ -680,7 +684,7 @@ void render_hud_frame(float width, float height) noexcept {
                 std::snprintf(
                     tag,
                     sizeof(tag),
-                    "gerador %.0f%% [%dm]",
+                    "%.0f%% %dm",
                     static_cast<double>(clamped_pct),
                     dist_int);
             } else if (cat == NodeCategory::Shrine) {
@@ -692,7 +696,7 @@ void render_hud_frame(float width, float height) noexcept {
                     continue;
                 }
                 primary_col = col_shrine;
-                std::snprintf(tag, sizeof(tag), "totem [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Barrier) {
                 if (!std::isfinite(node.progress_pct) ||
                     node.progress_pct < 0.0f ||
@@ -707,25 +711,21 @@ void render_hud_frame(float width, float height) noexcept {
                     continue;
                 }
                 primary_col = col_barrier;
-                std::snprintf(tag, sizeof(tag), "pallet [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Container) {
                 primary_col = col_container;
-                std::snprintf(tag, sizeof(tag), "bau [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Portal) {
                 primary_col = col_portal;
-                const bool is_hatch = icontains_label(node.label, "Hatch") ||
-                                      icontains_label(node.label, "Alcapao") ||
-                                      icontains_label(node.label, "Alçapão");
-                std::snprintf(
-                    tag,
-                    sizeof(tag),
-                    "%s [%dm]",
-                    is_hatch ? "alcapao" : "portao",
-                    dist_int);
-            } else {
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
+            } else if (cat == NodeCategory::ExitGate) {
+                primary_col = col_portal;
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
+            } else if (cat == NodeCategory::SpecialProp) {
                 primary_col = col_special_prop;
-                const char* prop_name = (node.label[0] != '\0') ? node.label : "objeto";
-                std::snprintf(tag, sizeof(tag), "%s [%dm]", prop_name, dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
+            } else {
+                continue;
             }
 
             ImVec2 screen_center{};
@@ -755,16 +755,18 @@ void render_hud_frame(float width, float height) noexcept {
             const float box_h  = std::clamp(raw_box_h, 28.0f, 450.0f);
             const float box_w  = std::max(14.0f, box_h * 0.5f);
             const float half_w = box_w * 0.5f;
+            const float top_y  = anchor_foot.y - box_h;
+            const float right_x = anchor_foot.x + half_w;
 
             bg_draw_list->AddRect(
-                ImVec2(anchor_foot.x - half_w, anchor_foot.y - box_h),
-                ImVec2(anchor_foot.x + half_w, anchor_foot.y),
+                ImVec2(anchor_foot.x - half_w, top_y),
+                ImVec2(right_x, anchor_foot.y),
                 primary_col,
                 0.0f,
                 0,
                 1.5f);
 
-            draw_centered_label_below(bg_draw_list, anchor_foot, primary_col, tag);
+            draw_label_top_right(bg_draw_list, ImVec2(right_x, top_y), primary_col, tag);
             ++visible_markers_rendered;
         }
     }
@@ -811,10 +813,14 @@ void render_hud_frame(float width, float height) noexcept {
                         static_cast<double>(g_touch.phys_height));
             ImGui::Text("Nome do Jogador: %s",
                         data.custom_player_name[0] != '\0' ? data.custom_player_name : "(Padrão do Jogo)");
-            ImGui::Text("Estado da Partida: %s | Nós Ativos: %zu / %zu",
-                        match_live_snapshot ? "EM PARTIDA (ATIVO)" : "LOBBY / AGUARDANDO",
-                        count_snapshot,
-                        kMaxSceneNodes);
+            const unsigned rem_nodes = data.match_active ? static_cast<unsigned>(data.remaining_nodes) : 0U;
+            const unsigned rem_gens  = data.match_active ? static_cast<unsigned>(data.active_generators) : 0U;
+            const unsigned req_gens  = data.match_active ? static_cast<unsigned>(data.required_generators) : 0U;
+            ImGui::Text("Estado da Partida: %s | Nós: %u | Geradores: %u/%u",
+                        data.match_active ? "EM PARTIDA (ATIVO)" : "LOBBY / AGUARDANDO",
+                        rem_nodes,
+                        rem_gens,
+                        req_gens);
             ImGui::Text("Elementos 3D Renderizados: %zu", visible_markers_rendered);
             ImGui::Separator();
             ImGui::Text("Posição da Câmera: (%.1f, %.1f, %.1f)",
