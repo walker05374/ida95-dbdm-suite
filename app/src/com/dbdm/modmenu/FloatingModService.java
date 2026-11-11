@@ -346,8 +346,11 @@ public final class FloatingModService extends Service {
                             .replace("(In-Game Default)", "(Padrão do Jogo)")
                             .replace("IPC: WAITING FOR GAME (com.netease.dbdena)", "IPC: AGUARDANDO JOGO (com.netease.dbdena)");
                         statusBannerView.setText(ptStatus);
+                    } else {
+                        statusBannerView.setText("IPC: DESCONECTADO | Nós: 0 | Geradores: 0/0");
                     }
                 } catch (Throwable ignored) {
+                    statusBannerView.setText("IPC: DESCONECTADO | Nós: 0 | Geradores: 0/0");
                 }
             }
             uiHandler.postDelayed(this, 16L); // ~60 Hz
@@ -730,7 +733,7 @@ public final class FloatingModService extends Service {
         expandedPanel.addView(divider, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
 
         statusBannerView = new TextView(this);
-        statusBannerView.setText("IPC: Conectando...");
+        statusBannerView.setText("IPC: Conectando... | Nós: 0 | Geradores: 0/0");
         statusBannerView.setTextColor(COL_EMBER);
         statusBannerView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.0f);
         statusBannerView.setPadding(0, dp(3), 0, dp(3));

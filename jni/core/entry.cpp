@@ -80,6 +80,7 @@ struct INSTRUMENT_LOCAL EngineOffsets {
 
     // UWorld
     uintptr_t persistent_level          = 0x0038;     // ULevel* (LDR X0, [X0, #0x38] @ 0x0C78A6C0)
+    uintptr_t world_game_state          = 0x03B0;     // AGameStateBase* UWorld::GameState (+0x3B0)
     uintptr_t owning_game_instance      = 0x0410;     // UGameInstance* (LDR X0, [X0, #0x410] @ 0x0C1BFDFC)
 
     // ULevel
@@ -155,6 +156,15 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t skillcheck_success_start  = 0x0164;     // float USkillCheck::SuccessZoneStart (+0x164)
     uintptr_t skillcheck_success_length = 0x0168;     // float USkillCheck::SuccessZoneLength (+0x168)
     uintptr_t skillcheck_bonus_length   = 0x016C;     // float USkillCheck::BonusZoneLength (+0x16C)
+
+    // ADBDGameState, ATotem, APallet, ASearchable, AMeatHook Live Match State (Verified in libUE4.so Build 292949)
+    uintptr_t gamestate_activated_gens  = 0x0628;     // int32 ADBDGameState::_activatedGeneratorCount (+0x628)
+    uintptr_t gamestate_required_gens   = 0x062C;     // int32 ADBDGameState::_requiredActivatedGeneratorCount (+0x62C)
+    uintptr_t totem_state               = 0x03A8;     // uint8 ATotem::_totemState (+0x3A8: 0=Cleansed, 1=Dull, 2=Hex, 3=Boon)
+    uintptr_t pallet_state              = 0x0368;     // uint8 APallet::_state (+0x368: 0=Up, 1=Falling, 2=Fallen, 3=Destroyed, 4=Illusionary)
+    uintptr_t searchable_searched       = 0x038C;     // uint8 ASearchable::_hasBeenSearched (+0x38C)
+    uintptr_t meathook_is_sacrificed    = 0x04E2;     // uint8 AMeatHook::_isSacrificed (+0x4E2)
+    uintptr_t meathook_is_sabotaged     = 0x04E4;     // uint8 AMeatHook::_isSabotaged (+0x4E4)
 
     // ACamperPlayer / ADBDPlayerState Gameplay State & Role
     uintptr_t camper_immobilize_state   = 0x1158;     // uint8 EImmobilizeState (+0x1158)
@@ -1426,7 +1436,15 @@ public:
             return -1.0f;
         }
 
-        // Verify RootComponent visibility flags: if bHiddenInGame (0x1000) is set and bVisible (0x0040) is cleared,
+        // 1. Check ATotem::_totemState (+0x03A8): 0 = ETotemState::Cleansed, 1 = Dull, 2 = Hex, 3 = Boon
+        if (InProcessMemory::IsValidPtr(actor_ptr, off.totem_state + sizeof(uint8_t))) {
+            if (const auto t_state = mem::read<uint8_t>(actor_ptr + off.totem_state);
+                t_state.has_value() && (*t_state == 0U || *t_state > 3U)) {
+                return -1.0f;
+            }
+        }
+
+        // 2. Verify RootComponent visibility flags: if bHiddenInGame (0x1000) is set and bVisible (0x0040) is cleared,
         // the totem has been cleansed/deactivated.
         if (const auto root_comp = mem::read<uintptr_t>(actor_ptr + off.root_component);
             root_comp.has_value() && InProcessMemory::IsValidPtr(*root_comp, off.scene_comp_flags + sizeof(uint16_t))) {
@@ -1436,28 +1454,6 @@ public:
             if (const auto vis_flags = mem::read<uint16_t>(*root_comp + off.scene_comp_flags);
                 vis_flags.has_value() && ((*vis_flags & 0x1000U) != 0U) && ((*vis_flags & 0x0040U) == 0U)) {
                 return -1.0f;
-            }
-        }
-
-        // Check interaction/cleanse progress at chargeable offset (+0x0338) if mapped
-        if (InProcessMemory::IsValidPtr(actor_ptr, off.chargeable_current_charge + sizeof(uintptr_t))) {
-            const auto raw_u64 = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
-            const bool is_ptr  = raw_u64.has_value() &&
-                validate_canonical_uobject(*raw_u64, sizeof(UObjectHeaderSnapshot), guobjectarray_abs, off);
-            if (!is_ptr) {
-                if (const auto raw_chg = mem::read<float>(actor_ptr + off.chargeable_current_charge);
-                    raw_chg.has_value() && std::isfinite(*raw_chg)) {
-                    if (*raw_chg < 0.0f) {
-                        return -1.0f;
-                    }
-                    if (*raw_chg <= 100.0f) {
-                        const float pct = hud::adapter::normalize_generator_progress_pct(*raw_chg);
-                        if (pct >= hud::adapter::kGeneratorCompleteThresholdPct) {
-                            return -1.0f;
-                        }
-                        return pct;
-                    }
-                }
             }
         }
 
@@ -1591,15 +1587,22 @@ public:
                 }
 
                 float gen_pct = -1.0f;
-                if (prio == 3) {
+                if (prio == 2) {
+                    // Exclude sacrificed/dead survivors (EImmobilizeState::Dead == 4)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.camper_immobilize_state + sizeof(uint8_t))) {
+                        if (const auto imm = mem::read<uint8_t>(*actor_ptr + off.camper_immobilize_state);
+                            imm.has_value() && *imm == static_cast<uint8_t>(hud::ImmobilizeState::Dead)) {
+                            continue;
+                        }
+                    }
+                } else if (prio == 3) {
                     gen_pct = read_generator_progress_pct(*actor_ptr, guobjectarray_abs, off);
-                    // Automatic filter/hide condition when generator repair progress reaches or exceeds 99.5%
                     if (hud::adapter::should_hide_generator(gen_pct)) {
                         continue;
                     }
                 } else if (prio == 6) {
                     // Preserve Shrine (Totem) nodes in the telemetry array with progress_pct >= 0.0f
-                    // until interaction flags confirm cleansing (progress_pct < 0.0f)
+                    // until ATotem::_totemState (+0x03A8) or visibility flags confirm cleansing (progress_pct < 0.0f)
                     gen_pct = read_totem_state_progress(
                         *actor_ptr,
                         guobjectarray_abs,
@@ -1609,7 +1612,31 @@ public:
                     if (!hud::adapter::is_totem_active(gen_pct, cat_label)) {
                         continue;
                     }
+                } else if (prio == 7) {
+                    // Exclude already searched/opened Chests (ASearchable::_hasBeenSearched at +0x038C)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.searchable_searched + sizeof(uint8_t))) {
+                        if (const auto searched = mem::read<uint8_t>(*actor_ptr + off.searchable_searched);
+                            searched.has_value() && (*searched & 0x01U) != 0U) {
+                            continue;
+                        }
+                    }
+                } else if (prio == 8) {
+                    // Exclude sacrificed or sabotaged Hooks (AMeatHook::_isSacrificed +0x04E2, _isSabotaged +0x04E4)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.meathook_is_sabotaged + sizeof(uint8_t))) {
+                        const uint8_t sac = mem::read<uint8_t>(*actor_ptr + off.meathook_is_sacrificed).value_or(0U);
+                        const uint8_t sab = mem::read<uint8_t>(*actor_ptr + off.meathook_is_sabotaged).value_or(0U);
+                        if ((sac & 0x01U) != 0U || (sab & 0x01U) != 0U) {
+                            continue;
+                        }
+                    }
                 } else if (prio == 9) {
+                    // Exclude destroyed or illusionary Pallets (APallet::_state at +0x0368: 3=Destroyed, 4=Illusionary)
+                    if (InProcessMemory::IsValidPtr(*actor_ptr, off.pallet_state + sizeof(uint8_t))) {
+                        if (const auto p_state = mem::read<uint8_t>(*actor_ptr + off.pallet_state);
+                            p_state.has_value() && *p_state >= 3U) {
+                            continue;
+                        }
+                    }
                     gen_pct = 0.0f;
                 }
 
@@ -2279,6 +2306,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         pthread_mutex_lock(&hud_data.mutex);
         hud_data.match_active            = false;
         hud_data.node_count              = 0;
+        hud_data.remaining_nodes         = 0;
+        hud_data.active_generators       = 0;
+        hud_data.required_generators     = 0;
+        hud_data.nearest_gen_progress    = 0.0f;
         hud_data.uworld_ptr              = 0;
         hud_data.ulevel_ptr              = 0;
         hud_data.local_pawn              = 0;
@@ -2313,6 +2344,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         pthread_mutex_lock(&hud_data.mutex);
         hud_data.match_active            = false;
         hud_data.node_count              = 0;
+        hud_data.remaining_nodes         = 0;
+        hud_data.active_generators       = 0;
+        hud_data.required_generators     = 0;
+        hud_data.nearest_gen_progress    = 0.0f;
         hud_data.uworld_ptr              = *uworld;
         hud_data.ulevel_ptr              = ulevel.value_or(0ULL);
         hud_data.local_pawn              = 0;
@@ -2528,10 +2563,18 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     }
 
     // 2b. Scan active ULevel::Actors (+0xA0) across PersistentLevel and streaming sublevels for:
-    //     - Fallback Pawn / PlayerState / CameraManager when in Lobby or Custom Match
-    //     - Active Generator Chargeable Progress (+0x0338) & Skillcheck Handler (Item 4)
+    //     - Fallback Pawn / PlayerState / CameraManager / ADBDGameState when in Lobby or Custom Match
     //     - Diagnostic actor dump on level change
     uint32_t active_gen_count     = 0;
+    uint32_t required_gen_count   = 0;
+    uintptr_t local_game_state    = 0;
+    if (const auto gs = mem::read<uintptr_t>(*uworld + off.world_game_state);
+        gs.has_value() &&
+        InProcessMemory::IsValidPtr(*gs, off.gamestate_required_gens + sizeof(int32_t)) &&
+        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*gs, guobjectarray_abs, off, nullptr))
+    {
+        local_game_state = *gs;
+    }
     float    nearest_gen_pct      = 0.0f;
     float    nearest_gen_dist_sq  = 1e18f;
     static uint32_t s_skillchecks_handled = 0;
@@ -2601,6 +2644,14 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             // Fallback PlayerState discovery in ULevel::Actors (e.g. DBDPlayerState / MenuPlayerState)
             if (local_player_st == 0 && is_valid_player_state(*a_ptr)) {
                 local_player_st = *a_ptr;
+            }
+
+            // Fallback ADBDGameState discovery in ULevel::Actors
+            if (local_game_state == 0 &&
+                (hud::detail::icontains_str(scan_name.data(), "DBDGameState") ||
+                 hud::detail::icontains_str(cls_name.data(), "DBDGameState")) &&
+                InProcessMemory::IsValidPtr(*a_ptr, off.gamestate_required_gens + sizeof(int32_t))) {
+                local_game_state = *a_ptr;
             }
 
             // Fallback CameraManager discovery in ULevel::Actors
@@ -2796,44 +2847,126 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         target_player_name.size()
     );
 
-    // Update pointers & Generator/Skillcheck telemetry in SceneTelemetryData
-    size_t   final_node_count   = 0;
-    bool     final_match_active = false;
-    uint32_t cnt_killer         = 0;
-    uint32_t cnt_survivor       = 0;
-    uint32_t cnt_generator      = 0;
-    uint32_t cnt_totem          = 0;
-    uint32_t cnt_chest          = 0;
-    uint32_t cnt_pallet         = 0;
-    uint32_t cnt_hatch          = 0;
-    uint32_t cnt_exitgate       = 0;
-    uint32_t cnt_hook           = 0;
+    // Update pointers & live Match State counters (Remaining Nodes & Remaining/Required Generators) in SceneTelemetryData
+    size_t   final_node_count     = 0;
+    uint32_t final_rem_nodes      = 0;
+    bool     final_match_active   = false;
+    uint32_t cnt_killer           = 0;
+    uint32_t cnt_survivor         = 0;
+    uint32_t cnt_generator        = 0;
+    uint32_t cnt_completed_gen    = 0;
+    uint32_t cnt_totem            = 0;
+    uint32_t cnt_chest            = 0;
+    uint32_t cnt_pallet           = 0;
+    uint32_t cnt_hatch            = 0;
+    uint32_t cnt_exitgate         = 0;
+    uint32_t cnt_hook             = 0;
+
+    int32_t gs_activated_gens = -1;
+    int32_t gs_required_gens  = -1;
+    if (local_game_state != 0 &&
+        InProcessMemory::IsValidPtr(local_game_state, off.gamestate_required_gens + sizeof(int32_t)))
+    {
+        gs_activated_gens = mem::read<int32_t>(local_game_state + off.gamestate_activated_gens).value_or(-1);
+        gs_required_gens  = mem::read<int32_t>(local_game_state + off.gamestate_required_gens).value_or(-1);
+    }
+
     {
         hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
         pthread_mutex_lock(&hud_data.mutex);
-        hud_data.uworld_ptr           = *uworld;
-        hud_data.ulevel_ptr           = *ulevel;
-        hud_data.local_pawn           = local_pawn;
-        hud_data.active_generators    = active_gen_count;
-        hud_data.nearest_gen_progress = nearest_gen_pct;
-        hud_data.skillchecks_handled  = s_skillchecks_handled;
-        final_node_count              = hud_data.node_count;
-        final_match_active            = hud_data.match_active;
-        for (size_t i = 0; i < final_node_count && i < hud::kMaxSceneNodes; ++i) {
-            switch (hud_data.nodes[i].category) {
-                case hud::NodeCategory::Antagonist:  ++cnt_killer;    break;
-                case hud::NodeCategory::Teammate:    ++cnt_survivor;  break;
-                case hud::NodeCategory::PowerNode:   ++cnt_generator; break;
-                case hud::NodeCategory::Shrine:      ++cnt_totem;     break;
-                case hud::NodeCategory::Container:   ++cnt_chest;     break;
-                case hud::NodeCategory::Barrier:     ++cnt_pallet;    break;
-                case hud::NodeCategory::Portal:      ++cnt_hatch;     break;
-                case hud::NodeCategory::ExitGate:    ++cnt_exitgate;  break;
-                case hud::NodeCategory::SpecialProp: ++cnt_hook;      break;
-                default: break;
+        hud_data.uworld_ptr        = *uworld;
+        hud_data.ulevel_ptr        = *ulevel;
+        hud_data.local_pawn        = local_pawn;
+        hud_data.skillchecks_handled = s_skillchecks_handled;
+
+        if (is_lobby_level || collected_count == 0) {
+            hud_data.match_active         = false;
+            hud_data.node_count           = 0;
+            hud_data.remaining_nodes      = 0;
+            hud_data.active_generators    = 0;
+            hud_data.required_generators  = 0;
+            hud_data.nearest_gen_progress = 0.0f;
+            final_node_count              = 0;
+            final_match_active            = false;
+        } else {
+            final_node_count   = hud_data.node_count;
+            final_match_active = hud_data.match_active;
+            for (size_t i = 0; i < final_node_count && i < hud::kMaxSceneNodes; ++i) {
+                const hud::SceneNode& nd = hud_data.nodes[i];
+                switch (nd.category) {
+                    case hud::NodeCategory::Antagonist:  ++cnt_killer;    ++final_rem_nodes; break;
+                    case hud::NodeCategory::Teammate:    ++cnt_survivor;  ++final_rem_nodes; break;
+                    case hud::NodeCategory::PowerNode:
+                        ++cnt_generator;
+                        if (std::isfinite(nd.progress_pct) && nd.progress_pct >= 99.9f) {
+                            ++cnt_completed_gen;
+                        } else {
+                            ++final_rem_nodes;
+                        }
+                        break;
+                    case hud::NodeCategory::Shrine:      ++cnt_totem;     ++final_rem_nodes; break;
+                    case hud::NodeCategory::Container:   ++cnt_chest;     ++final_rem_nodes; break;
+                    case hud::NodeCategory::Barrier:     ++cnt_pallet;    ++final_rem_nodes; break;
+                    case hud::NodeCategory::Portal:      ++cnt_hatch;     ++final_rem_nodes; break;
+                    case hud::NodeCategory::ExitGate:    ++cnt_exitgate;  ++final_rem_nodes; break;
+                    case hud::NodeCategory::SpecialProp: ++cnt_hook;      ++final_rem_nodes; break;
+                    default: break;
+                }
+            }
+
+            if (final_match_active) {
+                if (gs_required_gens >= 1 && gs_required_gens <= 10) {
+                    required_gen_count = static_cast<uint32_t>(gs_required_gens);
+                } else if (cnt_generator > 0U) {
+                    required_gen_count = (cnt_generator >= 5U) ? 5U : cnt_generator;
+                } else {
+                    required_gen_count = 0U;
+                }
+
+                uint32_t completed_total = cnt_completed_gen;
+                if (gs_activated_gens >= 0 && gs_activated_gens <= 10 && cnt_generator < required_gen_count) {
+                    completed_total = std::max<uint32_t>(completed_total, static_cast<uint32_t>(gs_activated_gens));
+                }
+                active_gen_count = (required_gen_count > completed_total)
+                    ? (required_gen_count - completed_total)
+                    : 0U;
+
+                hud_data.remaining_nodes      = final_rem_nodes;
+                hud_data.active_generators    = active_gen_count;
+                hud_data.required_generators  = required_gen_count;
+                hud_data.nearest_gen_progress = nearest_gen_pct;
+            } else {
+                hud_data.remaining_nodes      = 0;
+                hud_data.active_generators    = 0;
+                hud_data.required_generators  = 0;
+                hud_data.nearest_gen_progress = 0.0f;
             }
         }
         pthread_mutex_unlock(&hud_data.mutex);
+    }
+
+    static uint32_t s_prev_rem_nodes = UINT32_MAX;
+    static uint32_t s_prev_rem_gens  = UINT32_MAX;
+    static uint32_t s_prev_req_gens  = UINT32_MAX;
+    if (final_rem_nodes != s_prev_rem_nodes ||
+        active_gen_count != s_prev_rem_gens ||
+        required_gen_count != s_prev_req_gens)
+    {
+        s_prev_rem_nodes = final_rem_nodes;
+        s_prev_rem_gens  = active_gen_count;
+        s_prev_req_gens  = required_gen_count;
+        DIAG_LOGI(
+            "[MATCH-COUNTERS] MatchActive=%d | RemainingNodes=%u (TotalRenderNodes=%zu) | Generators=%u/%u (MapGens=%u, Completed=%u, GameState=%d/%d)",
+            final_match_active ? 1 : 0,
+            final_rem_nodes,
+            final_node_count,
+            active_gen_count,
+            required_gen_count,
+            cnt_generator,
+            cnt_completed_gen,
+            static_cast<int>(gs_activated_gens),
+            static_cast<int>(gs_required_gens)
+        );
     }
 
     // Print per-category counts at match start (and when map actor spawn completes)
@@ -3186,9 +3319,11 @@ INSTRUMENT_LOCAL static void* ipc_server_worker_entry(void* /*arg*/) noexcept {
                     pthread_mutex_unlock(&hud_data.mutex);
                 }
             }
-            ipc::TelemetrySnapshotPayload resp{};
-            ipc::fill_snapshot_from_telemetry(resp);
-            (void)::send(client_fd, &resp, sizeof(resp), MSG_NOSIGNAL);
+            if (g_state.ue4_module.base_address != 0) {
+                ipc::TelemetrySnapshotPayload resp{};
+                ipc::fill_snapshot_from_telemetry(resp);
+                (void)::send(client_fd, &resp, sizeof(resp), MSG_NOSIGNAL);
+            }
         }
 
         ::close(client_fd);
@@ -3635,17 +3770,20 @@ Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus(JNIEnv* env, jclass /*c
     ipc::TelemetrySnapshotPayload snap{};
     char buf[256]{};
     if (ipc::client_exchange_packet(nullptr, &snap)) {
+        const unsigned rem_nodes = snap.match_active ? static_cast<unsigned>(snap.remaining_nodes) : 0U;
+        const unsigned rem_gens  = snap.match_active ? static_cast<unsigned>(snap.active_generators) : 0U;
+        const unsigned req_gens  = snap.match_active ? static_cast<unsigned>(snap.required_generators) : 0U;
         std::snprintf(
             buf,
             sizeof(buf),
-            "IPC: ONLINE | %s | Nodes: %u | Gens: %u (%.0f%%) | Player: %s",
+            "IPC: ONLINE | %s | Nodes: %u | Gens: %u/%u | Player: %s",
             snap.match_active ? "IN MATCH (ACTIVE)" : "LOBBY / STANDBY",
-            static_cast<unsigned>(snap.node_count),
-            static_cast<unsigned>(snap.active_generators),
-            static_cast<double>(snap.nearest_gen_progress),
+            rem_nodes,
+            rem_gens,
+            req_gens,
             snap.active_player_name[0] != '\0' ? snap.active_player_name : "(In-Game Default)");
     } else {
-        std::snprintf(buf, sizeof(buf), "IPC: WAITING FOR GAME (com.netease.dbdena)");
+        std::snprintf(buf, sizeof(buf), "IPC: WAITING FOR GAME (com.netease.dbdena) | Nodes: 0 | Gens: 0/0");
     }
     return env->NewStringUTF(buf);
 }
@@ -3876,9 +4014,29 @@ INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
         pthread_detach(ipc_tid);
     }
 
+    auto reset_telemetry_on_disconnect = []() noexcept {
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud_data.match_active         = false;
+        hud_data.node_count           = 0;
+        hud_data.remaining_nodes      = 0;
+        hud_data.active_generators    = 0;
+        hud_data.required_generators  = 0;
+        hud_data.nearest_gen_progress = 0.0f;
+        hud_data.uworld_ptr           = 0;
+        hud_data.ulevel_ptr           = 0;
+        hud_data.local_pawn           = 0;
+        ++hud_data.tick_seq;
+        pthread_mutex_unlock(&hud_data.mutex);
+        (void)::unlink(ipc::kSharedSnapshotFilePath);
+    };
+
     while (g_state.running.load(std::memory_order_acquire)) {
         const pid_t game_pid = find_game_process_pid();
         if (game_pid <= 0) {
+            if (InProcessMemory::effective_pid() != 0 || g_state.ue4_module.base_address != 0) {
+                reset_telemetry_on_disconnect();
+            }
             InProcessMemory::set_target_pid(0);
             g_state.ue4_module = {};
             g_state.last_logged_uworld = 0;
@@ -3889,6 +4047,7 @@ INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
         }
 
         if (InProcessMemory::effective_pid() != game_pid || g_state.ue4_module.base_address == 0) {
+            reset_telemetry_on_disconnect();
             InProcessMemory::set_target_pid(game_pid);
             const auto mod = elf::find_module("libUE4.so");
             if (!mod.has_value() || mod->base_address == 0) {
@@ -3909,6 +4068,7 @@ INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
         }
 
         if (::kill(game_pid, 0) != 0) {
+            reset_telemetry_on_disconnect();
             InProcessMemory::set_target_pid(0);
             g_state.ue4_module = {};
             continue;

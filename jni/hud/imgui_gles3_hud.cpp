@@ -813,10 +813,14 @@ void render_hud_frame(float width, float height) noexcept {
                         static_cast<double>(g_touch.phys_height));
             ImGui::Text("Nome do Jogador: %s",
                         data.custom_player_name[0] != '\0' ? data.custom_player_name : "(Padrão do Jogo)");
-            ImGui::Text("Estado da Partida: %s | Nós Ativos: %zu / %zu",
-                        match_live_snapshot ? "EM PARTIDA (ATIVO)" : "LOBBY / AGUARDANDO",
-                        count_snapshot,
-                        kMaxSceneNodes);
+            const unsigned rem_nodes = data.match_active ? static_cast<unsigned>(data.remaining_nodes) : 0U;
+            const unsigned rem_gens  = data.match_active ? static_cast<unsigned>(data.active_generators) : 0U;
+            const unsigned req_gens  = data.match_active ? static_cast<unsigned>(data.required_generators) : 0U;
+            ImGui::Text("Estado da Partida: %s | Nós: %u | Geradores: %u/%u",
+                        data.match_active ? "EM PARTIDA (ATIVO)" : "LOBBY / AGUARDANDO",
+                        rem_nodes,
+                        rem_gens,
+                        req_gens);
             ImGui::Text("Elementos 3D Renderizados: %zu", visible_markers_rendered);
             ImGui::Separator();
             ImGui::Text("Posição da Câmera: (%.1f, %.1f, %.1f)",

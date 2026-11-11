@@ -167,12 +167,14 @@ struct SceneTelemetryData {
     CameraView    current_camera{};
     SceneNode     nodes[kMaxSceneNodes]{};
     std::size_t   node_count           = 0;
-    bool          match_active         = true;
+    bool          match_active         = false;
     std::uint64_t uworld_ptr           = 0;
     std::uint64_t ulevel_ptr           = 0;
     std::uint64_t local_pawn           = 0;
     std::uint64_t tick_seq             = 0;
+    std::uint32_t remaining_nodes      = 0;
     std::uint32_t active_generators    = 0;
+    std::uint32_t required_generators  = 0;
     std::uint32_t skillchecks_handled  = 0;
     float         nearest_gen_progress = 0.0f;
 

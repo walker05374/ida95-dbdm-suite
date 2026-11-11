@@ -16,15 +16,18 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
 namespace hud {
 
-namespace detail {
+namespace detail_ipc {
 
 [[nodiscard]] constexpr bool is_valid_cstr(const char* ptr) noexcept {
     if (ptr == nullptr) {
@@ -77,11 +80,13 @@ namespace detail {
     return false;
 }
 
-} // namespace detail
+} // namespace detail_ipc
+
+namespace detail = detail_ipc;
 
 // Inline clean human-readable English entity classifier (used by both headless backend and overlay)
 inline void format_friendly_node_label(const char* raw_name, char (&out_label)[kMaxLabelLen]) noexcept {
-    if (!detail::is_valid_cstr(raw_name) || raw_name[0] == '\0') {
+    if (!detail_ipc::is_valid_cstr(raw_name) || raw_name[0] == '\0') {
         std::strncpy(out_label, "Unknown", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
@@ -102,107 +107,107 @@ inline void format_friendly_node_label(const char* raw_name, char (&out_label)[k
         return;
     }
 
-    if (detail::icontains_str(raw_name, "Default__")        ||
-        detail::icontains_str(raw_name, "Window")           ||
-        detail::icontains_str(raw_name, "Vault")            ||
-        detail::icontains_str(raw_name, "Janela")           ||
-        detail::icontains_str(raw_name, "Broken")           ||
-        detail::icontains_str(raw_name, "Destroyed")        ||
-        detail::icontains_str(raw_name, "Fallen")           ||
-        detail::icontains_str(raw_name, "Cleansed")         ||
-        detail::icontains_str(raw_name, "Illusion")         ||
-        detail::icontains_str(raw_name, "Fake")             ||
-        detail::icontains_str(raw_name, "Archetype")        ||
-        detail::icontains_str(raw_name, "GEN_VARIABLE")     ||
-        detail::icontains_str(raw_name, "LevelGenerator")   ||
-        detail::icontains_str(raw_name, "ProceduralLevel")  ||
-        detail::icontains_str(raw_name, "GeneratorEntity")  ||
-        detail::icontains_str(raw_name, "Portal_Generator") ||
-        detail::icontains_str(raw_name, "Portal_MeatHook")  ||
-        detail::icontains_str(raw_name, "BigThreeEvent")    ||
-        detail::icontains_str(raw_name, "BP_Entity_C")      ||
-        detail::icontains_str(raw_name, "SacrificeEnd")     ||
-        detail::icontains_str(raw_name, "PlayerStart")      ||
-        detail::icontains_str(raw_name, "GameRoleFront")    ||
-        detail::icontains_str(raw_name, "SlasherMale_REF")  ||
-        detail::icontains_str(raw_name, "BP_Menu_")         ||
-        detail::icontains_str(raw_name, "Lobby")            ||
-        detail::icontains_str(raw_name, "Looby")            ||
-        detail::icontains_str(raw_name, "pos_")             ||
-        detail::icontains_str(raw_name, "Menu")             ||
-        detail::icontains_str(raw_name, "Controller")       ||
-        detail::icontains_str(raw_name, "Component")        ||
-        detail::icontains_str(raw_name, "AnimInstance")     ||
-        detail::icontains_str(raw_name, "Collectable")      ||
-        detail::icontains_str(raw_name, "Medkit")           ||
-        detail::icontains_str(raw_name, "Flashlight")       ||
-        detail::icontains_str(raw_name, "Toolbox")          ||
-        detail::icontains_str(raw_name, "Firecracker")      ||
-        detail::icontains_str(raw_name, "MapItem")          ||
-        detail::icontains_str(raw_name, "DullKey")          ||
-        detail::icontains_str(raw_name, "SkeletonKey")      ||
-        detail::icontains_str(raw_name, "BrokenKey")        ||
-        detail::icontains_str(raw_name, "Addon")            ||
-        detail::icontains_str(raw_name, "Chargeable")       ||
-        detail::icontains_str(raw_name, "Inventory")        ||
-        detail::icontains_str(raw_name, "BP_Item_")         ||
-        detail::icontains_str(raw_name, "NightmareHusk")    ||
-        detail::icontains_str(raw_name, "DreamInducer")     ||
-        detail::icontains_str(raw_name, "BlastMine")        ||
-        detail::icontains_str(raw_name, "Interactable")) {
+    if (detail_ipc::icontains_str(raw_name, "Default__")        ||
+        detail_ipc::icontains_str(raw_name, "Window")           ||
+        detail_ipc::icontains_str(raw_name, "Vault")            ||
+        detail_ipc::icontains_str(raw_name, "Janela")           ||
+        detail_ipc::icontains_str(raw_name, "Broken")           ||
+        detail_ipc::icontains_str(raw_name, "Destroyed")        ||
+        detail_ipc::icontains_str(raw_name, "Fallen")           ||
+        detail_ipc::icontains_str(raw_name, "Cleansed")         ||
+        detail_ipc::icontains_str(raw_name, "Illusion")         ||
+        detail_ipc::icontains_str(raw_name, "Fake")             ||
+        detail_ipc::icontains_str(raw_name, "Archetype")        ||
+        detail_ipc::icontains_str(raw_name, "GEN_VARIABLE")     ||
+        detail_ipc::icontains_str(raw_name, "LevelGenerator")   ||
+        detail_ipc::icontains_str(raw_name, "ProceduralLevel")  ||
+        detail_ipc::icontains_str(raw_name, "GeneratorEntity")  ||
+        detail_ipc::icontains_str(raw_name, "Portal_Generator") ||
+        detail_ipc::icontains_str(raw_name, "Portal_MeatHook")  ||
+        detail_ipc::icontains_str(raw_name, "BigThreeEvent")    ||
+        detail_ipc::icontains_str(raw_name, "BP_Entity_C")      ||
+        detail_ipc::icontains_str(raw_name, "SacrificeEnd")     ||
+        detail_ipc::icontains_str(raw_name, "PlayerStart")      ||
+        detail_ipc::icontains_str(raw_name, "GameRoleFront")    ||
+        detail_ipc::icontains_str(raw_name, "SlasherMale_REF")  ||
+        detail_ipc::icontains_str(raw_name, "BP_Menu_")         ||
+        detail_ipc::icontains_str(raw_name, "Lobby")            ||
+        detail_ipc::icontains_str(raw_name, "Looby")            ||
+        detail_ipc::icontains_str(raw_name, "pos_")             ||
+        detail_ipc::icontains_str(raw_name, "Menu")             ||
+        detail_ipc::icontains_str(raw_name, "Controller")       ||
+        detail_ipc::icontains_str(raw_name, "Component")        ||
+        detail_ipc::icontains_str(raw_name, "AnimInstance")     ||
+        detail_ipc::icontains_str(raw_name, "Collectable")      ||
+        detail_ipc::icontains_str(raw_name, "Medkit")           ||
+        detail_ipc::icontains_str(raw_name, "Flashlight")       ||
+        detail_ipc::icontains_str(raw_name, "Toolbox")          ||
+        detail_ipc::icontains_str(raw_name, "Firecracker")      ||
+        detail_ipc::icontains_str(raw_name, "MapItem")          ||
+        detail_ipc::icontains_str(raw_name, "DullKey")          ||
+        detail_ipc::icontains_str(raw_name, "SkeletonKey")      ||
+        detail_ipc::icontains_str(raw_name, "BrokenKey")        ||
+        detail_ipc::icontains_str(raw_name, "Addon")            ||
+        detail_ipc::icontains_str(raw_name, "Chargeable")       ||
+        detail_ipc::icontains_str(raw_name, "Inventory")        ||
+        detail_ipc::icontains_str(raw_name, "BP_Item_")         ||
+        detail_ipc::icontains_str(raw_name, "NightmareHusk")    ||
+        detail_ipc::icontains_str(raw_name, "DreamInducer")     ||
+        detail_ipc::icontains_str(raw_name, "BlastMine")        ||
+        detail_ipc::icontains_str(raw_name, "Interactable")) {
         std::strncpy(out_label, "Unknown", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
 
-    if (detail::icontains_str(raw_name, "Chest") || detail::icontains_str(raw_name, "Searchable")) {
+    if (detail_ipc::icontains_str(raw_name, "Chest") || detail_ipc::icontains_str(raw_name, "Searchable")) {
         std::strncpy(out_label, "Chest", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "Generator")) {
+    if (detail_ipc::icontains_str(raw_name, "Generator")) {
         std::strncpy(out_label, "Generator", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "Hatch")) {
+    if (detail_ipc::icontains_str(raw_name, "Hatch")) {
         std::strncpy(out_label, "Hatch", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "EscapeDoor") || detail::icontains_str(raw_name, "ExitGate")) {
+    if (detail_ipc::icontains_str(raw_name, "EscapeDoor") || detail_ipc::icontains_str(raw_name, "ExitGate")) {
         std::strncpy(out_label, "ExitGate", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "Totem") || detail::icontains_str(raw_name, "HexSpawner")) {
+    if (detail_ipc::icontains_str(raw_name, "Totem") || detail_ipc::icontains_str(raw_name, "HexSpawner")) {
         std::strncpy(out_label, "Totem", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "SmallMeatLocker") ||
-        detail::icontains_str(raw_name, "MeatLocker") ||
-        detail::icontains_str(raw_name, "MeatHook") ||
-        detail::icontains_str(raw_name, "Hook")) {
+    if (detail_ipc::icontains_str(raw_name, "SmallMeatLocker") ||
+        detail_ipc::icontains_str(raw_name, "MeatLocker") ||
+        detail_ipc::icontains_str(raw_name, "MeatHook") ||
+        detail_ipc::icontains_str(raw_name, "Hook")) {
         std::strncpy(out_label, "Hook", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "Bookshelf") || detail::icontains_str(raw_name, "Pallet")) {
+    if (detail_ipc::icontains_str(raw_name, "Bookshelf") || detail_ipc::icontains_str(raw_name, "Pallet")) {
         std::strncpy(out_label, "Pallet", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if ((detail::icontains_str(raw_name, "Slasher") || detail::icontains_str(raw_name, "Killer")) &&
-        !detail::icontains_str(raw_name, "Trap") &&
-        !detail::icontains_str(raw_name, "Projectile") &&
-        !detail::icontains_str(raw_name, "Power") &&
-        !detail::icontains_str(raw_name, "Stalker")) {
+    if ((detail_ipc::icontains_str(raw_name, "Slasher") || detail_ipc::icontains_str(raw_name, "Killer")) &&
+        !detail_ipc::icontains_str(raw_name, "Trap") &&
+        !detail_ipc::icontains_str(raw_name, "Projectile") &&
+        !detail_ipc::icontains_str(raw_name, "Power") &&
+        !detail_ipc::icontains_str(raw_name, "Stalker")) {
         std::strncpy(out_label, "Killer", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
     }
-    if (detail::icontains_str(raw_name, "Camper") || detail::icontains_str(raw_name, "Survivor")) {
+    if (detail_ipc::icontains_str(raw_name, "Camper") || detail_ipc::icontains_str(raw_name, "Survivor")) {
         std::strncpy(out_label, "Survivor", kMaxLabelLen - 1);
         out_label[kMaxLabelLen - 1] = '\0';
         return;
@@ -256,7 +261,9 @@ struct TelemetrySnapshotPayload {
     std::uint32_t magic                   = kIpcMagicVersion;
     std::uint32_t match_active            = 0;
     std::uint32_t node_count              = 0;
+    std::uint32_t remaining_nodes         = 0;
     std::uint32_t active_generators       = 0;
+    std::uint32_t required_generators     = 0;
     std::uint32_t skillchecks_handled     = 0;
     float         nearest_gen_progress    = 0.0f;
     std::uint64_t tick_seq                = 0;
@@ -294,13 +301,15 @@ inline void fill_snapshot_from_telemetry(TelemetrySnapshotPayload& out) noexcept
 
     out.magic                = kIpcMagicVersion;
     out.match_active         = data.match_active ? 1U : 0U;
-    const std::size_t count  = (data.node_count <= hud::kMaxSceneNodes)
+    const std::size_t count  = (data.match_active && data.node_count <= hud::kMaxSceneNodes)
         ? data.node_count
         : 0U;
     out.node_count           = static_cast<std::uint32_t>(count);
-    out.active_generators    = data.active_generators;
+    out.remaining_nodes      = data.match_active ? data.remaining_nodes : 0U;
+    out.active_generators    = data.match_active ? data.active_generators : 0U;
+    out.required_generators  = data.match_active ? data.required_generators : 0U;
     out.skillchecks_handled  = data.skillchecks_handled;
-    out.nearest_gen_progress = data.nearest_gen_progress;
+    out.nearest_gen_progress = data.match_active ? data.nearest_gen_progress : 0.0f;
     out.tick_seq             = data.tick_seq;
     out.uworld_ptr           = data.uworld_ptr;
     out.ulevel_ptr           = data.ulevel_ptr;
@@ -335,10 +344,12 @@ inline void fill_snapshot_from_telemetry(TelemetrySnapshotPayload& out) noexcept
     pthread_mutex_unlock(&data.mutex);
 }
 
-// Writes the latest TelemetrySnapshotPayload in-place (without truncation) to /data/local/tmp/dbdm_telemetry_shm.bin
+// Writes the latest TelemetrySnapshotPayload in-place (without truncation) to /data/local/tmp/dbdm_telemetry_shm_v2.bin
+// using tick_seq as a seqlock (odd while writing, even when complete).
 inline void write_snapshot_file(const TelemetrySnapshotPayload& snap) noexcept {
-    static int  s_shm_fd       = -1;
-    static bool s_chmod_done   = false;
+    static int           s_shm_fd     = -1;
+    static bool          s_chmod_done = false;
+    static std::uint64_t s_seqlock    = 0;
     if (s_shm_fd < 0) {
         s_shm_fd = ::open(kSharedSnapshotFilePath, O_CREAT | O_RDWR | O_CLOEXEC, 0666);
         if (s_shm_fd >= 0 && !s_chmod_done) {
@@ -348,23 +359,79 @@ inline void write_snapshot_file(const TelemetrySnapshotPayload& snap) noexcept {
         }
     }
     if (s_shm_fd >= 0) {
-        const ssize_t w = ::pwrite(s_shm_fd, &snap, sizeof(snap), 0);
-        if (w != static_cast<ssize_t>(sizeof(snap))) {
+        const std::uint64_t base_seq = (snap.tick_seq > 0) ? (snap.tick_seq << 1U) : (s_seqlock + 2ULL);
+        s_seqlock                    = base_seq;
+        const std::uint64_t odd_seq  = base_seq | 1ULL;
+        const std::uint64_t even_seq = base_seq & ~1ULL;
+        constexpr off_t     kSeqOff  = static_cast<off_t>(offsetof(TelemetrySnapshotPayload, tick_seq));
+
+        TelemetrySnapshotPayload staged = snap;
+        staged.tick_seq                 = odd_seq;
+
+        const ssize_t w1 = ::pwrite(s_shm_fd, &odd_seq, sizeof(odd_seq), kSeqOff);
+        const ssize_t w2 = ::pwrite(s_shm_fd, &staged, sizeof(staged), 0);
+        const ssize_t w3 = ::pwrite(s_shm_fd, &even_seq, sizeof(even_seq), kSeqOff);
+        if (w1 != static_cast<ssize_t>(sizeof(odd_seq)) ||
+            w2 != static_cast<ssize_t>(sizeof(staged))  ||
+            w3 != static_cast<ssize_t>(sizeof(even_seq))) {
             ::close(s_shm_fd);
             s_shm_fd = -1;
         }
     }
 }
 
-// Reads the latest TelemetrySnapshotPayload from /data/local/tmp/dbdm_telemetry_shm.bin
+// Reads the latest TelemetrySnapshotPayload from /data/local/tmp/dbdm_telemetry_shm_v2.bin
+// verifying tick_seq seqlock stability (even and unchanged across the read) and freshness (< 2s).
 [[nodiscard]] inline bool read_snapshot_file(TelemetrySnapshotPayload& out) noexcept {
     const int fd = ::open(kSharedSnapshotFilePath, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         return false;
     }
-    const ssize_t r = ::pread(fd, &out, sizeof(out), 0);
+
+    struct stat st{};
+    struct timespec now_ts{};
+    if (::fstat(fd, &st) != 0 || ::clock_gettime(CLOCK_REALTIME, &now_ts) != 0) {
+        ::close(fd);
+        return false;
+    }
+    const std::int64_t age_sec =
+        static_cast<std::int64_t>(now_ts.tv_sec) - static_cast<std::int64_t>(st.st_mtim.tv_sec);
+    if (age_sec > 2) {
+        ::close(fd);
+        return false;
+    }
+
+    constexpr off_t kSeqOff     = static_cast<off_t>(offsetof(TelemetrySnapshotPayload, tick_seq));
+    constexpr int   kMaxRetries = 4;
+    bool            valid       = false;
+
+    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
+        std::uint64_t seq1 = 1ULL;
+        if (::pread(fd, &seq1, sizeof(seq1), kSeqOff) != static_cast<ssize_t>(sizeof(seq1))) {
+            break;
+        }
+        if ((seq1 & 1ULL) != 0ULL) {
+            continue;
+        }
+
+        const ssize_t r = ::pread(fd, &out, sizeof(out), 0);
+        if (r != static_cast<ssize_t>(sizeof(out)) || out.magic != kIpcMagicVersion) {
+            break;
+        }
+
+        std::uint64_t seq2 = 1ULL;
+        if (::pread(fd, &seq2, sizeof(seq2), kSeqOff) != static_cast<ssize_t>(sizeof(seq2))) {
+            break;
+        }
+
+        if (seq1 == seq2 && (out.tick_seq & 1ULL) == 0ULL && out.tick_seq == seq1) {
+            valid = true;
+            break;
+        }
+    }
+
     ::close(fd);
-    return (r == static_cast<ssize_t>(sizeof(out)) && out.magic == kIpcMagicVersion);
+    return valid;
 }
 
 inline void apply_control_to_telemetry(const ControlPayload& ctrl) noexcept {
@@ -382,26 +449,18 @@ inline void apply_control_to_telemetry(const ControlPayload& ctrl) noexcept {
     if (ctrl.max_render_distance_m >= 1.0f && ctrl.max_render_distance_m <= 1000.0f) {
         data.max_render_distance_m = ctrl.max_render_distance_m;
     }
-    if (ctrl.walk_speed >= 100.0f && ctrl.walk_speed <= 3000.0f) {
-        data.walk_speed     = ctrl.walk_speed;
-        data.walk_speed_pct = (ctrl.walk_speed <= 300.0f) ? ctrl.walk_speed : (ctrl.walk_speed / 600.0f) * 100.0f;
+    if (std::isfinite(ctrl.walk_speed)) {
+        data.walk_speed_pct = std::clamp(ctrl.walk_speed, 100.0f, 250.0f);
     }
-    if (ctrl.max_acceleration >= 100.0f && ctrl.max_acceleration <= 8192.0f) {
-        data.max_acceleration = ctrl.max_acceleration;
-        data.accel_pct        = (ctrl.max_acceleration <= 300.0f) ? ctrl.max_acceleration : (ctrl.max_acceleration / 2048.0f) * 100.0f;
+    if (std::isfinite(ctrl.max_acceleration)) {
+        data.accel_pct      = std::clamp(ctrl.max_acceleration, 100.0f, 300.0f);
     }
-    if (ctrl.jump_velocity >= 100.0f && ctrl.jump_velocity <= 2500.0f) {
-        data.jump_velocity = ctrl.jump_velocity;
-        data.jump_pct      = (ctrl.jump_velocity <= 300.0f) ? ctrl.jump_velocity : (ctrl.jump_velocity / 420.0f) * 100.0f;
+    if (std::isfinite(ctrl.jump_velocity)) {
+        data.jump_pct       = std::clamp(ctrl.jump_velocity, 100.0f, 250.0f);
     }
-    if (ctrl.time_scale >= 0.1f && ctrl.time_scale <= 250.0f) {
-        if (ctrl.time_scale >= 10.0f) {
-            data.time_scale_pct = ctrl.time_scale;
-            data.time_scale     = ctrl.time_scale * 0.01f;
-        } else {
-            data.time_scale     = ctrl.time_scale;
-            data.time_scale_pct = ctrl.time_scale * 100.0f;
-        }
+    if (std::isfinite(ctrl.time_scale)) {
+        data.time_scale     = std::clamp(ctrl.time_scale, 0.5f, 2.0f);
+        data.time_scale_pct = data.time_scale * 100.0f;
     }
 
     std::strncpy(data.label_filter, ctrl.label_filter, hud::kMaxLabelLen - 1);
