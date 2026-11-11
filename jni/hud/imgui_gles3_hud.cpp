@@ -200,22 +200,24 @@ inline constexpr float kNearClipPlaneUnits = 1.0f;
     };
 }
 
-// Draws a centered text tag with a crisp 1px drop shadow below a given 2D anchor point
-inline void draw_centered_label_below(
+// Draws a compact single-line label outside the top-right corner of the box (offset 2px) with a 1px dark outline
+inline void draw_label_top_right(
     ImDrawList*   draw_list,
-    const ImVec2& anchor_bottom,
+    const ImVec2& box_top_right,
     ImU32         text_color,
     const char*   text) noexcept {
     if (!draw_list || !text || text[0] == '\0') {
         return;
     }
-    const ImVec2 text_size = ImGui::CalcTextSize(text);
     const ImVec2 pos{
-        anchor_bottom.x - (text_size.x * 0.5f),
-        anchor_bottom.y + 4.0f
+        box_top_right.x + 2.0f,
+        box_top_right.y
     };
-    const ImU32 shadow_col = IM_COL32(0, 0, 0, 225);
-    draw_list->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), shadow_col, text);
+    const ImU32 outline_col = IM_COL32(0, 0, 0, 235);
+    draw_list->AddText(ImVec2(pos.x - 1.0f, pos.y), outline_col, text);
+    draw_list->AddText(ImVec2(pos.x + 1.0f, pos.y), outline_col, text);
+    draw_list->AddText(ImVec2(pos.x, pos.y - 1.0f), outline_col, text);
+    draw_list->AddText(ImVec2(pos.x, pos.y + 1.0f), outline_col, text);
     draw_list->AddText(pos, text_color, text);
 }
 
@@ -665,19 +667,14 @@ void render_hud_frame(float width, float height) noexcept {
             const int dist_int = static_cast<int>(std::lround(std::max(0.0f, node.distance_m)));
 
             ImU32 primary_col = col_special_prop;
-            char  tag[128]{};
+            char  tag[32]{};
 
             if (cat == NodeCategory::Antagonist) {
                 primary_col = col_antagonist;
-                std::snprintf(tag, sizeof(tag), "assassino [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Teammate) {
                 primary_col = col_teammate;
-                const bool has_custom_label =
-                    (node.label[0] != '\0' &&
-                     std::strcmp(node.label, "Survivor") != 0 &&
-                     std::strcmp(node.label, "Sobrevivente") != 0);
-                const char* display_name = has_custom_label ? node.label : "sobrevivente";
-                std::snprintf(tag, sizeof(tag), "%s [%dm]", display_name, dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::PowerNode) {
                 if (std::isfinite(node.progress_pct) && node.progress_pct >= 99.5f) {
                     continue;
@@ -686,11 +683,11 @@ void render_hud_frame(float width, float height) noexcept {
                 const float clamped_pct = std::clamp(
                     std::isfinite(node.progress_pct) && node.progress_pct >= 0.0f ? node.progress_pct : 0.0f,
                     0.0f,
-                    100.0f);
+                    99.0f);
                 std::snprintf(
                     tag,
                     sizeof(tag),
-                    "gerador %.0f%% [%dm]",
+                    "%.0f%% %dm",
                     static_cast<double>(clamped_pct),
                     dist_int);
             } else if (cat == NodeCategory::Shrine) {
@@ -702,7 +699,7 @@ void render_hud_frame(float width, float height) noexcept {
                     continue;
                 }
                 primary_col = col_shrine;
-                std::snprintf(tag, sizeof(tag), "totem [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Barrier) {
                 if (!std::isfinite(node.progress_pct) ||
                     node.progress_pct < 0.0f ||
@@ -717,19 +714,19 @@ void render_hud_frame(float width, float height) noexcept {
                     continue;
                 }
                 primary_col = col_barrier;
-                std::snprintf(tag, sizeof(tag), "pallet [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Container) {
                 primary_col = col_container;
-                std::snprintf(tag, sizeof(tag), "bau [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::Portal) {
                 primary_col = col_portal;
-                std::snprintf(tag, sizeof(tag), "alcapao [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::ExitGate) {
                 primary_col = col_portal;
-                std::snprintf(tag, sizeof(tag), "portao [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else if (cat == NodeCategory::SpecialProp) {
                 primary_col = col_special_prop;
-                std::snprintf(tag, sizeof(tag), "gancho [%dm]", dist_int);
+                std::snprintf(tag, sizeof(tag), "%dm", dist_int);
             } else {
                 continue;
             }
@@ -761,16 +758,18 @@ void render_hud_frame(float width, float height) noexcept {
             const float box_h  = std::clamp(raw_box_h, 28.0f, 450.0f);
             const float box_w  = std::max(14.0f, box_h * 0.5f);
             const float half_w = box_w * 0.5f;
+            const float top_y  = anchor_foot.y - box_h;
+            const float right_x = anchor_foot.x + half_w;
 
             bg_draw_list->AddRect(
-                ImVec2(anchor_foot.x - half_w, anchor_foot.y - box_h),
-                ImVec2(anchor_foot.x + half_w, anchor_foot.y),
+                ImVec2(anchor_foot.x - half_w, top_y),
+                ImVec2(right_x, anchor_foot.y),
                 primary_col,
                 0.0f,
                 0,
                 1.5f);
 
-            draw_centered_label_below(bg_draw_list, anchor_foot, primary_col, tag);
+            draw_label_top_right(bg_draw_list, ImVec2(right_x, top_y), primary_col, tag);
             ++visible_markers_rendered;
         }
     }

@@ -137,23 +137,27 @@ public final class FloatingModService extends Service {
         private final float[] packedMarkers = new float[256 * MARKER_STRIDE];
         private int activeMarkerCount = 0;
 
-        private final Paint boxPaint        = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint textShadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint textPaint       = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint boxPaint         = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint textPaint        = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         AuraEspOverlayView(Context ctx) {
             super(ctx);
             boxPaint.setStyle(Paint.Style.STROKE);
             boxPaint.setStrokeWidth(1.5f);
 
-            textShadowPaint.setColor(Color.argb(230, 0, 0, 0));
-            textShadowPaint.setTextSize(dpF(10.5f));
-            textShadowPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            textShadowPaint.setTextAlign(Paint.Align.CENTER);
+            textOutlinePaint.setStyle(Paint.Style.STROKE);
+            textOutlinePaint.setStrokeWidth(2.0f);
+            textOutlinePaint.setStrokeJoin(Paint.Join.ROUND);
+            textOutlinePaint.setColor(Color.argb(235, 0, 0, 0));
+            textOutlinePaint.setTextSize(dpF(9.0f));
+            textOutlinePaint.setTypeface(Typeface.DEFAULT_BOLD);
+            textOutlinePaint.setTextAlign(Paint.Align.LEFT);
 
-            textPaint.setTextSize(dpF(10.5f));
+            textPaint.setStyle(Paint.Style.FILL);
+            textPaint.setTextSize(dpF(9.0f));
             textPaint.setTypeface(Typeface.DEFAULT_BOLD);
-            textPaint.setTextAlign(Paint.Align.CENTER);
+            textPaint.setTextAlign(Paint.Align.LEFT);
         }
 
         void pollAndInvalidate() {
@@ -193,21 +197,31 @@ public final class FloatingModService extends Service {
         }
 
         // Desenha um único retângulo por ator (apenas contorno de 1.5px, cor da categoria, sem preenchimento/gradiente/sombra)
-        // dimensionado pela caixa delimitadora projetada e limitado ao mínimo de 14x28px.
-        private void drawActorBoundingBox(
+        // dimensionado pela caixa delimitadora projetada e limitado ao mínimo de 14x28px, e o rótulo compacto
+        // fora do canto superior direito da caixa (offset 2px, contorno escuro de 1px).
+        private void drawActorBoxAndLabel(
             Canvas canvas,
             float footX,
             float footY,
             float projHeightPx,
-            int color
+            int color,
+            String tag
         ) {
-            final float boxH  = Math.max(28.0f, Math.min(450.0f, projHeightPx));
-            final float boxW  = Math.max(14.0f, boxH * 0.5f);
-            final float halfW = boxW * 0.5f;
-            final float topY  = footY - boxH;
+            final float boxH   = Math.max(28.0f, Math.min(450.0f, projHeightPx));
+            final float boxW   = Math.max(14.0f, boxH * 0.5f);
+            final float halfW  = boxW * 0.5f;
+            final float leftX  = footX - halfW;
+            final float rightX = footX + halfW;
+            final float topY   = footY - boxH;
 
             boxPaint.setColor(color);
-            canvas.drawRect(footX - halfW, topY, footX + halfW, footY, boxPaint);
+            canvas.drawRect(leftX, topY, rightX, footY, boxPaint);
+
+            final float labelX = rightX + 2.0f;
+            final float labelY = topY - textPaint.ascent();
+            canvas.drawText(tag, labelX, labelY, textOutlinePaint);
+            textPaint.setColor(color);
+            canvas.drawText(tag, labelX, labelY, textPaint);
         }
 
         @Override
@@ -248,13 +262,13 @@ public final class FloatingModService extends Service {
                         }
                         killerRendered = true;
                         colPrimary = Color.rgb(255, 42, 42);
-                        tag = String.format(Locale.US, "assassino [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
                     }
 
                     case 2: { // Sobrevivente (Ciano #00E5FF)
                         colPrimary = Color.rgb(0, 229, 255);
-                        tag = String.format(Locale.US, "sobrevivente [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
                     }
 
@@ -264,50 +278,45 @@ public final class FloatingModService extends Service {
                         }
                         colPrimary = Color.rgb(46, 204, 113);
                         final int genPct = Math.max(0, Math.min(99, Math.round(extra)));
-                        tag = String.format(Locale.US, "gerador %d%% [%dm]", genPct, distInt);
+                        tag = String.format(Locale.US, "%d%% %dm", genPct, distInt);
                         break;
                     }
 
-                    case 4: // Alçapão / Portão (Roxo #E040FB)
+                    case 4: // Alçapão (Roxo #E040FB)
                         colPrimary = Color.rgb(224, 64, 251);
-                        tag = String.format(Locale.US, "alcapao [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
 
                     case 5: // Baú (Laranja #FF9800)
                         colPrimary = Color.rgb(255, 152, 0);
-                        tag = String.format(Locale.US, "bau [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
 
                     case 6: // Totem (Amarelo #F1C40F)
                         colPrimary = Color.rgb(241, 196, 15);
-                        tag = String.format(Locale.US, "totem [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
 
                     case 7: // Pallet (Amarelo Claro #FFF176)
                         colPrimary = Color.rgb(255, 241, 118);
-                        tag = String.format(Locale.US, "pallet [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
 
                     case 8: // Portão de Saída (Roxo #E040FB)
                         colPrimary = Color.rgb(224, 64, 251);
-                        tag = String.format(Locale.US, "portao [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
 
                     case 9: // Gancho (#78C8FF)
                         colPrimary = Color.rgb(120, 200, 255);
-                        tag = String.format(Locale.US, "gancho [%dm]", distInt);
+                        tag = String.format(Locale.US, "%dm", distInt);
                         break;
 
                     default:
                         continue;
                 }
 
-                drawActorBoundingBox(canvas, sx, sy, projHeightPx, colPrimary);
-
-                final float textY = sy + dpF(12.0f);
-                canvas.drawText(tag, sx + 1.2f, textY + 1.2f, textShadowPaint);
-                textPaint.setColor(colPrimary);
-                canvas.drawText(tag, sx, textY, textPaint);
+                drawActorBoxAndLabel(canvas, sx, sy, projHeightPx, colPrimary, tag);
             }
         }
     }
