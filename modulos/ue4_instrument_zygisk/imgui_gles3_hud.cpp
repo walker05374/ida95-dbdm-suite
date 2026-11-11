@@ -1,5 +1,6 @@
 // File: imgui_gles3_hud.cpp
 #include "imgui_gles3_hud.hpp"
+#include "math3d_pipeline.hpp"
 #include "imgui_impl_opengl3.h"
 
 #include <android/input.h>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <numbers>
+#include <span>
 
 namespace hud {
 
@@ -549,13 +551,13 @@ bool project_to_screen(
 void render_hud_frame(float width, float height) noexcept {
     SceneTelemetryData& data = get_telemetry_data();
 
-    // Snapshot nodes, camera, and category visibility under lock to minimize contention
-    CameraView  cam_snapshot{};
-    SceneNode   nodes_snapshot[kMaxSceneNodes]{};
-    std::size_t count_snapshot      = 0;
-    bool        match_live_snapshot = false;
-    bool        draw_markers        = true;
-    float       max_dist_m          = 250.0f;
+    // Snapshot nodes, camera, and category visibility under lock using pre-allocated static pool
+    CameraView                                  cam_snapshot{};
+    static std::array<SceneNode, kMaxSceneNodes> s_nodes_snapshot{};
+    std::size_t                                 count_snapshot      = 0;
+    bool                                        match_live_snapshot = false;
+    bool                                        draw_markers        = true;
+    float                                       max_dist_m          = 250.0f;
 
     bool show_antagonist    = true;
     bool show_teammates     = true;
@@ -572,7 +574,7 @@ void render_hud_frame(float width, float height) noexcept {
         match_live_snapshot = data.match_active;
         count_snapshot      = std::min(data.node_count, kMaxSceneNodes);
         for (std::size_t i = 0; i < count_snapshot; ++i) {
-            nodes_snapshot[i] = data.nodes[i];
+            s_nodes_snapshot[i] = data.nodes[i];
         }
         draw_markers       = data.draw_2d_node_markers;
         max_dist_m         = data.max_render_distance_m;
@@ -588,7 +590,7 @@ void render_hud_frame(float width, float height) noexcept {
 
     std::size_t visible_markers_rendered = 0;
 
-    // 1. Minimalist Text + Directional Tracer Line + Thin 14-Joint Skeleton Rendering
+    // 1. Minimalist Text + Directional Tracer Line + Math3D 8-Corner Upright Bounding Box Pipeline
     if (draw_markers && match_live_snapshot && count_snapshot > 0) {
         ImDrawList* bg_draw_list = ImGui::GetBackgroundDrawList();
 
@@ -606,8 +608,20 @@ void render_hud_frame(float width, float height) noexcept {
         const ImVec2 screen_bottom_center{width * 0.5f, height};
         bool         antagonist_rendered = false;
 
+        // Pre-allocated static buffers for Math3D pipeline batching (kMaxSceneNodes = 256)
+        static std::array<math3d::ActorHudDescriptor, kMaxSceneNodes> s_math3d_actors{};
+        static std::array<std::array<char, 128>, kMaxSceneNodes>      s_math3d_labels{};
+        std::size_t math3d_actor_count = 0;
+
+        const math3d::CameraState math_cam{
+            math3d::Vec3{cam_snapshot.location.x, cam_snapshot.location.y, cam_snapshot.location.z},
+            math3d::EulerAngles{cam_snapshot.rotation.pitch, cam_snapshot.rotation.yaw, cam_snapshot.rotation.roll},
+            cam_snapshot.fov,
+            kNearClipPlaneUnits
+        };
+
         for (std::size_t i = 0; i < count_snapshot; ++i) {
-            const SceneNode& node = nodes_snapshot[i];
+            const SceneNode& node = s_nodes_snapshot[i];
 
             if (!std::isfinite(node.distance_m) || node.distance_m > max_dist_m) {
                 continue;
@@ -642,220 +656,33 @@ void render_hud_frame(float width, float height) noexcept {
 
             // ----------------------------------------------------------------
             // Category A: Antagonist (#FF2A2A) & Teammate (#00E5FF)
-            // 1.5px directional tracer line + bone-matrix world skeleton (or dynamic 8-corner upright capsule box) + clean foot label
+            // Delegated to math3d::integrate_math3d_into_existing_hud(...)
             // ----------------------------------------------------------------
             if (cat == NodeCategory::Antagonist || cat == NodeCategory::Teammate) {
-                const bool  is_antagonist = (cat == NodeCategory::Antagonist);
-                const ImU32 primary_col   = is_antagonist ? col_antagonist : col_teammate;
+                if (math3d_actor_count < kMaxSceneNodes) {
+                    const bool  is_antagonist = (cat == NodeCategory::Antagonist);
+                    const ImU32 primary_col   = is_antagonist ? col_antagonist : col_teammate;
 
-                const float yaw_rad  = deg_to_rad(normalize_euler_angle(node.yaw_deg));
-                const float half_yaw = yaw_rad * 0.5f;
-                const BoneTransform comp_to_world{
-                    0.0f,
-                    0.0f,
-                    std::sin(half_yaw),
-                    std::cos(half_yaw),
-                    node.world_pos,
-                    Vec3{1.0f, 1.0f, 1.0f}
-                };
-
-                const bool actor_far_from_origin =
-                    (std::abs(node.world_pos.x) > 250.0f ||
-                     std::abs(node.world_pos.y) > 250.0f ||
-                     std::abs(node.world_pos.z) > 250.0f);
-
-                std::array<Vec3, kSkeletonJointCount> joints{};
-                std::size_t valid_bone_inputs = 0;
-                float       min_world_z       =  1e9f;
-                float       max_world_z       = -1e9f;
-
-                if (node.has_skeleton) {
-                    for (std::size_t b = 0; b < kSkeletonJointCount; ++b) {
-                        const Vec3& raw_j = node.bone_joints[b];
-                        if (!is_nonzero_vec3(raw_j)) {
-                            continue;
-                        }
-                        const bool is_local_component_space =
-                            actor_far_from_origin &&
-                            std::abs(raw_j.x) < 220.0f &&
-                            std::abs(raw_j.y) < 220.0f &&
-                            std::abs(raw_j.z) < 220.0f;
-
-                        const Vec3 world_j = is_local_component_space
-                            ? transform_bone_local_to_world(raw_j, comp_to_world)
-                            : raw_j;
-
-                        if (is_valid_bone_world_pos(world_j, node.world_pos)) {
-                            joints[b]   = world_j;
-                            min_world_z = std::min(min_world_z, world_j.z);
-                            max_world_z = std::max(max_world_z, world_j.z);
-                            ++valid_bone_inputs;
-                        }
-                    }
-                }
-
-                const float min_foot_z = std::min(joints[12].z, joints[13].z);
-                const bool  has_anatomical_order =
-                    is_nonzero_vec3(joints[0]) &&
-                    is_nonzero_vec3(joints[3]) &&
-                    (is_nonzero_vec3(joints[12]) || is_nonzero_vec3(joints[13])) &&
-                    (joints[0].z > joints[3].z + 15.0f) &&
-                    (joints[3].z > min_foot_z + 15.0f);
-
-                const bool has_valid_bone_rig =
-                    (valid_bone_inputs >= 10) &&
-                    ((max_world_z - min_world_z) >= 35.0f) &&
-                    ((max_world_z - min_world_z) <= 220.0f) &&
-                    has_anatomical_order;
-
-                // If bone indices are uninitialized or return zero/collapsed vectors, construct a dynamic
-                // upright bounding box + articulated limbs anchored at actor_pos (Z - 45.0f to Z + 45.0f)
-                if (!has_valid_bone_rig) {
-                    const std::array<Vec3, kBoundingCornerCount> local_corners{{
-                        {-kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
-                        { kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
-                        { kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
-                        {-kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm, -kCapsuleHalfHeightCm},
-                        {-kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm},
-                        { kCapsuleHalfWidthCm, -kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm},
-                        { kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm},
-                        {-kCapsuleHalfWidthCm,  kCapsuleHalfWidthCm,  kCapsuleHalfHeightCm}
-                    }};
-                    std::array<ImVec2, kBoundingCornerCount> proj_corners{};
-                    std::array<bool, kBoundingCornerCount>   corner_ok{};
-                    std::size_t valid_corners = 0;
-                    for (std::size_t c = 0; c < kBoundingCornerCount; ++c) {
-                        const Vec3 wc = transform_bone_local_to_world(local_corners[c], comp_to_world);
-                        if (project_to_screen(wc, cam_snapshot, width, height, proj_corners[c])) {
-                            corner_ok[c] = true;
-                            ++valid_corners;
-                        }
-                    }
-                    if (valid_corners >= 4) {
-                        auto draw_box_edge = [&](std::size_t a, std::size_t b) noexcept {
-                            if (corner_ok[a] && corner_ok[b]) {
-                                bg_draw_list->AddLine(proj_corners[a], proj_corners[b], primary_col, 1.2f);
-                            }
-                        };
-                        draw_box_edge(0, 1); draw_box_edge(1, 2); draw_box_edge(2, 3); draw_box_edge(3, 0);
-                        draw_box_edge(4, 5); draw_box_edge(5, 6); draw_box_edge(6, 7); draw_box_edge(7, 4);
-                        draw_box_edge(0, 4); draw_box_edge(1, 5); draw_box_edge(2, 6); draw_box_edge(3, 7);
-                    }
-
-                    joints[0]  = transform_bone_local_to_world({0.0f,   0.0f,  kCapsuleHalfHeightCm}, comp_to_world);  // Head (+45.0f)
-                    joints[1]  = transform_bone_local_to_world({0.0f,   0.0f,  32.0f},                comp_to_world);  // Neck
-                    joints[2]  = transform_bone_local_to_world({0.0f,   0.0f,  15.0f},                comp_to_world);  // Spine
-                    joints[3]  = transform_bone_local_to_world({0.0f,   0.0f,   0.0f},                comp_to_world);  // Pelvis
-                    joints[4]  = transform_bone_local_to_world({0.0f, -16.0f,  30.0f},                comp_to_world);  // LShoulder
-                    joints[5]  = transform_bone_local_to_world({0.0f,  16.0f,  30.0f},                comp_to_world);  // RShoulder
-                    joints[6]  = transform_bone_local_to_world({0.0f, -22.0f,  12.0f},                comp_to_world);  // LElbow
-                    joints[7]  = transform_bone_local_to_world({0.0f,  22.0f,  12.0f},                comp_to_world);  // RElbow
-                    joints[8]  = transform_bone_local_to_world({5.0f, -24.0f,  -4.0f},                comp_to_world);  // LHand
-                    joints[9]  = transform_bone_local_to_world({5.0f,  24.0f,  -4.0f},                comp_to_world);  // RHand
-                    joints[10] = transform_bone_local_to_world({3.0f, -10.0f, -22.0f},                comp_to_world);  // LKnee
-                    joints[11] = transform_bone_local_to_world({3.0f,  10.0f, -22.0f},                comp_to_world);  // RKnee
-                    joints[12] = transform_bone_local_to_world({4.0f, -12.0f, -kCapsuleHalfHeightCm}, comp_to_world);  // LFoot (-45.0f)
-                    joints[13] = transform_bone_local_to_world({4.0f,  12.0f, -kCapsuleHalfHeightCm}, comp_to_world);  // RFoot (-45.0f)
-                }
-
-                std::array<ImVec2, kSkeletonJointCount> proj_bones{};
-                std::array<bool, kSkeletonJointCount>   valid_bones{};
-                float       min_x       = width;
-                float       max_x       = 0.0f;
-                float       max_y       = 0.0f;
-                std::size_t valid_count = 0;
-
-                for (std::size_t b = 0; b < kSkeletonJointCount; ++b) {
-                    if (is_nonzero_vec3(joints[b]) &&
-                        project_to_screen(joints[b], cam_snapshot, width, height, proj_bones[b])) {
-                        valid_bones[b] = true;
-                        min_x = std::min(min_x, proj_bones[b].x);
-                        max_x = std::max(max_x, proj_bones[b].x);
-                        max_y = std::max(max_y, proj_bones[b].y);
-                        ++valid_count;
-                    } else {
-                        valid_bones[b] = false;
-                    }
-                }
-
-                ImVec2 foot_anchor{};
-                bool   has_foot_anchor = false;
-
-                if (valid_count >= 2) {
-                    auto draw_limb = [&](std::size_t a, std::size_t b) noexcept {
-                        if (a < kSkeletonJointCount && b < kSkeletonJointCount &&
-                            valid_bones[a] && valid_bones[b]) {
-                            bg_draw_list->AddLine(proj_bones[a], proj_bones[b], primary_col, 1.5f);
-                        }
-                    };
-
-                    if (is_nonzero_vec3(joints[13])) {
-                        // 14-joint layout
-                        draw_limb(0, 1);   // Head -> Neck
-                        draw_limb(1, 2);   // Neck -> Spine
-                        draw_limb(2, 3);   // Spine -> Pelvis
-                        draw_limb(1, 4);   // Neck -> L_Shoulder
-                        draw_limb(4, 6);   // L_Shoulder -> L_Elbow
-                        draw_limb(6, 8);   // L_Elbow -> L_Hand
-                        draw_limb(1, 5);   // Neck -> R_Shoulder
-                        draw_limb(5, 7);   // R_Shoulder -> R_Elbow
-                        draw_limb(7, 9);   // R_Elbow -> R_Hand
-                        draw_limb(3, 10);  // Pelvis -> L_Knee
-                        draw_limb(10, 12); // L_Knee -> L_Foot
-                        draw_limb(3, 11);  // Pelvis -> R_Knee
-                        draw_limb(11, 13); // R_Knee -> R_Foot
-                    } else {
-                        // 13-joint layout
-                        draw_limb(0, 1);   // Head -> Neck
-                        draw_limb(1, 2);   // Neck -> Pelvis
-                        draw_limb(1, 3);   // Neck -> L_Shoulder
-                        draw_limb(3, 5);   // L_Shoulder -> L_Elbow
-                        draw_limb(5, 7);   // L_Elbow -> L_Hand
-                        draw_limb(1, 4);   // Neck -> R_Shoulder
-                        draw_limb(4, 6);   // R_Shoulder -> R_Elbow
-                        draw_limb(6, 8);   // R_Elbow -> R_Hand
-                        draw_limb(2, 9);   // Pelvis -> L_Knee
-                        draw_limb(9, 11);  // L_Knee -> L_Foot
-                        draw_limb(2, 10);  // Pelvis -> R_Knee
-                        draw_limb(10, 12); // R_Knee -> R_Foot
-                    }
-
-                    if (valid_bones[0]) {
-                        bg_draw_list->AddCircle(proj_bones[0], 3.5f, primary_col, 14, 1.5f);
-                    }
-
-                    if (valid_bones[12] && valid_bones[13]) {
-                        foot_anchor = ImVec2(
-                            (proj_bones[12].x + proj_bones[13].x) * 0.5f,
-                            std::max(proj_bones[12].y, proj_bones[13].y));
-                    } else {
-                        foot_anchor = ImVec2((min_x + max_x) * 0.5f, max_y);
-                    }
-                    has_foot_anchor = true;
-                } else {
-                    const Vec3 world_feet{node.world_pos.x, node.world_pos.y, node.world_pos.z - kCapsuleHalfHeightCm};
-                    if (project_to_screen(world_feet, cam_snapshot, width, height, foot_anchor) ||
-                        project_to_screen(node.world_pos, cam_snapshot, width, height, foot_anchor)) {
-                        has_foot_anchor = true;
-                    }
-                }
-
-                if (has_foot_anchor) {
-                    // 1.5px directional tracer line (snapline) from bottom-center of screen to character root foot coordinates
-                    bg_draw_list->AddLine(screen_bottom_center, foot_anchor, primary_col, 1.5f);
-
-                    char tag[128]{};
+                    auto& label_buf = s_math3d_labels[math3d_actor_count];
                     if (is_antagonist) {
-                        std::snprintf(tag, sizeof(tag), "assassino [%dm]", dist_int);
+                        std::snprintf(label_buf.data(), label_buf.size(), "assassino [%dm]", dist_int);
                     } else {
                         const bool has_custom_label =
                             (node.label[0] != '\0' &&
                              std::strcmp(node.label, "Survivor") != 0 &&
                              std::strcmp(node.label, "Sobrevivente") != 0);
                         const char* display_name = has_custom_label ? node.label : "sobrevivente";
-                        std::snprintf(tag, sizeof(tag), "%s [%dm]", display_name, dist_int);
+                        std::snprintf(label_buf.data(), label_buf.size(), "%s [%dm]", display_name, dist_int);
                     }
-                    draw_centered_label_below(bg_draw_list, foot_anchor, primary_col, tag);
+
+                    math3d::ActorHudDescriptor& desc = s_math3d_actors[math3d_actor_count++];
+                    desc.actor_pos   = math3d::Vec3{node.world_pos.x, node.world_pos.y, node.world_pos.z};
+                    desc.yaw_deg     = node.yaw_deg;
+                    desc.label       = label_buf.data();
+                    desc.color       = primary_col;
+                    desc.half_width  = kCapsuleHalfWidthCm;
+                    desc.half_height = kCapsuleHalfHeightCm;
+                    desc.draw_tracer = true;
                     ++visible_markers_rendered;
                 }
                 continue;
@@ -991,6 +818,15 @@ void render_hud_frame(float width, float height) noexcept {
                     ++visible_markers_rendered;
                 }
             }
+        }
+
+        if (math3d_actor_count > 0) {
+            math3d::integrate_math3d_into_existing_hud(
+                std::span<const math3d::ActorHudDescriptor>{s_math3d_actors.data(), math3d_actor_count},
+                math_cam,
+                width,
+                height
+            );
         }
     }
 

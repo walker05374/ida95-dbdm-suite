@@ -9,6 +9,7 @@
 #include "in_process_memory.hpp"
 #include "zygisk.hpp"
 #include "ipc_shared_state.hpp"
+#include "scene_collector_helpers.hpp"
 #include "telemetry_adapter.hpp"
 #include "diagnostic_tick_bridge.hpp"
 #include <dirent.h>
@@ -858,6 +859,11 @@ public:
         if (!validate_canonical_uobject(local_pawn, 0x1170U, guobjectarray_abs, off)) {
             return Status::InvalidArgument;
         }
+        if (const auto cur_state = mem::read<uint8_t>(local_pawn + off.camper_immobilize_state)) {
+            if (!hud::is_immobilize_transition_safe(*cur_state, state)) {
+                return Status::InvalidArgument;
+            }
+        }
         const uint8_t state_byte = hud::resolve_immobilize_state_byte(state);
         return mem::write_data<uint8_t>(local_pawn + off.camper_immobilize_state, state_byte);
     }
@@ -983,8 +989,12 @@ public:
             return nullptr;
         }
 
-        // Reject if the UClass itself is an unspawned Spawner or Component
-        if (icontains(class_name, "Spawner") || icontains(class_name, "Component")) {
+        // Reject if the UClass itself is an unspawned Spawner (except HexSpawner/Totem) or Component
+        if (icontains(class_name, "Component") ||
+            (icontains(class_name, "Spawner") &&
+             !either_contains("Totem") &&
+             !either_contains("HexSpawner") &&
+             !either_contains("Shrine"))) {
             return nullptr;
         }
 
@@ -1036,8 +1046,15 @@ public:
             return set_prio(5, "ExitGate");
         }
 
-        // Priority 6: Totem
-        if (either_contains("Totem") || icontains(actor_name, "HexSpawner")) {
+        // Priority 6: Totem (Shrine)
+        if (either_contains("Totem")      ||
+            either_contains("HexSpawner") ||
+            either_contains("Shrine")     ||
+            either_contains("HexTotem")   ||
+            either_contains("BoonTotem")) {
+            if (either_contains("Cleansed") || either_contains("Destroyed") || either_contains("Broken")) {
+                return nullptr;
+            }
             return set_prio(6, "Totem");
         }
 
@@ -1067,6 +1084,104 @@ public:
         }
 
         return nullptr;
+    }
+
+    // Reads active generator repair progress float (0.0f to 100.0f) directly from the
+    // interaction/component offset (+0x0338) or its attached UChargeableComponent instance.
+    [[nodiscard]] static float read_generator_progress_pct(
+        uintptr_t actor_ptr,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off
+    ) noexcept {
+        if (!InProcessMemory::IsValidPtr(actor_ptr, off.chargeable_current_charge + sizeof(uintptr_t))) {
+            return 0.0f;
+        }
+
+        // 1. Check if the interaction/chargeable offset on AGenerator holds a live UChargeableComponent* pointer
+        if (const auto maybe_comp = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
+            maybe_comp.has_value() &&
+            validate_canonical_uobject(*maybe_comp, off.chargeable_current_charge + sizeof(float) * 2U, guobjectarray_abs, off))
+        {
+            if (const auto comp_chg = mem::read<float>(*maybe_comp + off.chargeable_current_charge);
+                comp_chg.has_value() && std::isfinite(*comp_chg) && *comp_chg >= 0.0f && *comp_chg <= 100.0f)
+            {
+                float max_chg = 0.0f;
+                if (const auto m = mem::read<float>(*maybe_comp + off.chargeable_current_charge + sizeof(float));
+                    m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
+                    max_chg = *m;
+                }
+                return hud::adapter::normalize_generator_progress_pct(*comp_chg, max_chg);
+            }
+        }
+
+        // 2. Read the active repair progress float (0.0f to 100.0f) directly from actor_ptr + off.chargeable_current_charge (+0x0338)
+        if (const auto raw_chg = mem::read<float>(actor_ptr + off.chargeable_current_charge);
+            raw_chg.has_value() && std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f)
+        {
+            float max_chg = 0.0f;
+            if (const auto m = mem::read<float>(actor_ptr + off.chargeable_current_charge + sizeof(float));
+                m.has_value() && std::isfinite(*m) && *m >= 80.0f && *m <= 100.0f) {
+                max_chg = *m;
+            }
+            return hud::adapter::normalize_generator_progress_pct(*raw_chg, max_chg);
+        }
+
+        return 0.0f;
+    }
+
+    // Reads Shrine (Totem) state & interaction flags. Returns >= 0.0f while the totem is active/standing
+    // so it is preserved in the telemetry array, and returns -1.0f (< 0.0f) once cleansed/hidden.
+    [[nodiscard]] static float read_totem_state_progress(
+        uintptr_t actor_ptr,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        const char* actor_name,
+        const char* class_name
+    ) noexcept {
+        if (!InProcessMemory::IsValidPtr(actor_ptr, 0x150U)) {
+            return -1.0f;
+        }
+        if (!hud::adapter::is_totem_active(0.0f, actor_name) ||
+            !hud::adapter::is_totem_active(0.0f, class_name)) {
+            return -1.0f;
+        }
+
+        // Verify RootComponent visibility flags: if bHiddenInGame (0x1000) is set and bVisible (0x0040) is cleared,
+        // the totem has been cleansed/deactivated.
+        if (const auto root_comp = mem::read<uintptr_t>(actor_ptr + off.root_component);
+            root_comp.has_value() && InProcessMemory::IsValidPtr(*root_comp, off.scene_comp_flags + sizeof(uint16_t))) {
+            if (!validate_live_uobject(*root_comp, guobjectarray_abs, off, nullptr)) {
+                return -1.0f;
+            }
+            if (const auto vis_flags = mem::read<uint16_t>(*root_comp + off.scene_comp_flags);
+                vis_flags.has_value() && ((*vis_flags & 0x1000U) != 0U) && ((*vis_flags & 0x0040U) == 0U)) {
+                return -1.0f;
+            }
+        }
+
+        // Check interaction/cleanse progress at chargeable offset (+0x0338) if mapped
+        if (InProcessMemory::IsValidPtr(actor_ptr, off.chargeable_current_charge + sizeof(uintptr_t))) {
+            const auto raw_u64 = mem::read<uintptr_t>(actor_ptr + off.chargeable_current_charge);
+            const bool is_ptr  = raw_u64.has_value() &&
+                validate_canonical_uobject(*raw_u64, sizeof(UObjectHeaderSnapshot), guobjectarray_abs, off);
+            if (!is_ptr) {
+                if (const auto raw_chg = mem::read<float>(actor_ptr + off.chargeable_current_charge);
+                    raw_chg.has_value() && std::isfinite(*raw_chg)) {
+                    if (*raw_chg < 0.0f) {
+                        return -1.0f;
+                    }
+                    if (*raw_chg <= 100.0f) {
+                        const float pct = hud::adapter::normalize_generator_progress_pct(*raw_chg);
+                        if (pct >= hud::adapter::kGeneratorCompleteThresholdPct) {
+                            return -1.0f;
+                        }
+                        return pct;
+                    }
+                }
+            }
+        }
+
+        return 0.0f;
     }
 
     static size_t collect_nearby_entities_multi_level(
@@ -1156,14 +1271,25 @@ public:
 
                 float gen_pct = -1.0f;
                 if (prio == 3) {
-                    gen_pct = 0.0f;
-                    if (const auto raw_chg = mem::read<float>(*actor_ptr + off.chargeable_current_charge)) {
-                        if (std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f) {
-                            gen_pct = (*raw_chg <= 1.0f && *raw_chg > 0.0f)
-                                ? (*raw_chg * 100.0f)
-                                : std::clamp((*raw_chg / 90.0f) * 100.0f, 0.0f, 100.0f);
-                        }
+                    gen_pct = read_generator_progress_pct(*actor_ptr, guobjectarray_abs, off);
+                    // Automatic filter/hide condition when generator repair progress reaches or exceeds 99.5%
+                    if (hud::adapter::should_hide_generator(gen_pct)) {
+                        continue;
                     }
+                } else if (prio == 6) {
+                    // Preserve Shrine (Totem) nodes in the telemetry array with progress_pct >= 0.0f
+                    // until interaction flags confirm cleansing (progress_pct < 0.0f)
+                    gen_pct = read_totem_state_progress(
+                        *actor_ptr,
+                        guobjectarray_abs,
+                        off,
+                        name_buf.data(),
+                        class_buf.data());
+                    if (!hud::adapter::is_totem_active(gen_pct, cat_label)) {
+                        continue;
+                    }
+                } else if (prio == 9) {
+                    gen_pct = 0.0f;
                 }
 
                 EntitySnapshot snap{};
@@ -2000,23 +2126,21 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                          std::fabs(gpos->y - 180.0f) < 5.0f &&
                          std::fabs(gpos->z - 20.0f) < 5.0f);
                     if (origin_sq >= 100.0f && !is_ghost_pos) {
-                        ++active_gen_count;
-                        float gen_pct = 0.0f;
-                        if (const auto raw_chg = mem::read<float>(*a_ptr + off.chargeable_current_charge)) {
-                            if (std::isfinite(*raw_chg) && *raw_chg >= 0.0f && *raw_chg <= 100.0f) {
-                                gen_pct = (*raw_chg <= 1.0f && *raw_chg > 0.0f)
-                                    ? (*raw_chg * 100.0f)
-                                    : std::clamp((*raw_chg / 90.0f) * 100.0f, 0.0f, 100.0f);
+                        const float gen_pct = ue4::SpatialAndKinematicPipeline::read_generator_progress_pct(
+                            *a_ptr,
+                            guobjectarray_abs,
+                            off);
+                        if (!hud::adapter::should_hide_generator(gen_pct)) {
+                            ++active_gen_count;
+                            const float dsq = ref_origin.dist_squared(*gpos);
+                            if (dsq < nearest_gen_dist_sq) {
+                                nearest_gen_dist_sq = dsq;
+                                nearest_gen_pct     = gen_pct;
                             }
-                        }
-                        const float dsq = ref_origin.dist_squared(*gpos);
-                        if (dsq < nearest_gen_dist_sq) {
-                            nearest_gen_dist_sq = dsq;
-                            nearest_gen_pct     = gen_pct;
-                        }
-                        // When local player is repairing within interaction radius (<= 3.5m)
-                        if (dsq <= (350.0f * 350.0f) && gen_pct < 100.0f) {
-                            ++s_skillchecks_handled;
+                            // When local player is repairing within interaction radius (<= 3.5m)
+                            if (dsq <= (350.0f * 350.0f)) {
+                                ++s_skillchecks_handled;
+                            }
                         }
                     }
                 }
@@ -2079,9 +2203,10 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         );
     }
 
-    // 3. Traverse all active ULevels -> Actors arrays and convert to RawEntitySample[256]
-    std::array<ue4::EntitySnapshot, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> snapshots{};
-    std::array<hud::adapter::RawEntitySample, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> raw_samples{};
+    // 3. Traverse all active ULevels -> Actors arrays using pre-allocated static memory pools (kMaxSceneNodes = 256)
+    static std::array<ue4::EntitySnapshot, hud::kMaxSceneNodes> s_snapshots_pool{};
+    hud::adapter::DiagnosticTickStaticPool& tick_pool = hud::adapter::get_diagnostic_tick_pool();
+    tick_pool.reset();
     size_t collected_count = 0;
 
     if (!is_lobby_level && num_ulevels > 0 && has_valid_camera) {
@@ -2093,26 +2218,22 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             1000.0f,
             off,
             name_pool,
-            snapshots
+            s_snapshots_pool
         );
 
         for (size_t i = 0; i < collected_count; ++i) {
-            hud::adapter::build_raw_entity_sample(
-                snapshots[i].world_pos.x,
-                snapshots[i].world_pos.y,
-                snapshots[i].world_pos.z,
-                snapshots[i].yaw_deg,
-                snapshots[i].distance_meters,
-                snapshots[i].progress_pct,
-                snapshots[i].has_skeleton,
-                snapshots[i].category_label,
-                raw_samples[i]
+            (void)hud::adapter::push_static_entity_sample(
+                tick_pool,
+                s_snapshots_pool[i].world_pos.x,
+                s_snapshots_pool[i].world_pos.y,
+                s_snapshots_pool[i].world_pos.z,
+                s_snapshots_pool[i].yaw_deg,
+                s_snapshots_pool[i].distance_meters,
+                s_snapshots_pool[i].progress_pct,
+                s_snapshots_pool[i].has_skeleton,
+                s_snapshots_pool[i].category_label,
+                s_snapshots_pool[i].has_skeleton ? s_snapshots_pool[i].bone_joints : nullptr
             );
-            if (snapshots[i].has_skeleton) {
-                for (size_t b = 0; b < hud::kSkeletonJointCount; ++b) {
-                    raw_samples[i].bone_joints[b] = snapshots[i].bone_joints[b];
-                }
-            }
         }
     }
 
@@ -2133,8 +2254,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         cam_view.rotation.yaw,
         cam_view.rotation.roll,
         cam_view.fov,
-        raw_samples.data(),
-        collected_count,
+        tick_pool.samples.data(),
+        tick_pool.active_count,
         cur_walk_speed,
         cur_max_accel,
         cur_jump_z,
@@ -2265,9 +2386,9 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     if (write_safe && sync_res.force_escape && local_pawn != 0) {
         const ue4::FVector* escape_pos = nullptr;
         for (size_t i = 0; i < collected_count; ++i) {
-            if (std::strcmp(snapshots[i].category_label, "ExitGate") == 0 ||
-                std::strcmp(snapshots[i].category_label, "Hatch") == 0) {
-                escape_pos = &snapshots[i].world_pos;
+            if (std::strcmp(s_snapshots_pool[i].category_label, "ExitGate") == 0 ||
+                std::strcmp(s_snapshots_pool[i].category_label, "Hatch") == 0) {
+                escape_pos = &s_snapshots_pool[i].world_pos;
                 break;
             }
         }
@@ -2954,14 +3075,14 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
         } else if (std::strcmp(wn.label, "Survivor") == 0 || std::strcmp(wn.label, "Sobrevivente") == 0) {
             if (!show_teammates) continue;
             cat_id = 2.0f;
-        } else if (std::strcmp(wn.label, "Generator") == 0 || std::strcmp(wn.label, "Gerador") == 0) {
+        } else if (std::strcmp(wn.label, "Generator") == 0 ||
+                   std::strcmp(wn.label, "Gerador") == 0   ||
+                   hud::adapter::classify_node_category(wn.label) == hud::NodeCategory::PowerNode) {
             if (!show_power_nodes) continue;
-            if (std::isfinite(wn.progress_pct) && wn.progress_pct >= 99.5f) {
+            if (hud::adapter::should_hide_generator(wn.progress_pct)) {
                 continue;
             }
-            const float clamped_pct = (std::isfinite(wn.progress_pct) && wn.progress_pct >= 0.0f)
-                ? std::clamp(wn.progress_pct, 0.0f, 99.0f)
-                : 0.0f;
+            const float clamped_pct = std::clamp(wn.progress_pct, 0.0f, 99.0f);
             cat_id = 3.0f + clamped_pct * 0.001f;
         } else if (std::strcmp(wn.label, "Hatch") == 0 || std::strcmp(wn.label, "Alçapão") == 0) {
             if (!show_portals) continue;
@@ -2969,9 +3090,10 @@ Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers(
         } else if (std::strcmp(wn.label, "Chest") == 0 || std::strcmp(wn.label, "Baú") == 0) {
             if (!show_containers) continue;
             cat_id = 5.0f;
-        } else if (std::strcmp(wn.label, "Totem") == 0) {
+        } else if (std::strcmp(wn.label, "Totem") == 0 ||
+                   hud::adapter::classify_node_category(wn.label) == hud::NodeCategory::Shrine) {
             if (!show_shrines) continue;
-            if (std::isfinite(wn.progress_pct) && wn.progress_pct < 0.0f && wn.progress_pct != -1.0f) {
+            if (!hud::adapter::is_totem_active(wn.progress_pct, wn.label)) {
                 continue;
             }
             cat_id = 6.0f;

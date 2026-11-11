@@ -5,11 +5,43 @@
 #include "telemetry_adapter.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <span>
 
 namespace hud::adapter {
+
+// Pre-allocated static memory pool capacity (kMaxSceneNodes = 256) for zero-allocation ticking loops
+inline constexpr std::size_t kDiagnosticPoolCapacity = hud::kMaxSceneNodes; // 256
+
+struct alignas(64) DiagnosticTickStaticPool {
+    std::array<RawEntitySample, kDiagnosticPoolCapacity>                samples{};
+    std::array<std::array<char, hud::kMaxLabelLen>, kDiagnosticPoolCapacity> label_storage{};
+    std::size_t                                                         active_count{0};
+
+    constexpr void reset() noexcept {
+        active_count = 0;
+    }
+
+    [[nodiscard]] constexpr std::span<RawEntitySample> active_span() noexcept {
+        const std::size_t bounded = (active_count <= kDiagnosticPoolCapacity) ? active_count : kDiagnosticPoolCapacity;
+        return std::span<RawEntitySample>{samples.data(), bounded};
+    }
+
+    [[nodiscard]] constexpr std::span<const RawEntitySample> active_span() const noexcept {
+        const std::size_t bounded = (active_count <= kDiagnosticPoolCapacity) ? active_count : kDiagnosticPoolCapacity;
+        return std::span<const RawEntitySample>{samples.data(), bounded};
+    }
+};
+
+// Returns the singleton pre-allocated static telemetry pool (eliminating heap/stack allocations per tick)
+[[nodiscard]] inline DiagnosticTickStaticPool& get_diagnostic_tick_pool() noexcept {
+    static DiagnosticTickStaticPool s_pool{};
+    return s_pool;
+}
 
 // 1. Populates a RawEntitySample from raw actor telemetry and synthesizes 3D skeleton joints for characters
 inline void build_raw_entity_sample(
@@ -23,26 +55,70 @@ inline void build_raw_entity_sample(
     const char*       name,
     RawEntitySample&  out_sample) noexcept {
 
-    out_sample.x            = x;
-    out_sample.y            = y;
-    out_sample.z            = z;
-    out_sample.dist_m       = dist_m;
+    const float safe_x    = std::isfinite(x) ? x : 0.0f;
+    const float safe_y    = std::isfinite(y) ? y : 0.0f;
+    const float safe_z    = std::isfinite(z) ? z : 0.0f;
+    const float safe_yaw  = std::isfinite(yaw_deg) ? yaw_deg : 0.0f;
+    const float safe_dist = (std::isfinite(dist_m) && dist_m >= 0.0f) ? dist_m : 0.0f;
+
+    out_sample.x            = safe_x;
+    out_sample.y            = safe_y;
+    out_sample.z            = safe_z;
+    out_sample.dist_m       = safe_dist;
     out_sample.name         = name;
     out_sample.category     = classify_node_category(name);
-    out_sample.yaw_deg      = yaw_deg;
+    out_sample.yaw_deg      = safe_yaw;
     out_sample.progress_pct = progress_pct;
     out_sample.is_open      = is_open;
 
     if (out_sample.category == hud::NodeCategory::Antagonist ||
         out_sample.category == hud::NodeCategory::Teammate) {
         out_sample.has_skeleton = true;
-        compute_skeleton_fallback_joints(hud::Vec3{x, y, z}, yaw_deg, out_sample.bone_joints);
+        compute_skeleton_fallback_joints(hud::Vec3{safe_x, safe_y, safe_z}, safe_yaw, out_sample.bone_joints);
     } else {
         out_sample.has_skeleton = false;
         for (std::size_t i = 0; i < hud::kSkeletonJointCount; ++i) {
             out_sample.bone_joints[i] = {0.0f, 0.0f, 0.0f};
         }
     }
+}
+
+// Appends an entity sample into the pre-allocated static pool (up to kMaxSceneNodes = 256)
+// copying its label into static label_storage so dangling pointers never occur during hook/cage transitions
+[[nodiscard]] inline bool push_static_entity_sample(
+    DiagnosticTickStaticPool& pool,
+    float                     x,
+    float                     y,
+    float                     z,
+    float                     yaw_deg,
+    float                     dist_m,
+    float                     progress_pct,
+    bool                      is_open,
+    const char*               name,
+    const hud::Vec3*          custom_bones = nullptr) noexcept {
+
+    if (pool.active_count >= kDiagnosticPoolCapacity) {
+        return false;
+    }
+
+    const std::size_t idx = pool.active_count++;
+    auto&             lbl = pool.label_storage[idx];
+    lbl[0] = '\0';
+    if (detail_helpers::is_readable_string_ptr(name) && name[0] != '\0') {
+        std::strncpy(lbl.data(), name, lbl.size() - 1U);
+        lbl[lbl.size() - 1U] = '\0';
+    }
+
+    RawEntitySample& dst = pool.samples[idx];
+    build_raw_entity_sample(x, y, z, yaw_deg, dist_m, progress_pct, is_open, lbl.data(), dst);
+
+    if (custom_bones != nullptr && is_open) {
+        dst.has_skeleton = true;
+        for (std::size_t b = 0; b < hud::kSkeletonJointCount; ++b) {
+            dst.bone_joints[b] = custom_bones[b];
+        }
+    }
+    return true;
 }
 
 // 2. Validates and clamps custom Field of View (FOV) target within [80.0f, 120.0f]
@@ -126,6 +202,21 @@ struct CharacterMovementChain {
     return (raw <= static_cast<std::uint8_t>(ImmobilizeState::Caged)) ? raw : 0U;
 }
 
+// Validates that an in-game EImmobilizeState byte is within valid bounds [0..5] and safe to transition
+// without corrupting pawn state during hook/cage animations.
+[[nodiscard]] constexpr bool is_immobilize_transition_safe(
+    std::uint8_t    current_raw_state,
+    ImmobilizeState target_state) noexcept {
+    if (current_raw_state > static_cast<std::uint8_t>(ImmobilizeState::Caged)) {
+        return false;
+    }
+    if (current_raw_state == static_cast<std::uint8_t>(ImmobilizeState::Dead)) {
+        return false;
+    }
+    const auto target_raw = static_cast<std::uint8_t>(target_state);
+    return target_raw <= static_cast<std::uint8_t>(ImmobilizeState::Caged);
+}
+
 // 9. Resolves validated UE4 EPlayerRole byte (1 = Camper, 2 = Slasher, 3 = Observer)
 [[nodiscard]] constexpr std::uint8_t resolve_player_role_byte(PlayerRole role) noexcept {
     const auto raw = static_cast<std::uint8_t>(role);
@@ -138,6 +229,10 @@ struct CharacterMovementChain {
 } // namespace hud::adapter
 
 namespace hud {
+using adapter::DiagnosticTickStaticPool;
+using adapter::kDiagnosticPoolCapacity;
+using adapter::get_diagnostic_tick_pool;
+using adapter::push_static_entity_sample;
 using adapter::build_raw_entity_sample;
 using adapter::compute_clamped_physics_targets;
 using adapter::compute_clamped_fov_target;
@@ -147,9 +242,14 @@ using adapter::CharacterMovementChain;
 using adapter::compute_movement_dirty_flags;
 using adapter::compute_actor_collision_byte;
 using adapter::resolve_immobilize_state_byte;
+using adapter::is_immobilize_transition_safe;
 using adapter::resolve_player_role_byte;
 } // namespace hud
 
+using hud::adapter::DiagnosticTickStaticPool;
+using hud::adapter::kDiagnosticPoolCapacity;
+using hud::adapter::get_diagnostic_tick_pool;
+using hud::adapter::push_static_entity_sample;
 using hud::adapter::build_raw_entity_sample;
 using hud::adapter::compute_clamped_physics_targets;
 using hud::adapter::compute_clamped_fov_target;
@@ -159,4 +259,5 @@ using hud::adapter::CharacterMovementChain;
 using hud::adapter::compute_movement_dirty_flags;
 using hud::adapter::compute_actor_collision_byte;
 using hud::adapter::resolve_immobilize_state_byte;
+using hud::adapter::is_immobilize_transition_safe;
 using hud::adapter::resolve_player_role_byte;

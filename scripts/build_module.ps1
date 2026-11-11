@@ -88,6 +88,22 @@ if ((Test-Path "$JniDir\third_party\imgui") -and -not (Test-Path "$StageDir\thir
     Copy-Item -Force "$JniDir\third_party\imgui\backends\*" "$StageDir\third_party\imgui\backends\" -ErrorAction SilentlyContinue
 }
 
+Write-Host "[0/6] Executando limpeza profunda de caches de build (build-arm64/ e app/build/)..." -ForegroundColor Cyan
+if (Test-Path $BuildDir) {
+    Remove-Item -Recurse -Force $BuildDir
+}
+foreach ($CleanDir in @("$AppDir\build", "$AppDir\.gradle", "$ModDir\floating_mod_menu_apk\build")) {
+    if (Test-Path $CleanDir) {
+        Remove-Item -Recurse -Force $CleanDir
+    }
+}
+if (Test-Path ".\gradlew.bat") {
+    & .\gradlew.bat clean
+} elseif (Test-Path "$AppDir\gradlew.bat") {
+    Push-Location $AppDir
+    try { & .\gradlew.bat clean } finally { Pop-Location }
+}
+
 Write-Host "[1/6] Compilando artefatos ELF64 AArch64 (Release) a partir de jni/..." -ForegroundColor Cyan
 cmake -S . -B $BuildDir `
   -G Ninja `
@@ -97,7 +113,7 @@ cmake -S . -B $BuildDir `
   -DANDROID_PLATFORM=android-29 `
   -DANDROID_STL=c++_static
 
-cmake --build $BuildDir --config Release --parallel
+cmake --build $BuildDir --config Release --clean-first --parallel
 
 Write-Host "[2/6] Auditando e limpando simbolos dinamicos via llvm-strip / llvm-nm..." -ForegroundColor Cyan
 & $LlvmStrip --strip-unneeded $CoreSo
@@ -325,7 +341,12 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
     Write-Host "    -> Standalone Floating Mod Menu APK: $ApkOut" -ForegroundColor Green
 }
 
-Write-Host "[6/6] Verificando conexao ADB para deploy..." -ForegroundColor Cyan
+Write-Host "[6/6] Verificando conexao ADB (192.168.1.68:10001) para deploy..." -ForegroundColor Cyan
+$PrevEapAdb = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $AdbExe connect 192.168.1.68:10001 *> $null
+$ErrorActionPreference = $PrevEapAdb
+
 $AdbDevices = (& $AdbExe devices) -join "`n"
 $TargetSerial = $null
 if ($AdbDevices -match "192\.168\.1\.68:10001\s+device") {
@@ -354,6 +375,8 @@ if ($TargetSerial) {
         & $AdbExe -s $TargetSerial push $ApkOut /data/local/tmp/DBDM_FloatingModMenu.apk
         & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu >/dev/null 2>&1; pm install -r /data/local/tmp/DBDM_FloatingModMenu.apk && appops set com.dbdm.modmenu SYSTEM_ALERT_WINDOW allow && am start -n com.dbdm.modmenu/.MainActivity"
     }
+    Write-Host "    -> Verificando logs de inicializacao do processo (UE4Diag / FloatingModService)..." -ForegroundColor Cyan
+    & $AdbExe -s $TargetSerial logcat -d -t 40 -s UE4Diag:V FloatingModService:V AndroidRuntime:E
     Write-Host "[OK] Modulo Zygisk e Floating Mod Menu APK implantados em $TargetSerial." -ForegroundColor Green
 } else {
     Write-Host "[OK] Artefatos gerados em $ZipOut e $ApkOut (nenhum dispositivo ADB online)." -ForegroundColor Yellow
