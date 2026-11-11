@@ -1,8 +1,0 @@
-{
-    global:
-        JNI_OnLoad;
-        JNI_OnUnload;
-        zygisk_module_entry;
-    local:
-        *;
-};

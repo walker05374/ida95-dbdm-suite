@@ -56,6 +56,16 @@ public:
         return true;
     }
 
+    // Validates that a pointer is non-null, properly aligned for pointer/object access,
+    // and resides within canonical 48-bit AArch64 user-space memory [0x10000, 0x00007FFFFFFFFFFF].
+    [[nodiscard]] static constexpr bool IsValidPtr(uintptr_t raw_addr, size_t min_bytes = sizeof(uintptr_t)) noexcept {
+        const uintptr_t addr = untag_address(raw_addr);
+        if ((addr & 0x3ULL) != 0ULL) {
+            return false;
+        }
+        return is_canonical_user_va(addr, min_bytes);
+    }
+
     [[nodiscard]] static Status safe_read(uintptr_t source_addr, std::span<uint8_t> dest) noexcept {
         if (dest.empty()) {
             return Status::InvalidArgument;
@@ -82,15 +92,7 @@ public:
             0UL
         );
         if (transferred < 0) {
-            const int err = errno;
-            if (err == ENOSYS || err == EPERM || err == EACCES) {
-                const uintptr_t page_start = clean_addr & ~static_cast<uintptr_t>(0xFFFULL);
-                const uintptr_t page_end = (clean_addr + dest.size() + 0xFFFULL) & ~static_cast<uintptr_t>(0xFFFULL);
-                if (::msync(reinterpret_cast<void*>(page_start), page_end - page_start, MS_ASYNC) == 0) {
-                    std::memcpy(dest.data(), reinterpret_cast<const void*>(clean_addr), dest.size());
-                    return Status::Ok;
-                }
-            }
+            // Never fallback to raw memcpy on an unmapped/protected address — return fault safely
             return Status::UnmappedOrFault;
         }
         if (static_cast<size_t>(transferred) != dest.size()) {
@@ -129,15 +131,7 @@ public:
             0UL
         );
         if (written < 0) {
-            const int err = errno;
-            if (err == ENOSYS || err == EPERM || err == EACCES) {
-                const uintptr_t page_start = clean_addr & ~static_cast<uintptr_t>(0xFFFULL);
-                const uintptr_t page_end = (clean_addr + src.size() + 0xFFFULL) & ~static_cast<uintptr_t>(0xFFFULL);
-                if (::msync(reinterpret_cast<void*>(page_start), page_end - page_start, MS_ASYNC) == 0) {
-                    std::memcpy(reinterpret_cast<void*>(clean_addr), src.data(), src.size());
-                    return Status::Ok;
-                }
-            }
+            // Never fallback to raw memcpy on an unmapped/read-only address — return fault safely
             return Status::UnmappedOrFault;
         }
         if (static_cast<size_t>(written) != src.size()) {

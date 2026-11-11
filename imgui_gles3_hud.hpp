@@ -47,24 +47,31 @@ struct SceneNode {
 struct SceneTelemetryData {
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
-    bool  hud_open                   = true;
-    bool  draw_2d_node_markers       = true;
-    float max_render_distance_m      = 250.0f;
-    char  label_filter[kMaxLabelLen] = "";
+    bool  hud_open                       = true;
+    bool  draw_2d_node_markers           = true;
+    float max_render_distance_m          = 250.0f;
+    char  label_filter[kMaxLabelLen]     = "";
 
-    bool  apply_custom_kinematics    = false;
-    float walk_speed                 = 600.0f;
-    float max_acceleration           = 2048.0f;
-    float jump_velocity              = 420.0f;
-    float time_scale                 = 1.0f;
+    bool  apply_custom_player_name       = false;
+    char  custom_player_name[kMaxLabelLen] = "";
+
+    bool  apply_custom_kinematics        = false;
+    float walk_speed                     = 600.0f;
+    float max_acceleration               = 2048.0f;
+    float jump_velocity                  = 420.0f;
+    float time_scale                     = 1.0f;
 
     CameraView  current_camera{};
+    bool        match_active             = false;
     SceneNode   nodes[kMaxSceneNodes]{};
-    std::size_t node_count           = 0;
+    std::size_t node_count               = 0;
 };
 
 // Global shared telemetry state accessed by provider and render threads
 SceneTelemetryData& get_telemetry_data() noexcept;
+
+// Translates raw Unreal Engine class names into clean human-readable English labels
+void format_friendly_node_label(const char* raw_name, char (&out_label)[kMaxLabelLen]) noexcept;
 
 // Pure 3D-to-2D perspective projection. Returns false if behind camera (view_z < 1.0f).
 [[nodiscard]] bool project_to_screen(
@@ -83,5 +90,7 @@ void on_egl_frame_swap(EGLDisplay dpy, EGLSurface surface) noexcept;
 // Forwards Android MotionEvent actions and coordinates to Dear ImGui IO.
 void on_touch_event(int action, float x, float y) noexcept;
 
-} // namespace hud
+// Returns true when the touch event lies within the active ImGui HUD window or is captured by an active widget.
+[[nodiscard]] bool should_consume_touch(int action, float x, float y) noexcept;
 
+} // namespace hud

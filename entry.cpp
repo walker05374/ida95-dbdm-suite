@@ -86,21 +86,31 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t player_state              = 0x0248;     // APawn::PlayerState
 
     // UObjectBase / AActor / ACharacter (WITH_CASE_PRESERVING_NAME = 1 -> 12-byte FName)
+    uintptr_t uobject_flags             = 0x0008;     // UObjectBase::ObjectFlags (int32, +0x08)
+    uintptr_t uobject_internal_index    = 0x000C;     // UObjectBase::InternalIndex (int32, +0x0C)
+    uintptr_t uobject_class_private     = 0x0010;     // UObjectBase::ClassPrivate (UClass*, +0x10)
     uintptr_t fname_comparison_index    = 0x0018;     // UObjectBase::NamePrivate.ComparisonIndex (+0x18)
     uintptr_t fname_index               = 0x001C;     // UObjectBase::NamePrivate.DisplayIndex (+0x1C)
     uintptr_t custom_time_dilation      = 0x0098;     // AActor::CustomTimeDilation (float, +0x98)
     uintptr_t root_component            = 0x0140;     // AActor::RootComponent (FClassParams @ 0x0C7ABD84)
     uintptr_t character_movement        = 0x0290;     // ACharacter::CharacterMovement / Mesh
 
-    // APlayerCameraManager -> CameraCachePrivate (+0x1AE0) -> POV (+0x10)
-    uintptr_t camera_cache_private      = 0x1AE0;     // FCameraCacheEntry
-    uintptr_t pov_location              = 0x1AE0 + 0x0010; // FMinimalViewInfo::Location (FVector)
-    uintptr_t pov_rotation              = 0x1AE0 + 0x001C; // FMinimalViewInfo::Rotation (FRotator)
-    uintptr_t pov_fov                   = 0x1AE0 + 0x0028; // FMinimalViewInfo::FOV (float)
+    // APlayerCameraManager -> CameraCachePrivate (+0x1AF0) -> POV (+0x1B00)
+    uintptr_t camera_cache_private      = 0x1AF0;     // FCameraCacheEntry (FClassParams @ 0x0F3B0910)
+    uintptr_t pov_location              = 0x1AF0 + 0x0010; // FMinimalViewInfo::Location (+0x1B00, FVector)
+    uintptr_t pov_rotation              = 0x1AF0 + 0x001C; // FMinimalViewInfo::Rotation (+0x1B0C, FRotator)
+    uintptr_t pov_fov                   = 0x1AF0 + 0x0028; // FMinimalViewInfo::FOV (+0x1B18, float)
 
     // USceneComponent
     uintptr_t relative_location         = 0x0134;     // FVector (12 bytes)
     uintptr_t component_velocity        = 0x0140;     // FVector (12 bytes)
+    uintptr_t scene_comp_flags          = 0x0164;     // uint16 bitfield (bVisible=0x0040, bHiddenInGame=0x1000)
+
+    // FUObjectArray / FChunkedFixedUObjectArray (for live lifecycle / PendingKill verification)
+    uintptr_t guobject_objects_offset   = 0x0010;     // ObjObjects.Objects (FUObjectItem**)
+    uintptr_t guobject_max_elems_offset = 0x0020;     // ObjObjects.MaxElements (int32)
+    uintptr_t guobject_num_elems_offset = 0x0024;     // ObjObjects.NumElements (int32)
+    uintptr_t guobject_num_chunks_offset= 0x002C;     // ObjObjects.NumChunks (int32)
 
     // UCharacterMovementComponent
     uintptr_t jump_z_velocity           = 0x0158;     // float (+0x158)
@@ -178,32 +188,148 @@ struct INSTRUMENT_LOCAL EntitySnapshot {
 
 class INSTRUMENT_LOCAL SpatialAndKinematicPipeline {
 public:
-    static constexpr size_t kMaxActorsPerTick = 2048U;
-    static constexpr size_t kMaxSnapshots     = 64U;
+    static constexpr size_t   kMaxActorsPerTick      = 2048U;
+    static constexpr size_t   kMaxSnapshots          = 64U;
+    static constexpr uint32_t kFlagBeginDestroyed    = 0x00020000U; // RF_BeginDestroyed
+    static constexpr uint32_t kFlagFinishDestroyed   = 0x00040000U; // RF_FinishDestroyed
+    static constexpr int32_t  kInternalFlagPendingKill = (1 << 29);  // EInternalObjectFlags::PendingKill
+    static constexpr int32_t  kInternalFlagUnreachable = (1 << 28);  // EInternalObjectFlags::Unreachable
+    static constexpr int32_t  kInternalFlagGarbage     = (1 << 21);  // EInternalObjectFlags::Garbage
+
+    struct UObjectHeaderSnapshot {
+        uintptr_t vtable{0};
+        uint32_t  object_flags{0};
+        int32_t   internal_index{-1};
+        uintptr_t class_private{0};
+        uint32_t  fname_comparison_index{0};
+        uint32_t  fname_display_index{0};
+    };
+
+    // Validates that a UObject* is live, mapped in canonical user-space, not RF_BeginDestroyed /
+    // RF_FinishDestroyed, and (when GUObjectArray is accessible) matches its FUObjectItem slot
+    // without PendingKill / Unreachable / Garbage flags.
+    [[nodiscard]] static bool validate_live_uobject(
+        uintptr_t obj_addr,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        uint32_t* out_fname_display_idx = nullptr
+    ) noexcept {
+        if (!InProcessMemory::IsValidPtr(obj_addr, sizeof(UObjectHeaderSnapshot))) {
+            return false;
+        }
+
+        const auto hdr = mem::read<UObjectHeaderSnapshot>(obj_addr);
+        if (!hdr.has_value()) {
+            return false;
+        }
+
+        // VTable and ClassPrivate must be valid user-space pointers
+        if (!InProcessMemory::IsValidPtr(hdr->vtable, sizeof(uintptr_t)) ||
+            !InProcessMemory::IsValidPtr(hdr->class_private, sizeof(uintptr_t))) {
+            return false;
+        }
+
+        // Reject objects undergoing UE4 destruction (RF_BeginDestroyed | RF_FinishDestroyed)
+        if ((hdr->object_flags & (kFlagBeginDestroyed | kFlagFinishDestroyed)) != 0U) {
+            return false;
+        }
+
+        // InternalIndex must be within valid GUObjectArray bounds
+        if (hdr->internal_index <= 0 || hdr->internal_index >= 0x400000) {
+            return false;
+        }
+
+        if (hdr->fname_display_index == 0U || hdr->fname_display_index >= (8192U << 16U)) {
+            return false;
+        }
+
+        // Cross-check against GUObjectArray (FUObjectItem: +0x00 Object*, +0x08 Flags)
+        if (InProcessMemory::IsValidPtr(guobjectarray_abs, 0x30U)) {
+            const auto num_elems  = mem::read<int32_t>(guobjectarray_abs + off.guobject_num_elems_offset);
+            const auto num_chunks = mem::read<int32_t>(guobjectarray_abs + off.guobject_num_chunks_offset);
+            const auto objects_pp = mem::read<uintptr_t>(guobjectarray_abs + off.guobject_objects_offset);
+
+            if (num_elems.has_value() && num_chunks.has_value() && objects_pp.has_value() &&
+                *num_elems > 0 && *num_chunks > 0 && *num_chunks <= 512 &&
+                InProcessMemory::IsValidPtr(*objects_pp, sizeof(uintptr_t)))
+            {
+                const int32_t idx = hdr->internal_index;
+                if (idx >= *num_elems) {
+                    return false;
+                }
+                const int32_t chunk_idx = idx >> 16;
+                const int32_t within_idx = idx & 0xFFFF;
+                if (chunk_idx < 0 || chunk_idx >= *num_chunks) {
+                    return false;
+                }
+                const auto chunk_base = mem::read<uintptr_t>(
+                    *objects_pp + static_cast<uintptr_t>(chunk_idx) * sizeof(uintptr_t));
+                if (!chunk_base.has_value() || !InProcessMemory::IsValidPtr(*chunk_base, 0x18U)) {
+                    return false;
+                }
+                const uintptr_t item_addr = *chunk_base + static_cast<uintptr_t>(within_idx) * 0x18ULL;
+                const auto item_obj   = mem::read<uintptr_t>(item_addr + 0x00U);
+                const auto item_flags = mem::read<int32_t>(item_addr + 0x08U);
+                if (!item_obj.has_value() || !item_flags.has_value()) {
+                    return false;
+                }
+                // If the slot no longer points to this object, it was destroyed/reallocated mid-frame
+                if (InProcessMemory::untag_address(*item_obj) != InProcessMemory::untag_address(obj_addr)) {
+                    return false;
+                }
+                // Check EInternalObjectFlags::PendingKill | Unreachable | Garbage
+                if ((*item_flags & (kInternalFlagPendingKill | kInternalFlagUnreachable | kInternalFlagGarbage)) != 0) {
+                    return false;
+                }
+            }
+        }
+
+        if (out_fname_display_idx != nullptr) {
+            *out_fname_display_idx = hdr->fname_display_index;
+        }
+        return true;
+    }
 
     [[nodiscard]] static std::optional<FVector> read_actor_location(
         uintptr_t actor,
+        uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
-        if (actor == 0) {
+        if (!InProcessMemory::IsValidPtr(actor, 0x150U)) {
             return std::nullopt;
         }
         const auto root_comp = mem::read<uintptr_t>(actor + off.root_component);
-        if (!root_comp.has_value() || *root_comp == 0) {
+        if (!root_comp.has_value() || !InProcessMemory::IsValidPtr(*root_comp, 0x170U)) {
             return std::nullopt;
         }
-        return mem::read<FVector>(*root_comp + off.relative_location);
+        // Verify the USceneComponent itself is still a live UObject (not destroyed when an item depletes or pawn dies)
+        if (!validate_live_uobject(*root_comp, guobjectarray_abs, off, nullptr)) {
+            return std::nullopt;
+        }
+        const auto loc = mem::read<FVector>(*root_comp + off.relative_location);
+        if (!loc.has_value()) {
+            return std::nullopt;
+        }
+        if (!std::isfinite(loc->x) || !std::isfinite(loc->y) || !std::isfinite(loc->z)) {
+            return std::nullopt;
+        }
+        // Reject uninitialized/corrupted transform coordinates
+        if (std::abs(loc->x) > 1000000.0f || std::abs(loc->y) > 1000000.0f || std::abs(loc->z) > 1000000.0f) {
+            return std::nullopt;
+        }
+        return loc;
     }
 
     static Status apply_kinematic_limits(
         uintptr_t local_pawn,
+        uintptr_t guobjectarray_abs,
         const EngineOffsets& off,
         float target_walk_speed,
         float target_accel,
         float target_jump_z = 0.0f,
         float target_time_scale = 0.0f
     ) noexcept {
-        if (local_pawn == 0) {
+        if (!validate_live_uobject(local_pawn, guobjectarray_abs, off, nullptr)) {
             return Status::InvalidArgument;
         }
         if (target_time_scale >= 0.1f && target_time_scale <= 5.0f) {
@@ -213,7 +339,7 @@ public:
             }
         }
         const auto move_comp = mem::read<uintptr_t>(local_pawn + off.character_movement);
-        if (!move_comp.has_value() || *move_comp == 0) {
+        if (!move_comp.has_value() || !validate_live_uobject(*move_comp, guobjectarray_abs, off, nullptr)) {
             return Status::UnmappedOrFault;
         }
         if (target_walk_speed > 0.0f && target_walk_speed <= 5000.0f) {
@@ -237,19 +363,77 @@ public:
         return Status::Ok;
     }
 
+    [[nodiscard]] static bool is_priority_gameplay_actor(std::string_view raw_name) noexcept {
+        auto icontains = [](std::string_view hay, std::string_view needle) noexcept -> bool {
+            if (needle.size() > hay.size()) {
+                return false;
+            }
+            auto to_lower = [](unsigned char c) constexpr noexcept -> unsigned char {
+                return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c + ('a' - 'A')) : c;
+            };
+            for (size_t i = 0; i <= hay.size() - needle.size(); ++i) {
+                bool match = true;
+                for (size_t j = 0; j < needle.size(); ++j) {
+                    if (to_lower(static_cast<unsigned char>(hay[i + j])) !=
+                        to_lower(static_cast<unsigned char>(needle[j]))) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Immediately ignore handheld items, charges, add-ons, and consumables that deplete mid-game
+        if (icontains(raw_name, "Collectable") ||
+            icontains(raw_name, "Medkit")      ||
+            icontains(raw_name, "Flashlight")  ||
+            icontains(raw_name, "Toolbox")     ||
+            icontains(raw_name, "Key")         ||
+            icontains(raw_name, "MapItem")     ||
+            icontains(raw_name, "Firecracker") ||
+            icontains(raw_name, "Addon")       ||
+            icontains(raw_name, "Item")        ||
+            icontains(raw_name, "Chargeable")  ||
+            icontains(raw_name, "Inventory")) {
+            return false;
+        }
+
+        return icontains(raw_name, "Slasher") ||
+               icontains(raw_name, "Killer") ||
+               icontains(raw_name, "Camper") ||
+               icontains(raw_name, "Survivor") ||
+               icontains(raw_name, "Generator") ||
+               icontains(raw_name, "Hatch") ||
+               icontains(raw_name, "Chest") ||
+               icontains(raw_name, "Searchable") ||
+               icontains(raw_name, "Totem");
+    }
+
     static size_t collect_nearby_entities(
         uintptr_t ulevel_addr,
+        uintptr_t guobjectarray_abs,
+        uintptr_t ignore_actor,
         const FVector& origin,
         float max_radius_meters,
         const EngineOffsets& off,
         const GNamePoolResolver& name_resolver,
         std::span<EntitySnapshot> out_snapshots
     ) noexcept {
-        if (ulevel_addr == 0 || out_snapshots.empty()) {
+        if (!InProcessMemory::IsValidPtr(ulevel_addr, 0xB0U) ||
+            !InProcessMemory::IsValidPtr(ignore_actor, 0x150U) ||
+            out_snapshots.empty()) {
             return 0;
         }
         const auto actor_arr = mem::read<TArrayHeader>(ulevel_addr + off.actor_array);
-        if (!actor_arr.has_value() || actor_arr->data_ptr == 0 || actor_arr->count <= 0) {
+        if (!actor_arr.has_value() ||
+            !InProcessMemory::IsValidPtr(actor_arr->data_ptr, sizeof(uintptr_t)) ||
+            actor_arr->count < 40 ||
+            actor_arr->count > 16384 ||
+            actor_arr->max < actor_arr->count) {
             return 0;
         }
         const size_t raw_count     = static_cast<size_t>(actor_arr->count);
@@ -258,28 +442,37 @@ public:
         const float max_dist_sq = max_dist_cm * max_dist_cm;
         size_t collected = 0;
         std::array<char, 128> name_buf{};
+
+        // Strictly collect only live, validated priority gameplay actors during an active match
         for (size_t i = 0; i < bounded_count && collected < out_snapshots.size(); ++i) {
             const uintptr_t slot_addr = actor_arr->data_ptr + (i * sizeof(uintptr_t));
             const auto actor_ptr = mem::read<uintptr_t>(slot_addr);
-            if (!actor_ptr.has_value() || *actor_ptr == 0) {
+            if (!actor_ptr.has_value() ||
+                *actor_ptr == ignore_actor ||
+                !InProcessMemory::IsValidPtr(*actor_ptr, 0x150U)) {
                 continue;
             }
-            const auto fname_idx = mem::read<uint32_t>(*actor_ptr + off.fname_index);
-            if (!fname_idx.has_value() || *fname_idx == 0) {
+
+            uint32_t fname_idx = 0U;
+            if (!validate_live_uobject(*actor_ptr, guobjectarray_abs, off, &fname_idx) || fname_idx == 0U) {
                 continue;
             }
-            if (!name_resolver.resolve_name(*fname_idx, name_buf)) {
+
+            if (!name_resolver.resolve_name(fname_idx, name_buf)) {
                 continue;
             }
-            const auto pos = read_actor_location(*actor_ptr, off);
+            if (!is_priority_gameplay_actor(name_buf.data())) {
+                continue;
+            }
+            const auto pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
             if (!pos.has_value()) {
                 continue;
             }
             const float dist_sq = origin.dist_squared(*pos);
-            if (dist_sq <= max_dist_sq) {
+            if (std::isfinite(dist_sq) && dist_sq <= max_dist_sq) {
                 out_snapshots[collected++] = EntitySnapshot{
                     .actor_address   = *actor_ptr,
-                    .fname_id        = *fname_idx,
+                    .fname_id        = fname_idx,
                     .world_pos       = *pos,
                     .distance_meters = std::sqrt(dist_sq) * 0.01f
                 };
@@ -290,10 +483,38 @@ public:
 };
 
 // ============================================================================
-// 4. LocalPlayerNameController (Bounded In-Place UTF-16 FString Override)
+// 4. LocalPlayerNameController (Bounded In-Place UTF-16 FString Reader & Override)
 // ============================================================================
 class INSTRUMENT_LOCAL LocalPlayerNameController {
 public:
+    static bool read_local_name(
+        uintptr_t player_state_addr,
+        const EngineOffsets& off,
+        std::span<char> out_utf8
+    ) noexcept {
+        if (player_state_addr == 0 || out_utf8.size() < 2U) {
+            return false;
+        }
+        const uintptr_t fstring_addr = player_state_addr + off.player_name_private;
+        const auto fstr = mem::read<TArrayHeader>(fstring_addr);
+        if (!fstr.has_value() || fstr->data_ptr == 0 || fstr->count <= 1) {
+            return false;
+        }
+        const size_t char_count = static_cast<size_t>(fstr->count) - 1U;
+        std::array<char16_t, 64> u16_buf{};
+        const size_t clamped = std::min({char_count, u16_buf.size() - 1U, out_utf8.size() - 1U});
+        std::span<uint8_t> raw_slice{reinterpret_cast<uint8_t*>(u16_buf.data()), clamped * sizeof(char16_t)};
+        if (InProcessMemory::safe_read(fstr->data_ptr, raw_slice) != Status::Ok) {
+            return false;
+        }
+        for (size_t i = 0; i < clamped; ++i) {
+            const char16_t ch = u16_buf[i];
+            out_utf8[i] = (ch >= 0x20 && ch <= 0x7E) ? static_cast<char>(ch) : '?';
+        }
+        out_utf8[clamped] = '\0';
+        return clamped > 0;
+    }
+
     static Status override_local_name(
         uintptr_t player_state_addr,
         const EngineOffsets& off,
@@ -325,6 +546,23 @@ public:
         }
         const int32_t new_count = static_cast<int32_t>(clamped_len + 1U);
         return mem::write_data<int32_t>(fstring_addr + offsetof(TArrayHeader, count), new_count);
+    }
+
+    static Status override_local_name_utf8(
+        uintptr_t player_state_addr,
+        const EngineOffsets& off,
+        std::string_view new_name_utf8
+    ) noexcept {
+        if (player_state_addr == 0 || new_name_utf8.empty()) {
+            return Status::InvalidArgument;
+        }
+        std::array<char16_t, 64> u16_buf{};
+        const size_t len = std::min(new_name_utf8.size(), u16_buf.size() - 1U);
+        for (size_t i = 0; i < len; ++i) {
+            u16_buf[i] = static_cast<char16_t>(static_cast<unsigned char>(new_name_utf8[i]));
+        }
+        u16_buf[len] = u'\0';
+        return override_local_name(player_state_addr, off, std::u16string_view{u16_buf.data(), len});
     }
 };
 } // namespace ue4
@@ -400,7 +638,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         return;
     }
     const auto& off = g_state.offsets;
-    const uintptr_t gnamepool_abs = base + off.gnamepool_rva;
+    const uintptr_t gnamepool_abs     = base + off.gnamepool_rva;
+    const uintptr_t guobjectarray_abs = base + off.guobjectarray_rva;
     const ue4::GNamePoolResolver name_pool{gnamepool_abs};
 
     // Verify FName(0) == "None" once GNamePool is initialized by the engine
@@ -416,10 +655,15 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
-    // 1. Resolve UWorld pointer safely
+    // 1. Resolve UWorld pointer safely; if transitioning or invalid, clear HUD match state
     const uintptr_t gworld_abs = base + off.gworld_rva;
     const auto uworld = mem::read<uintptr_t>(gworld_abs);
-    if (!uworld.has_value() || *uworld == 0) {
+    if (!uworld.has_value() || !InProcessMemory::IsValidPtr(*uworld, 0x420U)) {
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud_data.match_active = false;
+        hud_data.node_count   = 0;
+        pthread_mutex_unlock(&hud_data.mutex);
         return;
     }
 
@@ -433,7 +677,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         g_state.last_logged_uworld = *uworld;
         g_state.last_logged_ulevel = ulevel.value_or(0ULL);
         int32_t actor_count = 0;
-        if (ulevel.has_value() && *ulevel != 0) {
+        if (ulevel.has_value() && InProcessMemory::IsValidPtr(*ulevel, 0xB0U)) {
             if (const auto arr = mem::read<ue4::TArrayHeader>(*ulevel + off.actor_array)) {
                 actor_count = arr->count;
             }
@@ -447,29 +691,91 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         );
     }
 
-    // 2. Traverse UWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController -> AcknowledgedPawn
-    uintptr_t    local_pawn      = 0;
-    uintptr_t    local_player_st = 0;
-    ue4::FVector local_origin{};
-    if (game_instance.has_value() && *game_instance != 0) {
+    // 2. Traverse UWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController -> AcknowledgedPawn / PlayerCameraManager
+    uintptr_t       local_pawn          = 0;
+    uintptr_t       local_player_st     = 0;
+    ue4::FVector    local_origin{};
+    hud::CameraView cam_view{};
+    float           cur_walk_speed      = 600.0f;
+    float           cur_max_accel       = 2048.0f;
+    float           cur_jump_z          = 420.0f;
+    float           cur_time_scale      = 1.0f;
+
+    if (game_instance.has_value() && InProcessMemory::IsValidPtr(*game_instance, 0x50U)) {
         const auto lp_array = mem::read<ue4::TArrayHeader>(*game_instance + off.local_players_array);
-        if (lp_array.has_value() && lp_array->data_ptr != 0 && lp_array->count > 0) {
+        if (lp_array.has_value() &&
+            InProcessMemory::IsValidPtr(lp_array->data_ptr, sizeof(uintptr_t)) &&
+            lp_array->count > 0 && lp_array->count <= 16)
+        {
             const auto first_lp = mem::read<uintptr_t>(lp_array->data_ptr);
-            if (first_lp.has_value() && *first_lp != 0) {
+            if (first_lp.has_value() && InProcessMemory::IsValidPtr(*first_lp, 0x48U)) {
                 const auto pc = mem::read<uintptr_t>(*first_lp + off.player_controller);
-                if (pc.has_value() && *pc != 0) {
+                if (pc.has_value() &&
+                    ue4::SpatialAndKinematicPipeline::validate_live_uobject(*pc, guobjectarray_abs, off, nullptr))
+                {
+                    // Read PlayerCameraManager (+0x2D0) -> CameraCachePrivate (+0x1AF0) -> POV (+0x10 / +0x1C / +0x28)
+                    if (const auto cam_mgr = mem::read<uintptr_t>(*pc + off.player_camera_manager);
+                        cam_mgr.has_value() &&
+                        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*cam_mgr, guobjectarray_abs, off, nullptr))
+                    {
+                        if (const auto pov_loc = mem::read<ue4::FVector>(*cam_mgr + off.pov_location)) {
+                            if (std::isfinite(pov_loc->x) && std::isfinite(pov_loc->y) && std::isfinite(pov_loc->z)) {
+                                cam_view.location = {pov_loc->x, pov_loc->y, pov_loc->z};
+                            }
+                        }
+                        if (const auto pov_rot = mem::read<hud::Rotator>(*cam_mgr + off.pov_rotation)) {
+                            if (std::isfinite(pov_rot->pitch) && std::isfinite(pov_rot->yaw) && std::isfinite(pov_rot->roll)) {
+                                cam_view.rotation = *pov_rot;
+                            }
+                        }
+                        if (const auto pov_fov = mem::read<float>(*cam_mgr + off.pov_fov)) {
+                            if (std::isfinite(*pov_fov)) {
+                                cam_view.fov = *pov_fov;
+                            }
+                        }
+                    }
+
                     const auto pawn = mem::read<uintptr_t>(*pc + off.acknowledged_pawn);
-                    if (pawn.has_value() && *pawn != 0) {
-                        local_pawn = *pawn;
-                        if (const auto loc = ue4::SpatialAndKinematicPipeline::read_actor_location(local_pawn, off)) {
+                    if (pawn.has_value() &&
+                        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*pawn, guobjectarray_abs, off, nullptr))
+                    {
+                        if (const auto loc = ue4::SpatialAndKinematicPipeline::read_actor_location(*pawn, guobjectarray_abs, off)) {
+                            local_pawn   = *pawn;
                             local_origin = *loc;
                         }
-                        if (const auto ps = mem::read<uintptr_t>(local_pawn + off.player_state)) {
-                            local_player_st = *ps;
+                        if (local_pawn != 0) {
+                            if (const auto td = mem::read<float>(local_pawn + off.custom_time_dilation)) {
+                                if (std::isfinite(*td)) {
+                                    cur_time_scale = *td;
+                                }
+                            }
+                            if (const auto move_comp = mem::read<uintptr_t>(local_pawn + off.character_movement);
+                                move_comp.has_value() &&
+                                ue4::SpatialAndKinematicPipeline::validate_live_uobject(*move_comp, guobjectarray_abs, off, nullptr))
+                            {
+                                if (const auto ws = mem::read<float>(*move_comp + off.max_walk_speed)) {
+                                    if (std::isfinite(*ws)) cur_walk_speed = *ws;
+                                }
+                                if (const auto ma = mem::read<float>(*move_comp + off.max_acceleration)) {
+                                    if (std::isfinite(*ma)) cur_max_accel = *ma;
+                                }
+                                if (const auto jz = mem::read<float>(*move_comp + off.jump_z_velocity)) {
+                                    if (std::isfinite(*jz)) cur_jump_z = *jz;
+                                }
+                            }
+                            if (const auto ps = mem::read<uintptr_t>(local_pawn + off.player_state);
+                                ps.has_value() &&
+                                ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ps, guobjectarray_abs, off, nullptr))
+                            {
+                                local_player_st = *ps;
+                            }
                         }
                     }
                     if (local_player_st == 0) {
-                        if (const auto ctrl_ps = mem::read<uintptr_t>(*pc + off.controller_player_state)) {
+                        if (const auto ctrl_ps = mem::read<uintptr_t>(*pc + off.controller_player_state);
+                            ctrl_ps.has_value() &&
+                            ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ctrl_ps, guobjectarray_abs, off, nullptr))
+                        {
                             local_player_st = *ctrl_ps;
                         }
                     }
@@ -478,33 +784,103 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
-    // 3. Execute kinematic parameter tuning and LocalPlayerNameController
-    if (local_pawn != 0) {
-        (void)ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
-            local_pawn,
-            off,
-            600.0f,
-            2048.0f
-        );
-    }
+    std::array<char, 64> current_player_name{};
     if (local_player_st != 0) {
-        (void)ue4::LocalPlayerNameController::override_local_name(
+        (void)ue4::LocalPlayerNameController::read_local_name(
             local_player_st,
             off,
-            u"DiagNode_AArch64"
+            current_player_name
         );
     }
 
-    // 4. Traverse UWorld -> PersistentLevel -> Actors array and filter spatially
-    if (ulevel.has_value() && *ulevel != 0) {
-        std::array<ue4::EntitySnapshot, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> snapshots{};
-        (void)ue4::SpatialAndKinematicPipeline::collect_nearby_entities(
+    // 3. Traverse UWorld -> PersistentLevel -> Actors array and convert to RawEntitySample[64]
+    std::array<ue4::EntitySnapshot, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> snapshots{};
+    std::array<std::array<char, 64>, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> resolved_names{};
+    std::array<hud::adapter::RawEntitySample, ue4::SpatialAndKinematicPipeline::kMaxSnapshots> raw_samples{};
+    size_t collected_count = 0;
+
+    if (ulevel.has_value() &&
+        local_pawn != 0 &&
+        ue4::SpatialAndKinematicPipeline::validate_live_uobject(*ulevel, guobjectarray_abs, off, nullptr))
+    {
+        collected_count = ue4::SpatialAndKinematicPipeline::collect_nearby_entities(
             *ulevel,
+            guobjectarray_abs,
+            local_pawn,
             local_origin,
-            250.0f,
+            1000.0f,
             off,
             name_pool,
             snapshots
+        );
+
+        for (size_t i = 0; i < collected_count; ++i) {
+            if (!name_pool.resolve_name(snapshots[i].fname_id, resolved_names[i])) {
+                resolved_names[i][0] = '\0';
+            }
+            raw_samples[i] = hud::adapter::RawEntitySample{
+                .x      = snapshots[i].world_pos.x,
+                .y      = snapshots[i].world_pos.y,
+                .z      = snapshots[i].world_pos.z,
+                .dist_m = snapshots[i].distance_meters,
+                .name   = resolved_names[i].data()
+            };
+        }
+    }
+
+    // 4. Synchronize camera, entities, player name, and kinematics with Dear ImGui HUD
+    bool  should_apply_kinematics  = false;
+    float target_walk_speed        = cur_walk_speed;
+    float target_accel             = cur_max_accel;
+    float target_jump_z            = cur_jump_z;
+    float target_time_scale        = cur_time_scale;
+    bool  should_apply_player_name = false;
+    std::array<char, 64> target_player_name{};
+
+    hud::adapter::sync_telemetry_to_hud(
+        cam_view.location.x,
+        cam_view.location.y,
+        cam_view.location.z,
+        cam_view.rotation.pitch,
+        cam_view.rotation.yaw,
+        cam_view.rotation.roll,
+        cam_view.fov,
+        raw_samples.data(),
+        collected_count,
+        cur_walk_speed,
+        cur_max_accel,
+        cur_jump_z,
+        cur_time_scale,
+        &should_apply_kinematics,
+        &target_walk_speed,
+        &target_accel,
+        &target_jump_z,
+        &target_time_scale,
+        current_player_name.data(),
+        &should_apply_player_name,
+        target_player_name.data(),
+        target_player_name.size()
+    );
+
+    if (should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
+        if (ue4::SpatialAndKinematicPipeline::validate_live_uobject(local_player_st, guobjectarray_abs, off, nullptr)) {
+            (void)ue4::LocalPlayerNameController::override_local_name_utf8(
+                local_player_st,
+                off,
+                target_player_name.data()
+            );
+        }
+    }
+
+    if (should_apply_kinematics && local_pawn != 0) {
+        (void)ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
+            local_pawn,
+            guobjectarray_abs,
+            off,
+            target_walk_speed,
+            target_accel,
+            target_jump_z,
+            target_time_scale
         );
     }
 }
@@ -519,7 +895,14 @@ INSTRUMENT_LOCAL static void* telemetry_worker_entry(void* /*arg*/) noexcept {
             std::array<uint8_t, sizeof(Elf64_Ehdr)> hdr{};
             if (InProcessMemory::safe_read(mod->base_address, hdr) == Status::Ok) {
                 g_state.ue4_module = *mod;
+                const uintptr_t lib_base = g_state.ue4_module.base_address;
                 log_resolved_engine_anchors();
+                if (egl_bridge::install_egl_bridge(lib_base)) {
+                    DIAG_LOGI("EGL PLT/GOT bridge installed on libUE4.so @ 0x%llX",
+                              static_cast<unsigned long long>(lib_base));
+                } else {
+                    DIAG_LOGW("EGL PLT/GOT bridge did not find eglSwapBuffers slot in libUE4.so");
+                }
                 break;
             }
         }

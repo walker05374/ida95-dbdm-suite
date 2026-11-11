@@ -9,17 +9,31 @@ $ErrorActionPreference = "Stop"
 if (Test-Path "C:\Program Files\CMake\bin") {
     $env:PATH = "C:\Program Files\CMake\bin;$env:PATH"
 }
+if (Test-Path "E:\android-sdk\cmake\3.22.1\bin") {
+    $env:PATH = "E:\android-sdk\cmake\3.22.1\bin;$env:PATH"
+}
 if (Test-Path "$PSScriptRoot\tools_bin") {
     $env:PATH = "$PSScriptRoot\tools_bin;$env:PATH"
 }
 
 if (-not $env:ANDROID_NDK_HOME) {
-    $DefaultNdk = "C:\Android\ndk\android-ndk-r27c"
-    if (Test-Path $DefaultNdk) {
-        $env:ANDROID_NDK_HOME = $DefaultNdk
-    } else {
+    $CandidateNdks = @(
+        "C:\Android\ndk\android-ndk-r27c",
+        "E:\android-sdk\ndk\27.2.12479018"
+    )
+    foreach ($Candidate in $CandidateNdks) {
+        if (Test-Path $Candidate) {
+            $env:ANDROID_NDK_HOME = $Candidate
+            break
+        }
+    }
+    if (-not $env:ANDROID_NDK_HOME) {
         throw "Variavel de ambiente ANDROID_NDK_HOME nao definida."
     }
+}
+
+if (Test-Path "E:\android-sdk\platform-tools") {
+    $env:PATH = "E:\android-sdk\platform-tools;$env:PATH"
 }
 
 $BuildDir  = "build-arm64"
