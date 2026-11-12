@@ -1,0 +1,1364 @@
+
+[FClassParams] CamperHealthComponent @ 0x0EB3C678 | StaticClass=0x07609400 (Singleton=0x00000000) | SizeOf=0x0328 | Props=22 | Funcs=42
+  Prop[00] +0x00B8 : OnHealedDelegate (PropStruct=0x0EB3C198, GenFlags=0x1B)
+  Prop[01] +0x00C8 : OnInjuredBleedoutStarted (PropStruct=0x0EB3C1C8, GenFlags=0x1B)
+  Prop[02] +0x00D8 : OnInjuredBleedoutEnded (PropStruct=0x0EB3C1F8, GenFlags=0x1B)
+  Prop[03] +0x00E8 : OnInjuredBleedoutKO (PropStruct=0x0EB3C228, GenFlags=0x1B)
+  Prop[04] +0x0110 : OnDamageStateChanged (PropStruct=0x0EB3C258, GenFlags=0x1B)
+  Prop[05] +0x0120 : OnDamageStateChangedCosmetic (PropStruct=0x0EB3C288, GenFlags=0x1B)
+  Prop[06] +0x0148 : _bleedoutBaseDuration (PropStruct=0x0EB3C2B8, GenFlags=0x19)
+  Prop[07] +0x0170 : _inInjuredBleedOut (PropStruct=0x0EB3C2E8, GenFlags=0x19) [RepNotify=OnRep_InInjuredBleedOut]
+  Prop[08] +0x01A0 : _bleedOutTimer (PropStruct=0x0EB3C318, GenFlags=0x19)
+  Prop[09] +0x0001 : _canBleedout (PropStruct=0x0EB3C348, GenFlags=0x2C)
+  Prop[10] +0x01EC : _currentHealthStateCount (PropStruct=0x0EB3C380, GenFlags=0x03)
+  Prop[11] +0x0001 : _isDead (PropStruct=0x0EB3C3A8, GenFlags=0x2C)
+  Prop[12] +0x01F4 : _numHealthyHeals (PropStruct=0x0EB3C3E0, GenFlags=0x03)
+  Prop[13] +0x01F8 : _dyingTimer (PropStruct=0x0EB3C408, GenFlags=0x19)
+  Prop[14] +0x0248 : _healFromDyingChargeable (PropStruct=0x0EB3C438, GenFlags=0x12)
+  Prop[15] +0x0250 : _healFromInjuredChargeable (PropStruct=0x0EB3C468, GenFlags=0x12)
+  Prop[16] +0x0258 : _mendChargeable (PropStruct=0x0EB3C498, GenFlags=0x12)
+  Prop[17] +0x0260 : _injuredBleedoutInstigator (PropStruct=0x0EB3C4C8, GenFlags=0x12)
+  Prop[18] +0x0001 : _sacrificed (PropStruct=0x0EB3C4F8, GenFlags=0x2C)
+  Prop[19] +0x0001 : _isDeadByLeaving (PropStruct=0x0EB3C530, GenFlags=0x2C)
+  Prop[20] +0x0300 : _lastHealResult (PropStruct=0x0EB3C568, GenFlags=0x19)
+  Prop[21] +0x0318 : _lastHealthState (PropStruct=0x0EB3C598, GenFlags=0x19)
+  Func[00] ApplyHeal -> Z_Construct=0x076094C0 | FFunctionParams=0x0EB3A358 | exec=0x00000000 | native=0x00000000
+  Func[01] Authority_ApplyDamage -> Z_Construct=0x0760950C | FFunctionParams=0x0EB3A410 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_ApplyDeepWound -> Z_Construct=0x07609558 | FFunctionParams=0x0EB3A4C8 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_ApplyDoubleDamage -> Z_Construct=0x076095A4 | FFunctionParams=0x0EB3A580 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_ApplyHeal -> Z_Construct=0x076095F0 | FFunctionParams=0x0EB3A668 | exec=0x00000000 | native=0x00000000
+  Func[05] Authority_EndInjuredBleedout -> Z_Construct=0x0760963C | FFunctionParams=0x0EB3A6B0 | exec=0x00000000 | native=0x00000000
+  Func[06] Authority_OnHealthBarCharged -> Z_Construct=0x07609694 | FFunctionParams=0x0EB3A7A8 | exec=0x00000000 | native=0x00000000
+  Func[07] Authority_OnMendChargeCompletionStateChanged -> Z_Construct=0x076096EC | FFunctionParams=0x0EB3A8A0 | exec=0x00000000 | native=0x00000000
+  Func[08] Authority_OnSurvivorRemoved -> Z_Construct=0x07609738 | FFunctionParams=0x0EB3A920 | exec=0x00000000 | native=0x00000000
+  Func[09] Authority_SetDamageState -> Z_Construct=0x0760979C | FFunctionParams=0x0EB3AA58 | exec=0x00000000 | native=0x00000000
+  Func[10] Authority_TryGrantScoresOnChargeApplied -> Z_Construct=0x076097F4 | FFunctionParams=0x0EB3ABA8 | exec=0x00000000 | native=0x00000000
+  Func[11] CanBecomeHealthy -> Z_Construct=0x0760984C | FFunctionParams=0x0EB3AC30 | exec=0x00000000 | native=0x00000000
+  Func[12] CanBeHealed -> Z_Construct=0x076098A4 | FFunctionParams=0x0EB3ACB8 | exec=0x00000000 | native=0x00000000
+  Func[13] CanBeHealedFromInjured -> Z_Construct=0x076098FC | FFunctionParams=0x0EB3AD40 | exec=0x00000000 | native=0x00000000
+  Func[14] CanHealSelf -> Z_Construct=0x07609954 | FFunctionParams=0x0EB3ADC8 | exec=0x00000000 | native=0x00000000
+  Func[15] GetCurrentHealthStateCount -> Z_Construct=0x076099A0 | FFunctionParams=0x0EB3AE40 | exec=0x00000000 | native=0x00000000
+  Func[16] GetCurrentHPSlot -> Z_Construct=0x076099EC | FFunctionParams=0x0EB3AEC0 | exec=0x00000000 | native=0x00000000
+  Func[17] GetCurrentTotalHealthBarPercent -> Z_Construct=0x07609A38 | FFunctionParams=0x0EB3AF38 | exec=0x00000000 | native=0x00000000
+  Func[18] GetDamageState -> Z_Construct=0x07609A84 | FFunctionParams=0x0EB3AFF0 | exec=0x00000000 | native=0x00000000
+  Func[19] GetPercentDyingTimer -> Z_Construct=0x07609AD0 | FFunctionParams=0x0EB3B068 | exec=0x00000000 | native=0x00000000
+  Func[20] GetPercentInjuredBleedoutTimer -> Z_Construct=0x07609B1C | FFunctionParams=0x0EB3B0E0 | exec=0x00000000 | native=0x00000000
+  Func[21] IncreaseHPSlotSize -> Z_Construct=0x07609B68 | FFunctionParams=0x0EB3B158 | exec=0x00000000 | native=0x00000000
+  Func[22] IsDead -> Z_Construct=0x07609BC0 | FFunctionParams=0x0EB3B1E0 | exec=0x00000000 | native=0x00000000
+  Func[23] IsDeadByLeaving -> Z_Construct=0x07609C18 | FFunctionParams=0x0EB3B268 | exec=0x00000000 | native=0x00000000
+  Func[24] IsDyingTimerExpired -> Z_Construct=0x07609C70 | FFunctionParams=0x0EB3B2F0 | exec=0x00000000 | native=0x00000000
+  Func[25] IsHealthy -> Z_Construct=0x07609CC8 | FFunctionParams=0x0EB3B378 | exec=0x00000000 | native=0x00000000
+  Func[26] IsInInjuredBleedout -> Z_Construct=0x07609D20 | FFunctionParams=0x0EB3B400 | exec=0x00000000 | native=0x00000000
+  Func[27] IsInjured -> Z_Construct=0x07609D78 | FFunctionParams=0x0EB3B488 | exec=0x00000000 | native=0x00000000
+  Func[28] IsInjuredBleedoutTimerExpired -> Z_Construct=0x07609DD0 | FFunctionParams=0x0EB3B510 | exec=0x00000000 | native=0x00000000
+  Func[29] IsKO -> Z_Construct=0x07609E28 | FFunctionParams=0x0EB3B598 | exec=0x00000000 | native=0x00000000
+  Func[30] Multicast_OnHealed -> Z_Construct=0x07609E74 | FFunctionParams=0x0EB3B618 | exec=0x00000000 | native=0x00000000
+  Func[31] Multicast_OnInjuredBleedoutKO -> Z_Construct=0x07609EC0 | FFunctionParams=0x0EB3B698 | exec=0x00000000 | native=0x00000000
+  Func[32] Multicast_OnSurvivorGainedHealthStateByOthersEvents -> Z_Construct=0x07609F18 | FFunctionParams=0x0EB3B840 | exec=0x00000000 | native=0x00000000
+  Func[33] Multicast_SetCurrentHealthStateCount -> Z_Construct=0x07609F70 | FFunctionParams=0x0EB3B8F8 | exec=0x00000000 | native=0x00000000
+  Func[34] Multicast_SetDamageState -> Z_Construct=0x07609FD4 | FFunctionParams=0x0EB3BA30 | exec=0x00000000 | native=0x00000000
+  Func[35] Multicast_SetHealthStateFromDamageState -> Z_Construct=0x0760A02C | FFunctionParams=0x0EB3BB28 | exec=0x00000000 | native=0x00000000
+  Func[36] OnDamageStateChangedCosmetic__DelegateSignature -> Z_Construct=0x0760740C | FFunctionParams=0x0EB39DF0 | exec=0x00000000 | native=0x00000000
+  Func[37] OnImmobilizedStateChanged -> Z_Construct=0x0760A078 | FFunctionParams=0x0EB3BC50 | exec=0x00000000 | native=0x00000000
+  Func[38] OnRep_InInjuredBleedOut -> Z_Construct=0x0760A0C4 | FFunctionParams=0x0EB3BC98 | exec=0x00000000 | native=0x00000000
+  Func[39] ResetDyingTime -> Z_Construct=0x0760A110 | FFunctionParams=0x0EB3BD10 | exec=0x00000000 | native=0x00000000
+  Func[40] SetCanBleedout -> Z_Construct=0x0760A168 | FFunctionParams=0x0EB3BD98 | exec=0x00000000 | native=0x00000000
+  Func[41] SetDead -> Z_Construct=0x0760A1D8 | FFunctionParams=0x0EB3BEA0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] CamperPlayer @ 0x0EB46148 | StaticClass=0x0761E5A8 (Singleton=0x00000000) | SizeOf=0x1B90 | Props=96 | Funcs=184
+  Prop[00] +0x14E8 : OnHookedStateChanged (PropStruct=0x0EB44C98, GenFlags=0x1B)
+  Prop[01] +0x14F8 : OnGuidedStateChanged (PropStruct=0x0EB44CC8, GenFlags=0x1B)
+  Prop[02] +0x1508 : OnPickedUpDelegate (PropStruct=0x0EB44CF8, GenFlags=0x1B)
+  Prop[03] +0x1518 : OnPickedUpEndDelegate (PropStruct=0x0EB44D28, GenFlags=0x1B)
+  Prop[04] +0x1528 : OnHPSlotChanged (PropStruct=0x0EB44D58, GenFlags=0x1B)
+  Prop[05] +0x1550 : OnImmobilizeStateChanged (PropStruct=0x0EB44D88, GenFlags=0x1B)
+  Prop[06] +0x1590 : OnHookEscapeFailedCosmetic (PropStruct=0x0EB44DB8, GenFlags=0x1B)
+  Prop[07] +0x15A0 : OnOldWiggleInputDelegate (PropStruct=0x0EB44DE8, GenFlags=0x1B)
+  Prop[08] +0x15B0 : InputMashCount (PropStruct=0x0EB44E18, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[09] +0x15B4 : InputMashDecayTime (PropStruct=0x0EB44E40, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[10] +0x15B8 : ReverseBearTrapAttachSocket (PropStruct=0x0EB44E68, GenFlags=0x14)
+  Prop[11] +0x15C4 : StruggleMashDelay (PropStruct=0x0EB44E90, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[12] +0x0001 : isBeingDissolved (PropStruct=0x0EB44EB8, GenFlags=0x2C)
+  Prop[13] +0x0001 : IsWiggleProgressionAllowed (PropStruct=0x0EB44EF0, GenFlags=0x2C)
+  Prop[14] +0x15CC : WiggleMashDelay (PropStruct=0x0EB44F28, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[15] +0x15D0 : FootprintAudibleRange (PropStruct=0x0EB44F50, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[16] +0x15D8 : StalkedComponent (PropStruct=0x0EB44F78, GenFlags=0x12)
+  Prop[17] +0x15E0 : CameraResetToleranceYaw (PropStruct=0x0EB44FA8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[18] +0x15E4 : CameraResetTolerancePitch (PropStruct=0x0EB44FD0, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[19] +0x15E8 : CameraRecenterOffsetYaw (PropStruct=0x0EB44FF8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[20] +0x15EC : CameraRecenterOffsetPitch (PropStruct=0x0EB45020, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[21] +0x0000 : UnderlyingType (PropStruct=0x0EB45048, GenFlags=0x00)
+  Prop[22] +0x15F0 : Gender (PropStruct=0x0EB45078, GenFlags=0x1E)
+  Prop[23] +0x15F8 : DropStaggerDuration (PropStruct=0x0EB450A8, GenFlags=0x12)
+  Prop[24] +0x1600 : DropStaggerMaxSpeed (PropStruct=0x0EB450D8, GenFlags=0x12)
+  Prop[25] +0x1608 : TimeforDeathWhileCrawling (PropStruct=0x0EB45108, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[26] +0x160C : TimeforDeathWhileHooked (PropStruct=0x0EB45130, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[27] +0x1610 : SecondsUntilFootprintTrigger (PropStruct=0x0EB45158, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[28] +0x0001 : TriggerAfflictionHUDIntro (PropStruct=0x0EB45180, GenFlags=0x2C)
+  Prop[29] +0x1618 : FlashViewChangeCurve (PropStruct=0x0EB451B8, GenFlags=0x12)
+  Prop[30] +0x1634 : flashLightStartUsePitchOffset (PropStruct=0x0EB451E8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[31] +0x1638 : flashLightStartUseOffsetDuration (PropStruct=0x0EB45210, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[32] +0x1720 : _stillnessTracker (PropStruct=0x0EB45238, GenFlags=0x12)
+  Prop[33] +0x1728 : PartiallyHiddenStillnessThreshold (PropStruct=0x0EB45268, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[34] +0x1730 : _escape (PropStruct=0x0EB45290, GenFlags=0x12)
+  Prop[35] +0x1738 : _overlappingEscape (PropStruct=0x0EB452C0, GenFlags=0x12)
+  Prop[36] +0x1740 : ProximityZone (PropStruct=0x0EB452F0, GenFlags=0x12)
+  Prop[37] +0x1760 : _dropStaggerTimer (PropStruct=0x0EB45320, GenFlags=0x19)
+  Prop[38] +0x17B0 : SlashableZone (PropStruct=0x0EB45350, GenFlags=0x12)
+  Prop[39] +0x17B8 : HookSlashableZone (PropStruct=0x0EB45380, GenFlags=0x12)
+  Prop[40] +0x17C0 : _terrorRadiusReceiverComponent (PropStruct=0x0EB453B0, GenFlags=0x12)
+  Prop[41] +0x17C8 : CrouchCapsuleHalfHeight (PropStruct=0x0EB453E0, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[42] +0x17CC : IKOffsetRightFoot (PropStruct=0x0EB45408, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[43] +0x17D0 : IKOffsetLeftFoot (PropStruct=0x0EB45430, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[44] +0x17D8 : _camperSensor (PropStruct=0x0EB45458, GenFlags=0x12)
+  Prop[45] +0x17E0 : _surviveTimerScoreComponent (PropStruct=0x0EB45488, GenFlags=0x12)
+  Prop[46] +0x0000 : _foundCampers (PropStruct=0x0EB454B8, GenFlags=0x12)
+  Prop[47] +0x1800 : _foundCampers (PropStruct=0x0EB454E8, GenFlags=0x16)
+  Prop[48] +0x0000 : _potentialSaviors (PropStruct=0x0EB45518, GenFlags=0x12)
+  Prop[49] +0x1810 : _potentialSaviors (PropStruct=0x0EB45548, GenFlags=0x16)
+  Prop[50] +0x1838 : _healthComponent (PropStruct=0x0EB45578, GenFlags=0x12)
+  Prop[51] +0x1840 : _hpSlot01 (PropStruct=0x0EB455A8, GenFlags=0x12)
+  Prop[52] +0x1848 : _hpSlot02 (PropStruct=0x0EB455D8, GenFlags=0x12)
+  Prop[53] +0x1850 : _mendChargeable (PropStruct=0x0EB45608, GenFlags=0x12)
+  Prop[54] +0x1858 : _bloodTrailSettings (PropStruct=0x0EB45638, GenFlags=0x12)
+  Prop[55] +0x1860 : _bloodTrailComponent (PropStruct=0x0EB45668, GenFlags=0x12)
+  Prop[56] +0x1868 : _carryEscapeProgress (PropStruct=0x0EB45698, GenFlags=0x12)
+  Prop[57] +0x1870 : _killerInstinctComponent (PropStruct=0x0EB456C8, GenFlags=0x12)
+  Prop[58] +0x1878 : _cameraAttachment (PropStruct=0x0EB456F8, GenFlags=0x12)
+  Prop[59] +0x1880 : _charmSpawnerComponent (PropStruct=0x0EB45728, GenFlags=0x12)
+  Prop[60] +0x1888 : _hookableComponent (PropStruct=0x0EB45758, GenFlags=0x12)
+  Prop[61] +0x1890 : _hookAntiCampingComponent (PropStruct=0x0EB45788, GenFlags=0x12)
+  Prop[62] +0x1898 : _struggleComponent (PropStruct=0x0EB457B8, GenFlags=0x12)
+  Prop[63] +0x18A0 : _protectionHitComponent (PropStruct=0x0EB457E8, GenFlags=0x12)
+  Prop[64] +0x18A8 : _screamComponent (PropStruct=0x0EB45818, GenFlags=0x12)
+  Prop[65] +0x18B0 : _positionRecorder (PropStruct=0x0EB45848, GenFlags=0x12)
+  Prop[66] +0x18B8 : _blindFxComponent (PropStruct=0x0EB45878, GenFlags=0x12)
+  Prop[67] +0x18C0 : _extraAnimationMontage (PropStruct=0x0EB458A8, GenFlags=0x12)
+  Prop[68] +0x0001 : _runInputPressed (PropStruct=0x0EB458D8, GenFlags=0x2C)
+  Prop[69] +0x0001 : _trapIndicatorActive (PropStruct=0x0EB45910, GenFlags=0x2C)
+  Prop[70] +0x1A0C : _revealedSurvivor (PropStruct=0x0EB45948, GenFlags=0x0E)
+  Prop[71] +0x1A18 : _camperEndGameComponent (PropStruct=0x0EB45978, GenFlags=0x12)
+  Prop[72] +0x1A20 : _noOcclusionAkComponent (PropStruct=0x0EB459A8, GenFlags=0x12)
+  Prop[73] +0x1A28 : _attenuationAkComponent (PropStruct=0x0EB459D8, GenFlags=0x12)
+  Prop[74] +0x1A54 : _injuredGruntDistance (PropStruct=0x0EB45A08, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[75] +0x1A58 : _crawlingGruntDistance (PropStruct=0x0EB45A30, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[76] +0x1A5C : _trappedGruntDistance (PropStruct=0x0EB45A58, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[77] +0x1A60 : _runningGruntDistance (PropStruct=0x0EB45A80, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[78] +0x1A64 : _fallingGruntDistance (PropStruct=0x0EB45AA8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[79] +0x1A68 : _guidedGruntDistance (PropStruct=0x0EB45AD0, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[80] +0x1A6C : _hookedGruntDistance (PropStruct=0x0EB45AF8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[81] +0x0001 : _isHealingKOCamper (PropStruct=0x0EB45B20, GenFlags=0x2C)
+  Prop[82] +0x0001 : _isSkillCheckFailed (PropStruct=0x0EB45B58, GenFlags=0x2C)
+  Prop[83] +0x0001 : _isBeingSacrificed (PropStruct=0x0EB45B90, GenFlags=0x2C)
+  Prop[84] +0x0001 : _isWiggleProgressionAllowed (PropStruct=0x0EB45BC8, GenFlags=0x2C)
+  Prop[85] +0x1AD8 : _isCrowAttached (PropStruct=0x0EB45C00, GenFlags=0x19)
+  Prop[86] +0x1B18 : _meshMover (PropStruct=0x0EB45C30, GenFlags=0x12)
+  Prop[87] +0x1B20 : _antiCampSelfUnhookMeterComponent (PropStruct=0x0EB45C60, GenFlags=0x0E)
+  Prop[88] +0x1B28 : _carriedMovementComponent (PropStruct=0x0EB45C90, GenFlags=0x12)
+  Prop[89] +0x1B30 : _sprintEffect (PropStruct=0x0EB45CC0, GenFlags=0x12) [RepNotify=OnRep_SprintEffect]
+  Prop[90] +0x0001 : _isSpooked (PropStruct=0x0EB45CF0, GenFlags=0x2C)
+  Prop[91] +0x0001 : _isGassed (PropStruct=0x0EB45D28, GenFlags=0x2C)
+  Prop[92] +0x0001 : _isSacrificeStruggling (PropStruct=0x0EB45D60, GenFlags=0x2C)
+  Prop[93] +0x0000 : _revealedCamperMap (PropStruct=0x0EB45D98, GenFlags=0x03)
+  Prop[94] +0x1B70 : _revealedCamperMap (PropStruct=0x0EB45DC0, GenFlags=0x16)
+  Prop[95] +0x0001 : _isDisguised (PropStruct=0x0EB45DF0, GenFlags=0x2C)
+  Func[00] ActionInputPressed -> Z_Construct=0x0761E6B4 | FFunctionParams=0x0EB3E490 | exec=0x00000000 | native=0x00000000
+  Func[01] ActionInputReleased -> Z_Construct=0x0761E700 | FFunctionParams=0x0EB3E4D8 | exec=0x00000000 | native=0x00000000
+  Func[02] ActivateLocalPlayerExposedVFX -> Z_Construct=0x0761E74C | FFunctionParams=0x0EB3E520 | exec=0x00000000 | native=0x00000000
+  Func[03] ActivatePlayerExposedVFX -> Z_Construct=0x0761E798 | FFunctionParams=0x0EB3E568 | exec=0x00000000 | native=0x00000000
+  Func[04] AddBloodDecalToGK_Mori -> Z_Construct=0x0761E7E4 | FFunctionParams=0x0EB3E5B0 | exec=0x00000000 | native=0x00000000
+  Func[05] AddBloodDrippingToGK_Mori -> Z_Construct=0x0761E830 | FFunctionParams=0x0EB3E5F8 | exec=0x00000000 | native=0x00000000
+  Func[06] AddBloodDropsToLeftHand -> Z_Construct=0x0761E87C | FFunctionParams=0x0EB3E640 | exec=0x00000000 | native=0x00000000
+  Func[07] AddBloodDropsToRightHand -> Z_Construct=0x0761E8C8 | FFunctionParams=0x0EB3E688 | exec=0x00000000 | native=0x00000000
+  Func[08] AddToRevealedCamperMap -> Z_Construct=0x0761E9D4 | FFunctionParams=0x0EB3E708 | exec=0x00000000 | native=0x00000000
+  Func[09] AddUnlinkExceptTags -> Z_Construct=0x0761EA20 | FFunctionParams=0x0EB3E780 | exec=0x00000000 | native=0x00000000
+  Func[10] AttachToGuidingPlayer -> Z_Construct=0x0761EA6C | FFunctionParams=0x0EB3E7C8 | exec=0x00000000 | native=0x00000000
+  Func[11] Authority_DropItemAtLastSafePosition -> Z_Construct=0x0761EAB8 | FFunctionParams=0x0EB3E810 | exec=0x00000000 | native=0x00000000
+  Func[12] Authority_OnFailedStruggling -> Z_Construct=0x0761EB04 | FFunctionParams=0x0EB3E890 | exec=0x00000000 | native=0x00000000
+  Func[13] Authority_OnSlashed -> Z_Construct=0x0761EB50 | FFunctionParams=0x0EB3E910 | exec=0x00000000 | native=0x00000000
+  Func[14] Authority_SetImmobilized -> Z_Construct=0x0761EB9C | FFunctionParams=0x0EB3E9C8 | exec=0x00000000 | native=0x00000000
+  Func[15] CallOnDroppedByBearTrap -> Z_Construct=0x0761EBE8 | FFunctionParams=0x0EB3EA10 | exec=0x00000000 | native=0x00000000
+  Func[16] CanBeKilled -> Z_Construct=0x0761EC40 | FFunctionParams=0x0EB3EA98 | exec=0x00000000 | native=0x00000000
+  Func[17] CanBePickedUp -> Z_Construct=0x0761EC98 | FFunctionParams=0x0EB3EB20 | exec=0x00000000 | native=0x00000000
+  Func[18] CanBeShocked -> Z_Construct=0x0761ECF0 | FFunctionParams=0x0EB3EBA8 | exec=0x00000000 | native=0x00000000
+  Func[19] CanItemUseWhenInteracting -> Z_Construct=0x0761ED48 | FFunctionParams=0x0EB3EC30 | exec=0x00000000 | native=0x00000000
+  Func[20] CanRushQuietly -> Z_Construct=0x0761EDA0 | FFunctionParams=0x0EB3ECB8 | exec=0x00000000 | native=0x00000000
+  Func[21] CanStruggle -> Z_Construct=0x0761EDF8 | FFunctionParams=0x0EB3ED40 | exec=0x00000000 | native=0x00000000
+  Func[22] Client_OnSlashedOutOfTrap -> Z_Construct=0x0761EE44 | FFunctionParams=0x0EB3EDC0 | exec=0x00000000 | native=0x00000000
+  Func[23] ComputeBeartrapEscapeResult -> Z_Construct=0x0761EE9C | FFunctionParams=0x0EB3EE48 | exec=0x00000000 | native=0x00000000
+  Func[24] ComputeHookEscapeResult -> Z_Construct=0x0761EEF4 | FFunctionParams=0x0EB3EF08 | exec=0x00000000 | native=0x00000000
+  Func[25] ComputeInteractionSuccessPercentage -> Z_Construct=0x0761EF40 | FFunctionParams=0x0EB3EFB8 | exec=0x00000000 | native=0x00000000
+  Func[26] DBD_ActiveMove -> Z_Construct=0x0761EF98 | FFunctionParams=0x0EB3F040 | exec=0x00000000 | native=0x00000000
+  Func[27] DBD_ActiveRun -> Z_Construct=0x0761EFF0 | FFunctionParams=0x0EB3F0C8 | exec=0x00000000 | native=0x00000000
+  Func[28] DBD_AutoInteractionMash -> Z_Construct=0x0761F048 | FFunctionParams=0x0EB3F150 | exec=0x00000000 | native=0x00000000
+  Func[29] DBD_AutoLeftRightMash -> Z_Construct=0x0761F0A0 | FFunctionParams=0x0EB3F1D8 | exec=0x00000000 | native=0x00000000
+  Func[30] DBD_CheatEscaped -> Z_Construct=0x0761F0EC | FFunctionParams=0x0EB3F220 | exec=0x00000000 | native=0x00000000
+  Func[31] DBD_ForceRun -> Z_Construct=0x0761F144 | FFunctionParams=0x0EB3F2A8 | exec=0x00000000 | native=0x00000000
+  Func[32] DBD_LeaveParadise -> Z_Construct=0x0761F190 | FFunctionParams=0x0EB3F2F0 | exec=0x00000000 | native=0x00000000
+  Func[33] DBD_RunLocked -> Z_Construct=0x0761F1E8 | FFunctionParams=0x0EB3F378 | exec=0x00000000 | native=0x00000000
+  Func[34] DecalBlood_Puddles -> Z_Construct=0x0761F234 | FFunctionParams=0x0EB3F3C0 | exec=0x00000000 | native=0x00000000
+  Func[35] DetachFromGuidingPlayer -> Z_Construct=0x0761F280 | FFunctionParams=0x0EB3F408 | exec=0x00000000 | native=0x00000000
+  Func[36] DoSacrificialDissolve -> Z_Construct=0x0761F2CC | FFunctionParams=0x0EB3F450 | exec=0x00000000 | native=0x00000000
+  Func[37] Escape -> Z_Construct=0x0761F318 | FFunctionParams=0x0EB3F540 | exec=0x00000000 | native=0x00000000
+  Func[38] EscapeTutorial -> Z_Construct=0x0761F364 | FFunctionParams=0x0EB3F588 | exec=0x00000000 | native=0x00000000
+  Func[39] EventOnDeath -> Z_Construct=0x0761F3B0 | FFunctionParams=0x0EB3F5D0 | exec=0x00000000 | native=0x00000000
+  Func[40] GetAimPoint -> Z_Construct=0x0761F3FC | FFunctionParams=0x0EB3F650 | exec=0x00000000 | native=0x00000000
+  Func[41] GetAllEntityRenderRegions -> Z_Construct=0x0761F448 | FFunctionParams=0x0EB3F708 | exec=0x00000000 | native=0x00000000
+  Func[42] GetAttenuationAudioComponent -> Z_Construct=0x0761F494 | FFunctionParams=0x0EB3F788 | exec=0x00000000 | native=0x00000000
+  Func[43] GetBloodTrailComponent -> Z_Construct=0x0761F4E0 | FFunctionParams=0x0EB3F808 | exec=0x00000000 | native=0x00000000
+  Func[44] GetCameraAttachmentComponent -> Z_Construct=0x0761F52C | FFunctionParams=0x0EB3F888 | exec=0x00000000 | native=0x00000000
+  Func[45] GetCamperAnimInstance -> Z_Construct=0x0761F578 | FFunctionParams=0x0EB3F908 | exec=0x00000000 | native=0x00000000
+  Func[46] GetCamperData -> Z_Construct=0x0761F5C4 | FFunctionParams=0x0EB3F988 | exec=0x00000000 | native=0x00000000
+  Func[47] GetCamperStillnessComponent -> Z_Construct=0x0761F610 | FFunctionParams=0x0EB3FA08 | exec=0x00000000 | native=0x00000000
+  Func[48] GetChaseeCharacterComponent -> Z_Construct=0x0761F65C | FFunctionParams=0x0EB3FA88 | exec=0x00000000 | native=0x00000000
+  Func[49] GetDropStaggerPercentTimeElapsed -> Z_Construct=0x0761F6A8 | FFunctionParams=0x0EB3FB00 | exec=0x00000000 | native=0x00000000
+  Func[50] GetDropStaggerTimeLeft -> Z_Construct=0x0761F6F4 | FFunctionParams=0x0EB3FB78 | exec=0x00000000 | native=0x00000000
+  Func[51] GetEntityRenderRegionAtIndex -> Z_Construct=0x0761F740 | FFunctionParams=0x0EB3FC28 | exec=0x00000000 | native=0x00000000
+  Func[52] GetGuidedAction -> Z_Construct=0x0761F78C | FFunctionParams=0x0EB3FCE0 | exec=0x00000000 | native=0x00000000
+  Func[53] GetHealthComponent -> Z_Construct=0x0761F7D8 | FFunctionParams=0x0EB3FD60 | exec=0x00000000 | native=0x00000000
+  Func[54] GetHookableComponent -> Z_Construct=0x0761F824 | FFunctionParams=0x0EB3FDE0 | exec=0x00000000 | native=0x00000000
+  Func[55] GetImmobilizedState -> Z_Construct=0x0761F870 | FFunctionParams=0x0EB3FE98 | exec=0x00000000 | native=0x00000000
+  Func[56] GetIsBeingDissolved -> Z_Construct=0x0761F8C8 | FFunctionParams=0x0EB3FF20 | exec=0x00000000 | native=0x00000000
+  Func[57] GetIsHealingKOCamper -> Z_Construct=0x0761F920 | FFunctionParams=0x0EB3FFA8 | exec=0x00000000 | native=0x00000000
+  Func[58] GetIsSkillCheckFailed -> Z_Construct=0x0761F978 | FFunctionParams=0x0EB40030 | exec=0x00000000 | native=0x00000000
+  Func[59] GetMaxGruntDistance -> Z_Construct=0x0761F9D0 | FFunctionParams=0x0EB400E8 | exec=0x00000000 | native=0x00000000
+  Func[60] GetMeshMover -> Z_Construct=0x0761FA1C | FFunctionParams=0x0EB40168 | exec=0x00000000 | native=0x00000000
+  Func[61] GetMontageFollower -> Z_Construct=0x0761FA68 | FFunctionParams=0x0EB401E8 | exec=0x00000000 | native=0x00000000
+  Func[62] GetNoOcclusionAudioComponent -> Z_Construct=0x0761FAB4 | FFunctionParams=0x0EB40268 | exec=0x00000000 | native=0x00000000
+  Func[63] GetNumberOfEntityRenderRegions -> Z_Construct=0x0761FB00 | FFunctionParams=0x0EB402E0 | exec=0x00000000 | native=0x00000000
+  Func[64] GetObsessionTargetWeight -> Z_Construct=0x0761FB4C | FFunctionParams=0x0EB40358 | exec=0x00000000 | native=0x00000000
+  Func[65] GetOverlappingEscape -> Z_Construct=0x0761FB98 | FFunctionParams=0x0EB403D8 | exec=0x00000000 | native=0x00000000
+  Func[66] GetPercentHealingTimer -> Z_Construct=0x0761FBE4 | FFunctionParams=0x0EB40450 | exec=0x00000000 | native=0x00000000
+  Func[67] GetPlayerUniqueId -> Z_Construct=0x0761FC30 | FFunctionParams=0x0EB404C8 | exec=0x00000000 | native=0x00000000
+  Func[68] GetRevealedSurvivor -> Z_Construct=0x0761FC7C | FFunctionParams=0x0EB40548 | exec=0x00000000 | native=0x00000000
+  Func[69] GetReverseBearTrap -> Z_Construct=0x0761FCC8 | FFunctionParams=0x0EB405C8 | exec=0x00000000 | native=0x00000000
+  Func[70] GetScreamComponent -> Z_Construct=0x0761FD14 | FFunctionParams=0x0EB40648 | exec=0x00000000 | native=0x00000000
+  Func[71] GetSpecialCustomAnimTag -> Z_Construct=0x0761FD60 | FFunctionParams=0x0EB406C0 | exec=0x00000000 | native=0x00000000
+  Func[72] GetStillness -> Z_Construct=0x0761FDAC | FFunctionParams=0x0EB40738 | exec=0x00000000 | native=0x00000000
+  Func[73] GetStillnessComponent -> Z_Construct=0x0761FDF8 | FFunctionParams=0x0EB407B8 | exec=0x00000000 | native=0x00000000
+  Func[74] GetTerrorRadiusReceiverComponent -> Z_Construct=0x0761FE44 | FFunctionParams=0x0EB40838 | exec=0x00000000 | native=0x00000000
+  Func[75] GetToAimPointRotation -> Z_Construct=0x0761FE90 | FFunctionParams=0x0EB408B8 | exec=0x00000000 | native=0x00000000
+  Func[76] GetUnlinkExceptTags -> Z_Construct=0x0761FEDC | FFunctionParams=0x0EB40968 | exec=0x00000000 | native=0x00000000
+  Func[77] GetWiggleChargeable -> Z_Construct=0x0761FF28 | FFunctionParams=0x0EB409E8 | exec=0x00000000 | native=0x00000000
+  Func[78] HasGuidedAction -> Z_Construct=0x0761FF80 | FFunctionParams=0x0EB40A70 | exec=0x00000000 | native=0x00000000
+  Func[79] HasHitEvents -> Z_Construct=0x0761FFD8 | FFunctionParams=0x0EB40AF8 | exec=0x00000000 | native=0x00000000
+  Func[80] HasReverseBearTrap -> Z_Construct=0x07620030 | FFunctionParams=0x0EB40B80 | exec=0x00000000 | native=0x00000000
+  Func[81] HatchEscapeZoneEntered -> Z_Construct=0x0762007C | FFunctionParams=0x0EB40C00 | exec=0x00000000 | native=0x00000000
+  Func[82] Input_Struggle -> Z_Construct=0x076200C8 | FFunctionParams=0x0EB40C78 | exec=0x00000000 | native=0x00000000
+  Func[83] Input_ToggleRun -> Z_Construct=0x07620114 | FFunctionParams=0x0EB40CC0 | exec=0x00000000 | native=0x00000000
+  Func[84] Input_Wiggle -> Z_Construct=0x07620160 | FFunctionParams=0x0EB40D38 | exec=0x00000000 | native=0x00000000
+  Func[85] IsBeingCarried -> Z_Construct=0x076201B8 | FFunctionParams=0x0EB40DC0 | exec=0x00000000 | native=0x00000000
+  Func[86] IsBeingEndGameSacrificed -> Z_Construct=0x07620210 | FFunctionParams=0x0EB40E48 | exec=0x00000000 | native=0x00000000
+  Func[87] IsBeingHealed -> Z_Construct=0x07620268 | FFunctionParams=0x0EB40ED0 | exec=0x00000000 | native=0x00000000
+  Func[88] IsBeingInteractedWith -> Z_Construct=0x076202C0 | FFunctionParams=0x0EB40F58 | exec=0x00000000 | native=0x00000000
+  Func[89] IsBeingKilled -> Z_Construct=0x07620318 | FFunctionParams=0x0EB40FE0 | exec=0x00000000 | native=0x00000000
+  Func[90] IsBeingMended -> Z_Construct=0x07620370 | FFunctionParams=0x0EB41068 | exec=0x00000000 | native=0x00000000
+  Func[91] IsBeingPickedUp -> Z_Construct=0x076203C8 | FFunctionParams=0x0EB410F0 | exec=0x00000000 | native=0x00000000
+  Func[92] IsBeingPulledFromCloset -> Z_Construct=0x07620420 | FFunctionParams=0x0EB41178 | exec=0x00000000 | native=0x00000000
+  Func[93] IsBeingPutDown -> Z_Construct=0x07620478 | FFunctionParams=0x0EB41200 | exec=0x00000000 | native=0x00000000
+  Func[94] IsBeingPutOnHook -> Z_Construct=0x076204D0 | FFunctionParams=0x0EB41288 | exec=0x00000000 | native=0x00000000
+  Func[95] IsBeingUnhooked -> Z_Construct=0x07620528 | FFunctionParams=0x0EB41310 | exec=0x00000000 | native=0x00000000
+  Func[96] IsCameraAttached -> Z_Construct=0x07620580 | FFunctionParams=0x0EB41398 | exec=0x00000000 | native=0x00000000
+  Func[97] IsCameraDetached -> Z_Construct=0x076205D8 | FFunctionParams=0x0EB41420 | exec=0x00000000 | native=0x00000000
+  Func[98] IsCrawling -> Z_Construct=0x07620630 | FFunctionParams=0x0EB414A8 | exec=0x00000000 | native=0x00000000
+  Func[99] IsDeadOrInParadise -> Z_Construct=0x07620688 | FFunctionParams=0x0EB41530 | exec=0x00000000 | native=0x00000000
+  Func[100] IsEscaped -> Z_Construct=0x076206E0 | FFunctionParams=0x0EB415B8 | exec=0x00000000 | native=0x00000000
+  Func[101] IsGuidedBySlasher -> Z_Construct=0x07620738 | FFunctionParams=0x0EB41640 | exec=0x00000000 | native=0x00000000
+  Func[102] IsHealingTimerExpired -> Z_Construct=0x07620790 | FFunctionParams=0x0EB416C8 | exec=0x00000000 | native=0x00000000
+  Func[103] IsHooked -> Z_Construct=0x076207E8 | FFunctionParams=0x0EB41750 | exec=0x00000000 | native=0x00000000
+  Func[104] IsImmobilized -> Z_Construct=0x07620840 | FFunctionParams=0x0EB417D8 | exec=0x00000000 | native=0x00000000
+  Func[105] IsInDeathBed -> Z_Construct=0x07620898 | FFunctionParams=0x0EB41860 | exec=0x00000000 | native=0x00000000
+  Func[106] IsInNeed -> Z_Construct=0x076208F0 | FFunctionParams=0x0EB418E8 | exec=0x00000000 | native=0x00000000
+  Func[107] IsMovementGuided -> Z_Construct=0x07620948 | FFunctionParams=0x0EB41970 | exec=0x00000000 | native=0x00000000
+  Func[108] IsObsessionTarget -> Z_Construct=0x076209A0 | FFunctionParams=0x0EB419F8 | exec=0x00000000 | native=0x00000000
+  Func[109] IsRunLocked -> Z_Construct=0x076209F8 | FFunctionParams=0x0EB41A80 | exec=0x00000000 | native=0x00000000
+  Func[110] IsSacrificed -> Z_Construct=0x07620A50 | FFunctionParams=0x0EB41B08 | exec=0x00000000 | native=0x00000000
+  Func[111] IsTrapped -> Z_Construct=0x07620AA8 | FFunctionParams=0x0EB41B90 | exec=0x00000000 | native=0x00000000
+  Func[112] IsUnhookingSelf -> Z_Construct=0x07620B00 | FFunctionParams=0x0EB41C18 | exec=0x00000000 | native=0x00000000
+  Func[113] IsUnintentionallyImmobilized -> Z_Construct=0x07620B58 | FFunctionParams=0x0EB41CA0 | exec=0x00000000 | native=0x00000000
+  Func[114] IsVaulting -> Z_Construct=0x07620BB0 | FFunctionParams=0x0EB41D28 | exec=0x00000000 | native=0x00000000
+  Func[115] Kill -> Z_Construct=0x07620C14 | FFunctionParams=0x0EB41DF0 | exec=0x00000000 | native=0x00000000
+  Func[116] Local_SetImmobilized -> Z_Construct=0x07620C60 | FFunctionParams=0x0EB41EA8 | exec=0x00000000 | native=0x00000000
+  Func[117] MakeCamperDisappear -> Z_Construct=0x07620CAC | FFunctionParams=0x0EB41EF0 | exec=0x00000000 | native=0x00000000
+  Func[118] MakeCamperDisappearBleedOut -> Z_Construct=0x07620CF8 | FFunctionParams=0x0EB41F38 | exec=0x00000000 | native=0x00000000
+  Func[119] Multicast_OnFailedStruggling -> Z_Construct=0x07620D44 | FFunctionParams=0x0EB41FB8 | exec=0x00000000 | native=0x00000000
+  Func[120] Multicast_RemoveReverseBearTrap -> Z_Construct=0x07620D90 | FFunctionParams=0x0EB42000 | exec=0x00000000 | native=0x00000000
+  Func[121] Multicast_SetAuthoritativeMovementFlag -> Z_Construct=0x07620DE8 | FFunctionParams=0x0EB420F8 | exec=0x00000000 | native=0x00000000
+  Func[122] Multicast_SetEnableHookSlashableZone -> Z_Construct=0x07620E40 | FFunctionParams=0x0EB42180 | exec=0x00000000 | native=0x00000000
+  Func[123] Multicast_SetGuidedAction -> Z_Construct=0x07620E8C | FFunctionParams=0x0EB42238 | exec=0x00000000 | native=0x00000000
+  Func[124] Multicast_SetHookEscapeAutoFail -> Z_Construct=0x07620EE4 | FFunctionParams=0x0EB422C0 | exec=0x00000000 | native=0x00000000
+  Func[125] Multicast_SetHookEscapeAutoSuccess -> Z_Construct=0x07620F3C | FFunctionParams=0x0EB42348 | exec=0x00000000 | native=0x00000000
+  Func[126] Multicast_SetImmobilized -> Z_Construct=0x07620F88 | FFunctionParams=0x0EB42400 | exec=0x00000000 | native=0x00000000
+  Func[127] Multicast_SetOnHookDrainToNextStage -> Z_Construct=0x07620FE0 | FFunctionParams=0x0EB42488 | exec=0x00000000 | native=0x00000000
+  Func[128] Multicast_SetOverlappingEscape -> Z_Construct=0x0762102C | FFunctionParams=0x0EB42508 | exec=0x00000000 | native=0x00000000
+  Func[129] OnCamperDataReconnectSynced -> Z_Construct=0x07621078 | FFunctionParams=0x0EB42630 | exec=0x00000000 | native=0x00000000
+  Func[130] OnDamageHit -> Z_Construct=0x076210D0 | FFunctionParams=0x0EB426F0 | exec=0x00000000 | native=0x00000000
+  Func[131] OnDamageHit_NEW -> Z_Construct=0x07621134 | FFunctionParams=0x0EB427B8 | exec=0x00000000 | native=0x00000000
+  Func[132] OnDroppedByBearTrap -> Z_Construct=0x07621180 | FFunctionParams=0x0EB42800 | exec=0x00000000 | native=0x00000000
+  Func[133] OnDroppedEnd -> Z_Construct=0x076211D8 | FFunctionParams=0x0EB42888 | exec=0x00000000 | native=0x00000000
+  Func[134] OnDroppedEventEnd -> Z_Construct=0x07621224 | FFunctionParams=0x0EB428D0 | exec=0x00000000 | native=0x00000000
+  Func[135] OnDroppedEventStart -> Z_Construct=0x07621270 | FFunctionParams=0x0EB42918 | exec=0x00000000 | native=0x00000000
+  Func[136] OnDroppedStart -> Z_Construct=0x076212BC | FFunctionParams=0x0EB42960 | exec=0x00000000 | native=0x00000000
+  Func[137] OnFinishedPlaying -> Z_Construct=0x07621308 | FFunctionParams=0x0EB429A8 | exec=0x00000000 | native=0x00000000
+  Func[138] OnHooked -> Z_Construct=0x07621354 | FFunctionParams=0x0EB429F0 | exec=0x00000000 | native=0x00000000
+  Func[139] OnHookedEvent -> Z_Construct=0x076213A0 | FFunctionParams=0x0EB42A38 | exec=0x00000000 | native=0x00000000
+  Func[140] OnHookedStateChangedCosmetic -> Z_Construct=0x076213EC | FFunctionParams=0x0EB42A80 | exec=0x00000000 | native=0x00000000
+  Func[141] OnMovementUpdated -> Z_Construct=0x07621438 | FFunctionParams=0x0EB42B68 | exec=0x00000000 | native=0x00000000
+  Func[142] OnObsessionChanged -> Z_Construct=0x07621484 | FFunctionParams=0x0EB42C20 | exec=0x00000000 | native=0x00000000
+  Func[143] OnPawnSensed -> Z_Construct=0x076214D0 | FFunctionParams=0x0EB42CA0 | exec=0x00000000 | native=0x00000000
+  Func[144] OnPickUpDenied -> Z_Construct=0x0762151C | FFunctionParams=0x0EB42CE8 | exec=0x00000000 | native=0x00000000
+  Func[145] OnPickUpEnter -> Z_Construct=0x07621568 | FFunctionParams=0x0EB42D98 | exec=0x00000000 | native=0x00000000
+  Func[146] OnPlayScream -> Z_Construct=0x076215C0 | FFunctionParams=0x0EB42E58 | exec=0x00000000 | native=0x00000000
+  Func[147] OnProximityEntered -> Z_Construct=0x07621618 | FFunctionParams=0x0EB42FF0 | exec=0x00000000 | native=0x00000000
+  Func[148] OnRep_IsDisguised -> Z_Construct=0x07621664 | FFunctionParams=0x0EB43038 | exec=0x00000000 | native=0x00000000
+  Func[149] OnRep_SprintEffect -> Z_Construct=0x076216B0 | FFunctionParams=0x0EB43080 | exec=0x00000000 | native=0x00000000
+  Func[150] OnUnhooked -> Z_Construct=0x076216FC | FFunctionParams=0x0EB430C8 | exec=0x00000000 | native=0x00000000
+  Func[151] OnUnhookedEvent -> Z_Construct=0x07621748 | FFunctionParams=0x0EB43110 | exec=0x00000000 | native=0x00000000
+  Func[152] RemoveFromRevealedCamperMap -> Z_Construct=0x07621794 | FFunctionParams=0x0EB43190 | exec=0x00000000 | native=0x00000000
+  Func[153] RemoveReverseBearTrap -> Z_Construct=0x076217E0 | FFunctionParams=0x0EB431D8 | exec=0x00000000 | native=0x00000000
+  Func[154] ResetCameraAttach -> Z_Construct=0x0762182C | FFunctionParams=0x0EB43220 | exec=0x00000000 | native=0x00000000
+  Func[155] ResetPotentialSaviors -> Z_Construct=0x07621878 | FFunctionParams=0x0EB43268 | exec=0x00000000 | native=0x00000000
+  Func[156] Server_CheatEscaped -> Z_Construct=0x076218C4 | FFunctionParams=0x0EB432B0 | exec=0x00000000 | native=0x00000000
+  Func[157] Server_SendInteractMashedInput -> Z_Construct=0x0762191C | FFunctionParams=0x0EB43338 | exec=0x00000000 | native=0x00000000
+  Func[158] Server_SendLeftRightMashedInput -> Z_Construct=0x07621974 | FFunctionParams=0x0EB433C0 | exec=0x00000000 | native=0x00000000
+  Func[159] Server_SendRunInput -> Z_Construct=0x076219CC | FFunctionParams=0x0EB43448 | exec=0x00000000 | native=0x00000000
+  Func[160] Server_SetImmobilized -> Z_Construct=0x07621A18 | FFunctionParams=0x0EB43500 | exec=0x00000000 | native=0x00000000
+  Func[161] Server_SetOverlappingEscape -> Z_Construct=0x07621A64 | FFunctionParams=0x0EB43580 | exec=0x00000000 | native=0x00000000
+  Func[162] SetAutoInteractionMashEnabled -> Z_Construct=0x07621ABC | FFunctionParams=0x0EB43608 | exec=0x00000000 | native=0x00000000
+  Func[163] SetBeingCarried -> Z_Construct=0x07621B14 | FFunctionParams=0x0EB436C8 | exec=0x00000000 | native=0x00000000
+  Func[164] SetDisguised -> Z_Construct=0x07621B84 | FFunctionParams=0x0EB437D0 | exec=0x00000000 | native=0x00000000
+  Func[165] SetEnableHookSlashableZone -> Z_Construct=0x07621BDC | FFunctionParams=0x0EB43858 | exec=0x00000000 | native=0x00000000
+  Func[166] SetGuidedAction -> Z_Construct=0x07621C28 | FFunctionParams=0x0EB43910 | exec=0x00000000 | native=0x00000000
+  Func[167] SetGuidedActionLocal -> Z_Construct=0x07621C74 | FFunctionParams=0x0EB439C8 | exec=0x00000000 | native=0x00000000
+  Func[168] SetHUDMovingButtonVisibility -> Z_Construct=0x07621CCC | FFunctionParams=0x0EB43A50 | exec=0x00000000 | native=0x00000000
+  Func[169] SetImmobilized -> Z_Construct=0x07621D18 | FFunctionParams=0x0EB43B08 | exec=0x00000000 | native=0x00000000
+  Func[170] SetIsHealingKOCamper -> Z_Construct=0x07621D70 | FFunctionParams=0x0EB43B90 | exec=0x00000000 | native=0x00000000
+  Func[171] SetIsSkillCheckFailed -> Z_Construct=0x07621DC8 | FFunctionParams=0x0EB43C18 | exec=0x00000000 | native=0x00000000
+  Func[172] SetPlayerExposedVFX -> Z_Construct=0x07621E14 | FFunctionParams=0x0EB43C60 | exec=0x00000000 | native=0x00000000
+  Func[173] SetRevealedSurvivor -> Z_Construct=0x07621E60 | FFunctionParams=0x0EB43CE0 | exec=0x00000000 | native=0x00000000
+  Func[174] SetUseCrouchSlashableCapsule -> Z_Construct=0x07621EB8 | FFunctionParams=0x0EB43D68 | exec=0x00000000 | native=0x00000000
+  Func[175] SetVignetteVisible -> Z_Construct=0x07621F10 | FFunctionParams=0x0EB43DF0 | exec=0x00000000 | native=0x00000000
+  Func[176] StartHealingTimer -> Z_Construct=0x07621F5C | FFunctionParams=0x0EB43E68 | exec=0x00000000 | native=0x00000000
+  Func[177] StopHealingTimer -> Z_Construct=0x07621FA8 | FFunctionParams=0x0EB43EB0 | exec=0x00000000 | native=0x00000000
+  Func[178] TriggerAfflictionHUDFeedback -> Z_Construct=0x07621FF4 | FFunctionParams=0x0EB43EF8 | exec=0x00000000 | native=0x00000000
+  Func[179] TriggerPickUpAnimation -> Z_Construct=0x07622040 | FFunctionParams=0x0EB43F40 | exec=0x00000000 | native=0x00000000
+  Func[180] TriggerPutDownAnimation -> Z_Construct=0x0762208C | FFunctionParams=0x0EB43F88 | exec=0x00000000 | native=0x00000000
+  Func[181] TriggerWiggleSkillCheck -> Z_Construct=0x076220D8 | FFunctionParams=0x0EB43FD0 | exec=0x00000000 | native=0x00000000
+  Func[182] UpdateHealingTimer -> Z_Construct=0x07622124 | FFunctionParams=0x0EB44048 | exec=0x00000000 | native=0x00000000
+  Func[183] UpdateKillerDistanceEvent -> Z_Construct=0x07622170 | FFunctionParams=0x0EB440C0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] ChargeableComponent @ 0x0EB53F58 | StaticClass=0x076666D0 (Singleton=0x00000000) | SizeOf=0x0378 | Props=38 | Funcs=32
+  Prop[00] +0x00B8 : OnInteractionEmptiedEvent (PropStruct=0x0EB53728, GenFlags=0x1B)
+  Prop[01] +0x00E0 : OnInteractionCompletionStateChanged (PropStruct=0x0EB53758, GenFlags=0x1B)
+  Prop[02] +0x0108 : SkillCheckResponseAestheticDelegate (PropStruct=0x0EB53788, GenFlags=0x1B)
+  Prop[03] +0x0118 : SkillCheckResponseAuthorityDelegate (PropStruct=0x0EB537B8, GenFlags=0x1B)
+  Prop[04] +0x0128 : ChargeAppliedAuthorityDelegate (PropStruct=0x0EB537E8, GenFlags=0x1B)
+  Prop[05] +0x0138 : ChargeableCompletionPercentChangeAuthorityDelegate (PropStruct=0x0EB53818, GenFlags=0x1B)
+  Prop[06] +0x0148 : ChargeableCompletionPercentChangeCosmeticDelegate (PropStruct=0x0EB53848, GenFlags=0x1B)
+  Prop[07] +0x0158 : DechargeBeginDelegate (PropStruct=0x0EB53878, GenFlags=0x1B)
+  Prop[08] +0x0168 : DechargeEndDelegate (PropStruct=0x0EB538A8, GenFlags=0x1B)
+  Prop[09] +0x0001 : AllowSkillChecksAtFullCharge (PropStruct=0x0EB538D8, GenFlags=0x2C)
+  Prop[10] +0x0180 : ChargeableComponentID (PropStruct=0x0EB53910, GenFlags=0x15)
+  Prop[11] +0x0190 : DechargeDelay (PropStruct=0x0EB53938, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[12] +0x0194 : StartingChargePercent (PropStruct=0x0EB53960, GenFlags=0x0A) [Bool SetBitFunc=0x02EC2CFB ()]
+  Prop[13] +0x01A0 : _currentCharge (PropStruct=0x0EB53988, GenFlags=0x19) [RepNotify=OnRep_CurrentCharge]
+  Prop[14] +0x01D8 : _permanentProgress (PropStruct=0x0EB539B8, GenFlags=0x0A) [RepNotify=OnRep_PermanentProgress] [Bool SetBitFunc=0x00000000 ()]
+  Prop[15] +0x01E8 : _skillCheckFailurePenaltyTimer (PropStruct=0x0EB539E0, GenFlags=0x19)
+  Prop[16] +0x0230 : _dechargeTimer (PropStruct=0x0EB53A10, GenFlags=0x19)
+  Prop[17] +0x0000 : _chargesThisFrame (PropStruct=0x0EB53A40, GenFlags=0x19)
+  Prop[18] +0x0278 : _chargesThisFrame (PropStruct=0x0EB53A70, GenFlags=0x16)
+  Prop[19] +0x0000 : _redirectedChargesThisFrame (PropStruct=0x0EB53AA0, GenFlags=0x19)
+  Prop[20] +0x0288 : _redirectedChargesThisFrame (PropStruct=0x0EB53AD0, GenFlags=0x16)
+  Prop[21] +0x0001 : _activeChargeStrategies (PropStruct=0x0EB53B00, GenFlags=0x12)
+  Prop[22] +0x0000 : _activeChargeStrategies_Key (PropStruct=0x0EB53B30, GenFlags=0x06)
+  Prop[23] +0x0298 : _activeChargeStrategies (PropStruct=0x0EB53B58, GenFlags=0x17)
+  Prop[24] +0x0000 : _instigatorsSinceEmpty (PropStruct=0x0EB53B88, GenFlags=0x12)
+  Prop[25] +0x02E8 : _instigatorsSinceEmpty (PropStruct=0x0EB53BB8, GenFlags=0x16)
+  Prop[26] +0x0001 : _tunableValueMap (PropStruct=0x0EB53BE8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[27] +0x0000 : _tunableValueMap_Key (PropStruct=0x0EB53C10, GenFlags=0x14)
+  Prop[28] +0x02F8 : _tunableValueMap (PropStruct=0x0EB53C38, GenFlags=0x17)
+  Prop[29] +0x0001 : _isCharging (PropStruct=0x0EB53C68, GenFlags=0x2C)
+  Prop[30] +0x0000 : _playersWhoDidSkillCheck (PropStruct=0x0EB53CA0, GenFlags=0x03)
+  Prop[31] +0x0350 : _playersWhoDidSkillCheck (PropStruct=0x0EB53CC8, GenFlags=0x16)
+  Prop[32] +0x0360 : _startingChargePercent (PropStruct=0x0EB53CF8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[33] +0x0364 : _dechargeRate (PropStruct=0x0EB53D20, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[34] +0x0001 : _enableAddCharge (PropStruct=0x0EB53D48, GenFlags=0x2C)
+  Prop[35] +0x0001 : _enableSkillCheckFailurePenalty (PropStruct=0x0EB53D80, GenFlags=0x2C)
+  Prop[36] +0x0001 : _isDecharging (PropStruct=0x0EB53DB8, GenFlags=0x2C)
+  Prop[37] +0x0001 : _stopDechargingWhenComplete (PropStruct=0x0EB53DF0, GenFlags=0x2C)
+  Func[00] AddCharge -> Z_Construct=0x076667E8 | FFunctionParams=0x0EB52490 | exec=0x00000000 | native=0x00000000
+  Func[01] AddChargePercent -> Z_Construct=0x07666834 | FFunctionParams=0x0EB52540 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_AddCharge -> Z_Construct=0x0766688C | FFunctionParams=0x0EB52630 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_AddChargePercent -> Z_Construct=0x076668FC | FFunctionParams=0x0EB527A0 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_AddPermanentChargePercent -> Z_Construct=0x07666948 | FFunctionParams=0x0EB52818 | exec=0x00000000 | native=0x00000000
+  Func[05] Authority_ApplyStartingCharge -> Z_Construct=0x07666994 | FFunctionParams=0x0EB52860 | exec=0x00000000 | native=0x00000000
+  Func[06] Authority_Reset -> Z_Construct=0x076669E0 | FFunctionParams=0x0EB528A8 | exec=0x00000000 | native=0x00000000
+  Func[07] Authority_SetEnableAddCharge -> Z_Construct=0x07666A38 | FFunctionParams=0x0EB52930 | exec=0x00000000 | native=0x00000000
+  Func[08] Authority_SetEnableSkillCheckFailurePenalty -> Z_Construct=0x07666A90 | FFunctionParams=0x0EB529B8 | exec=0x00000000 | native=0x00000000
+  Func[09] GetChargeRemaining -> Z_Construct=0x07666ADC | FFunctionParams=0x0EB52A30 | exec=0x00000000 | native=0x00000000
+  Func[10] GetChargingSpeed -> Z_Construct=0x07666B28 | FFunctionParams=0x0EB52AA8 | exec=0x00000000 | native=0x00000000
+  Func[11] GetCurrentCharge -> Z_Construct=0x07666B74 | FFunctionParams=0x0EB52B20 | exec=0x00000000 | native=0x00000000
+  Func[12] GetMaxCharge -> Z_Construct=0x07666BC0 | FFunctionParams=0x0EB52B98 | exec=0x00000000 | native=0x00000000
+  Func[13] GetPercentComplete -> Z_Construct=0x07666C0C | FFunctionParams=0x0EB52C10 | exec=0x00000000 | native=0x00000000
+  Func[14] GetPermanentChargePercent -> Z_Construct=0x07666C58 | FFunctionParams=0x0EB52C88 | exec=0x00000000 | native=0x00000000
+  Func[15] GetPlayerCountPenaltyModifier -> Z_Construct=0x07666CA4 | FFunctionParams=0x0EB52D30 | exec=0x00000000 | native=0x00000000
+  Func[16] GetTunableValue -> Z_Construct=0x07666CF0 | FFunctionParams=0x0EB52DD8 | exec=0x00000000 | native=0x00000000
+  Func[17] HasPlayerDoneSkillCheck -> Z_Construct=0x07666D48 | FFunctionParams=0x0EB52E90 | exec=0x00000000 | native=0x00000000
+  Func[18] IncreaseMaxCharge -> Z_Construct=0x07666D94 | FFunctionParams=0x0EB52F08 | exec=0x00000000 | native=0x00000000
+  Func[19] IncreaseMaxChargeAdditive -> Z_Construct=0x07666DE0 | FFunctionParams=0x0EB52F80 | exec=0x00000000 | native=0x00000000
+  Func[20] IsChargeComplete -> Z_Construct=0x07666E38 | FFunctionParams=0x0EB53008 | exec=0x00000000 | native=0x00000000
+  Func[21] IsSkillCheckTimePenaltyActive -> Z_Construct=0x07666E90 | FFunctionParams=0x0EB53090 | exec=0x00000000 | native=0x00000000
+  Func[22] Multicast_OnCompleteChanged -> Z_Construct=0x07666EE8 | FFunctionParams=0x0EB53118 | exec=0x00000000 | native=0x00000000
+  Func[23] Multicast_OnEmptied -> Z_Construct=0x07666F34 | FFunctionParams=0x0EB53160 | exec=0x00000000 | native=0x00000000
+  Func[24] Multicast_SetPermanentCharge -> Z_Construct=0x07666F80 | FFunctionParams=0x0EB531D8 | exec=0x00000000 | native=0x00000000
+  Func[25] OnCurrentChargeChanged -> Z_Construct=0x07666FCC | FFunctionParams=0x0EB53250 | exec=0x00000000 | native=0x00000000
+  Func[26] OnRep_CurrentCharge -> Z_Construct=0x07667018 | FFunctionParams=0x0EB53298 | exec=0x00000000 | native=0x00000000
+  Func[27] OnRep_PermanentProgress -> Z_Construct=0x07667064 | FFunctionParams=0x0EB53310 | exec=0x00000000 | native=0x00000000
+  Func[28] Reset -> Z_Construct=0x076670B0 | FFunctionParams=0x0EB53358 | exec=0x00000000 | native=0x00000000
+  Func[29] SetCheckTime -> Z_Construct=0x07667108 | FFunctionParams=0x0EB533E0 | exec=0x00000000 | native=0x00000000
+  Func[30] SetDechargeRate -> Z_Construct=0x07667154 | FFunctionParams=0x0EB53458 | exec=0x00000000 | native=0x00000000
+  Func[31] SetSecondsToCharge -> Z_Construct=0x076671A0 | FFunctionParams=0x0EB534D0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] DBDOutlineComponent @ 0x0EBC33F8 | StaticClass=0x077F1C04 (Singleton=0x00000000) | SizeOf=0x03A0 | Props=12 | Funcs=13
+  Prop[00] +0x02B0 : InterpolationSpeed (PropStruct=0x0EBC3140, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[01] +0x0001 : ShouldBeAboveOutlines (PropStruct=0x0EBC3168, GenFlags=0x2C)
+  Prop[02] +0x0001 : LimitToCustomDepthObjects (PropStruct=0x0EBC31A0, GenFlags=0x2C)
+  Prop[03] +0x0001 : FadeOutAsClosingIn (PropStruct=0x0EBC31D8, GenFlags=0x2C)
+  Prop[04] +0x0001 : IsAlwaysVisible (PropStruct=0x0EBC3210, GenFlags=0x2C)
+  Prop[05] +0x02B8 : MinimumOutlineDistance (PropStruct=0x0EBC3248, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[06] +0x0001 : IsUseEventOutlineStrategy (PropStruct=0x0EBC3270, GenFlags=0x2C)
+  Prop[07] +0x0001 : ForceOutlineFarAway (PropStruct=0x0EBC32A8, GenFlags=0x2C)
+  Prop[08] +0x02C8 : OutlineName (PropStruct=0x0EBC32E0, GenFlags=0x15)
+  Prop[09] +0x0330 : _renderStrategySelector (PropStruct=0x0EBC3308, GenFlags=0x19)
+  Prop[10] +0x0370 : _batchMeshCommands (PropStruct=0x0EBC3338, GenFlags=0x12)
+  Prop[11] +0x0388 : _renderingStrategy (PropStruct=0x0EBC3368, GenFlags=0x12)
+  Func[00] InitBatcher -> Z_Construct=0x077F1D10 | FFunctionParams=0x0EBC2AC8 | exec=0x00000000 | native=0x00000000
+  Func[01] RefreshOutlineComponent -> Z_Construct=0x077F1D5C | FFunctionParams=0x0EBC2B10 | exec=0x00000000 | native=0x00000000
+  Func[02] ReInitBatcher -> Z_Construct=0x077F1DA8 | FFunctionParams=0x0EBC2B58 | exec=0x00000000 | native=0x00000000
+  Func[03] ResetToTransparent -> Z_Construct=0x077F1DF4 | FFunctionParams=0x0EBC2BA0 | exec=0x00000000 | native=0x00000000
+  Func[04] SetFadeIntensity -> Z_Construct=0x077F1E40 | FFunctionParams=0x0EBC2C18 | exec=0x00000000 | native=0x00000000
+  Func[05] SetFadeTexture -> Z_Construct=0x077F1E8C | FFunctionParams=0x0EBC2C98 | exec=0x00000000 | native=0x00000000
+  Func[06] SetIsClipOutlinesIfVisible -> Z_Construct=0x077F1EE4 | FFunctionParams=0x0EBC2D20 | exec=0x00000000 | native=0x00000000
+  Func[07] SetIsOccludingOutlines -> Z_Construct=0x077F1F3C | FFunctionParams=0x0EBC2DA8 | exec=0x00000000 | native=0x00000000
+  Func[08] SetMaterialCopyTarget -> Z_Construct=0x077F1F88 | FFunctionParams=0x0EBC2E28 | exec=0x00000000 | native=0x00000000
+  Func[09] SetMinimumOutlineDistance -> Z_Construct=0x077F1FD4 | FFunctionParams=0x0EBC2EA0 | exec=0x00000000 | native=0x00000000
+  Func[10] SetOutlineIntensity -> Z_Construct=0x077F2020 | FFunctionParams=0x0EBC2F18 | exec=0x00000000 | native=0x00000000
+  Func[11] SetOutlineMaterialOverride -> Z_Construct=0x077F206C | FFunctionParams=0x0EBC2F98 | exec=0x00000000 | native=0x00000000
+  Func[12] SetTargetColor -> Z_Construct=0x077F20B8 | FFunctionParams=0x0EBC3018 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] DBDPlayerCameraManager @ 0x0EBDBC98 | StaticClass=0x07823E18 (Singleton=0x00000000) | SizeOf=0x2840 | Props=3 | Funcs=0
+  Prop[00] +0x2820 : NormalFOV (PropStruct=0x0EBDBC00, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[01] +0x2824 : TargetingFOV (PropStruct=0x0EBDBC28, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[02] +0x2828 : _viewRotationStrategy (PropStruct=0x0EBDBC50, GenFlags=0x13)
+
+[FClassParams] DBDPlayerController @ 0x0EBDF3B8 | StaticClass=0x07827DFC (Singleton=0x00000000) | SizeOf=0x08F8 | Props=6 | Funcs=43
+  Prop[00] +0x0640 : OnPawnLeavingGame (PropStruct=0x0EBDF268, GenFlags=0x1B)
+  Prop[01] +0x0650 : OnLocallyObservedChanged (PropStruct=0x0EBDF298, GenFlags=0x1B)
+  Prop[02] +0x06F8 : _theFence (PropStruct=0x0EBDF2C8, GenFlags=0x12) [RepNotify=OnRep_Fence]
+  Prop[03] +0x0708 : _inputHandler (PropStruct=0x0EBDF2F8, GenFlags=0x12)
+  Prop[04] +0x08B8 : _aiPawn (PropStruct=0x0EBDF328, GenFlags=0x12)
+  Prop[05] +0x08D0 : _lastSpectatingPlayer (PropStruct=0x0EBDF358, GenFlags=0x12)
+  Func[00] Authority_SetIsReconnecting -> Z_Construct=0x07827F14 | FFunctionParams=0x0EBDD778 | exec=0x00000000 | native=0x00000000
+  Func[01] Client_CheckNetworkDelay -> Z_Construct=0x07827F60 | FFunctionParams=0x0EBDD7F0 | exec=0x00000000 | native=0x00000000
+  Func[02] Client_KickoutWhenRelogin -> Z_Construct=0x07827FAC | FFunctionParams=0x0EBDD838 | exec=0x00000000 | native=0x00000000
+  Func[03] Client_NotifyPlayerDisconnect -> Z_Construct=0x07827FF8 | FFunctionParams=0x0EBDD8B8 | exec=0x00000000 | native=0x00000000
+  Func[04] Client_ReconvertPawnStateMachine -> Z_Construct=0x0782805C | FFunctionParams=0x0EBDDA20 | exec=0x00000000 | native=0x00000000
+  Func[05] Client_ReconvertPlayerInteractionHandler -> Z_Construct=0x078280A8 | FFunctionParams=0x0EBDDB10 | exec=0x00000000 | native=0x00000000
+  Func[06] Client_RecoverItemAddedToInventory -> Z_Construct=0x078280F4 | FFunctionParams=0x0EBDDBC8 | exec=0x00000000 | native=0x00000000
+  Func[07] Client_RecoverOfferingEffects -> Z_Construct=0x07828140 | FFunctionParams=0x0EBDDC80 | exec=0x00000000 | native=0x00000000
+  Func[08] Client_SetIsReconnecting -> Z_Construct=0x07828198 | FFunctionParams=0x0EBDDD08 | exec=0x00000000 | native=0x00000000
+  Func[09] Client_SetSpectatorMode -> Z_Construct=0x078281F0 | FFunctionParams=0x0EBDDD90 | exec=0x00000000 | native=0x00000000
+  Func[10] Client_SetSpectatorModeInEditor -> Z_Construct=0x07828248 | FFunctionParams=0x0EBDDE50 | exec=0x00000000 | native=0x00000000
+  Func[11] Client_SpectateAI -> Z_Construct=0x07828294 | FFunctionParams=0x0EBDDED0 | exec=0x00000000 | native=0x00000000
+  Func[12] Client_SyncTallyResult -> Z_Construct=0x078282E0 | FFunctionParams=0x0EBDDF78 | exec=0x00000000 | native=0x00000000
+  Func[13] GetControlledPlayer -> Z_Construct=0x0782832C | FFunctionParams=0x0EBDDFF8 | exec=0x00000000 | native=0x00000000
+  Func[14] GetSpectatedPlayer -> Z_Construct=0x07828378 | FFunctionParams=0x0EBDE078 | exec=0x00000000 | native=0x00000000
+  Func[15] GetSpectatedPlayerState -> Z_Construct=0x078283C4 | FFunctionParams=0x0EBDE0F8 | exec=0x00000000 | native=0x00000000
+  Func[16] HadIntroCompletedOnDS -> Z_Construct=0x0782841C | FFunctionParams=0x0EBDE180 | exec=0x00000000 | native=0x00000000
+  Func[17] ImplementRunLockMechanic -> Z_Construct=0x07828468 | FFunctionParams=0x0EBDE1C8 | exec=0x00000000 | native=0x00000000
+  Func[18] IsGetPIARequirement -> Z_Construct=0x078284C0 | FFunctionParams=0x0EBDE250 | exec=0x00000000 | native=0x00000000
+  Func[19] IsReconnected -> Z_Construct=0x07828518 | FFunctionParams=0x0EBDE2D8 | exec=0x00000000 | native=0x00000000
+  Func[20] IsReconnecting -> Z_Construct=0x07828570 | FFunctionParams=0x0EBDE360 | exec=0x00000000 | native=0x00000000
+  Func[21] IsSpectating -> Z_Construct=0x078285C8 | FFunctionParams=0x0EBDE3E8 | exec=0x00000000 | native=0x00000000
+  Func[22] MobileJoystickInput_Pressed -> Z_Construct=0x07828620 | FFunctionParams=0x0EBDE4A0 | exec=0x00000000 | native=0x00000000
+  Func[23] OnDBDPlayerViewTargetChange -> Z_Construct=0x0782866C | FFunctionParams=0x0EBDE520 | exec=0x00000000 | native=0x00000000
+  Func[24] OnRep_Fence -> Z_Construct=0x078286B8 | FFunctionParams=0x0EBDE568 | exec=0x00000000 | native=0x00000000
+  Func[25] Server_ActivateAI -> Z_Construct=0x07828710 | FFunctionParams=0x0EBDE620 | exec=0x00000000 | native=0x00000000
+  Func[26] Server_ActivateAIAll -> Z_Construct=0x07828768 | FFunctionParams=0x0EBDE708 | exec=0x00000000 | native=0x00000000
+  Func[27] Server_CheckNetworkDelay -> Z_Construct=0x078287B4 | FFunctionParams=0x0EBDE780 | exec=0x00000000 | native=0x00000000
+  Func[28] Server_DebugSend -> Z_Construct=0x07828800 | FFunctionParams=0x0EBDE7F8 | exec=0x00000000 | native=0x00000000
+  Func[29] Server_EndGame -> Z_Construct=0x0782884C | FFunctionParams=0x0EBDE8B0 | exec=0x00000000 | native=0x00000000
+  Func[30] Server_GetPIARequirement -> Z_Construct=0x07828898 | FFunctionParams=0x0EBDE8F8 | exec=0x00000000 | native=0x00000000
+  Func[31] Server_HandleVote -> Z_Construct=0x078288E4 | FFunctionParams=0x0EBDE9A0 | exec=0x00000000 | native=0x00000000
+  Func[32] Server_LeaveGame -> Z_Construct=0x0782893C | FFunctionParams=0x0EBDEA28 | exec=0x00000000 | native=0x00000000
+  Func[33] Server_RequestGetBattleLog -> Z_Construct=0x07828988 | FFunctionParams=0x0EBDEAA0 | exec=0x00000000 | native=0x00000000
+  Func[34] Server_RequestSurrender -> Z_Construct=0x078289D4 | FFunctionParams=0x0EBDEB18 | exec=0x00000000 | native=0x00000000
+  Func[35] Server_SetHasMoveInputThisFrame -> Z_Construct=0x07828A2C | FFunctionParams=0x0EBDEBA0 | exec=0x00000000 | native=0x00000000
+  Func[36] Server_SetQuickMessage -> Z_Construct=0x07828A78 | FFunctionParams=0x0EBDEC48 | exec=0x00000000 | native=0x00000000
+  Func[37] Server_SetReadyToTravel -> Z_Construct=0x07828AC4 | FFunctionParams=0x0EBDEC90 | exec=0x00000000 | native=0x00000000
+  Func[38] Server_SetSpectatorMode -> Z_Construct=0x07828B1C | FFunctionParams=0x0EBDED18 | exec=0x00000000 | native=0x00000000
+  Func[39] Server_SetSpectatorModeInEditor -> Z_Construct=0x07828B74 | FFunctionParams=0x0EBDEDD8 | exec=0x00000000 | native=0x00000000
+  Func[40] ServerViewPlayer -> Z_Construct=0x07828BC0 | FFunctionParams=0x0EBDEE50 | exec=0x00000000 | native=0x00000000
+  Func[41] SetShouldMoveInputReplicateToServer -> Z_Construct=0x07828C18 | FFunctionParams=0x0EBDEED8 | exec=0x00000000 | native=0x00000000
+  Func[42] ShowVirtualJoystick -> Z_Construct=0x07828C70 | FFunctionParams=0x0EBDEF60 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] DBDPlayerState @ 0x0EBE7BC8 | StaticClass=0x07845E84 (Singleton=0x00000000) | SizeOf=0x08A8 | Props=54 | Funcs=57
+  Prop[00] +0x0338 : OnAIFinishedPlayingEvent (PropStruct=0x0EBE7000, GenFlags=0x1B)
+  Prop[01] +0x0348 : MirrorsId (PropStruct=0x0EBE7030, GenFlags=0x15)
+  Prop[02] +0x0358 : MatchId (PropStruct=0x0EBE7058, GenFlags=0x15)
+  Prop[03] +0x0368 : ClanId (PropStruct=0x0EBE7080, GenFlags=0x15) [RepNotify=OnRep_DisplayData]
+  Prop[04] +0x0378 : PartyId (PropStruct=0x0EBE70A8, GenFlags=0x15) [RepNotify=OnRep_DisplayData]
+  Prop[05] +0x0001 : HasBotTag (PropStruct=0x0EBE70D0, GenFlags=0x2C) [RepNotify=OnRep_DisplayData]
+  Prop[06] +0x0001 : IsLeader (PropStruct=0x0EBE7108, GenFlags=0x2C) [RepNotify=OnRep_DisplayData]
+  Prop[07] +0x038C : DeadTime (PropStruct=0x0EBE7140, GenFlags=0x03) [RepNotify=OnRep_DisplayData]
+  Prop[08] +0x0390 : CustomPropertyData (PropStruct=0x0EBE7168, GenFlags=0x15) [RepNotify=OnRep_CustomPropertyData]
+  Prop[09] +0x03A0 : MigrateFeatures (PropStruct=0x0EBE7190, GenFlags=0x03)
+  Prop[10] +0x0001 : IsUseWiggleSkillCheck (PropStruct=0x0EBE71B8, GenFlags=0x2C) [RepNotify=OnRep_DisplayData]
+  Prop[11] +0x03A8 : UnreadyMaps (PropStruct=0x0EBE71F0, GenFlags=0x15) [RepNotify=OnRep_DisplayData]
+  Prop[12] +0x03B8 : ContentVersion (PropStruct=0x0EBE7218, GenFlags=0x15)
+  Prop[13] +0x0000 : UnderlyingType (PropStruct=0x0EBE7240, GenFlags=0x00)
+  Prop[14] +0x03C8 : GameRole (PropStruct=0x0EBE7270, GenFlags=0x1E) [RepNotify=OnRep_DisplayData]
+  Prop[15] +0x0001 : IsPlayerReady (PropStruct=0x0EBE72A0, GenFlags=0x2C) [RepNotify=OnRep_DisplayData]
+  Prop[16] +0x0001 : IsPIARequirementsHaveBeenSetOnDS (PropStruct=0x0EBE72D8, GenFlags=0x2C)
+  Prop[17] +0x03D0 : DedicatedServerHandler (PropStruct=0x0EBE7310, GenFlags=0x12)
+  Prop[18] +0x03D8 : TaskReminder (PropStruct=0x0EBE7340, GenFlags=0x12)
+  Prop[19] +0x03E0 : HighlightComponent (PropStruct=0x0EBE7370, GenFlags=0x12)
+  Prop[20] +0x03E8 : _highlightComponentClass (PropStruct=0x0EBE73A0, GenFlags=0x11)
+  Prop[21] +0x03F0 : ActivityTracker (PropStruct=0x0EBE73D8, GenFlags=0x12)
+  Prop[22] +0x03F8 : EmblemEvaluator (PropStruct=0x0EBE7408, GenFlags=0x12)
+  Prop[23] +0x0400 : CamperData (PropStruct=0x0EBE7438, GenFlags=0x19) [RepNotify=OnRep_DisplayData]
+  Prop[24] +0x0420 : SlasherData (PropStruct=0x0EBE7468, GenFlags=0x19) [RepNotify=OnRep_DisplayData]
+  Prop[25] +0x0440 : PlayerData (PropStruct=0x0EBE7498, GenFlags=0x19) [RepNotify=OnRep_DisplayData]
+  Prop[26] +0x04A8 : PlayerCustomization (PropStruct=0x0EBE74C8, GenFlags=0x19) [RepNotify=OnRep_CustomizationData]
+  Prop[27] +0x04E0 : OnPlayerGameplayEvent (PropStruct=0x0EBE74F8, GenFlags=0x1B)
+  Prop[28] +0x04F0 : OnGameStateChanged (PropStruct=0x0EBE7528, GenFlags=0x1B)
+  Prop[29] +0x0500 : OnPlayerGameStateChanged (PropStruct=0x0EBE7558, GenFlags=0x1B)
+  Prop[30] +0x0528 : InGamePlayerStateData (PropStruct=0x0EBE7588, GenFlags=0x19)
+  Prop[31] +0x0001 : _awardedScoresByType (PropStruct=0x0EBE75B8, GenFlags=0x19)
+  Prop[32] +0x0000 : _awardedScoresByType_Key (PropStruct=0x0EBE75E8, GenFlags=0x14)
+  Prop[33] +0x0538 : _awardedScoresByType (PropStruct=0x0EBE7610, GenFlags=0x17)
+  Prop[34] +0x0588 : _cachedUserGameStats (PropStruct=0x0EBE7640, GenFlags=0x19)
+  Prop[35] +0x0000 : _ongoingScoreEvents (PropStruct=0x0EBE7670, GenFlags=0x19)
+  Prop[36] +0x0618 : _ongoingScoreEvents (PropStruct=0x0EBE76A0, GenFlags=0x16)
+  Prop[37] +0x0630 : _recentGameplayEvents (PropStruct=0x0EBE76D0, GenFlags=0x19)
+  Prop[38] +0x0001 : _inParadise (PropStruct=0x0EBE7700, GenFlags=0x2C)
+  Prop[39] +0x06F0 : _gameplayNotificationManager (PropStruct=0x0EBE7738, GenFlags=0x12)
+  Prop[40] +0x06F8 : _levelReadyToPlayComponent (PropStruct=0x0EBE7768, GenFlags=0x12)
+  Prop[41] +0x0700 : _characterStatsHandler (PropStruct=0x0EBE7798, GenFlags=0x12)
+  Prop[42] +0x0708 : _playerScoreComponent (PropStruct=0x0EBE77C8, GenFlags=0x12)
+  Prop[43] +0x0730 : _platformAccountId (PropStruct=0x0EBE77F8, GenFlags=0x15) [RepNotify=OnRep_DisplayData]
+  Prop[44] +0x0740 : _selectedCamperIndex (PropStruct=0x0EBE7820, GenFlags=0x03) [RepNotify=OnRep_DisplayData]
+  Prop[45] +0x0744 : _selectedSlasherIndex (PropStruct=0x0EBE7848, GenFlags=0x03) [RepNotify=OnRep_DisplayData]
+  Prop[46] +0x0000 : UnderlyingType (PropStruct=0x0EBE7870, GenFlags=0x00)
+  Prop[47] +0x0748 : _difficultyLevel (PropStruct=0x0EBE78A0, GenFlags=0x1E) [RepNotify=OnRep_BotDifficultyLevel]
+  Prop[48] +0x0000 : UnderlyingType (PropStruct=0x0EBE78D0, GenFlags=0x06)
+  Prop[49] +0x0864 : _platform (PropStruct=0x0EBE78F8, GenFlags=0x1E) [RepNotify=OnRep_DisplayData]
+  Prop[50] +0x0001 : _crossplayAllowed (PropStruct=0x0EBE7928, GenFlags=0x2C) [RepNotify=OnRep_DisplayData]
+  Prop[51] +0x0001 : _gameLevelLoaded (PropStruct=0x0EBE7960, GenFlags=0x2C)
+  Prop[52] +0x0001 : _showPortraitBorder (PropStruct=0x0EBE7998, GenFlags=0x2C)
+  Prop[53] +0x0001 : _isInitPlayerGameState (PropStruct=0x0EBE79D0, GenFlags=0x2C)
+  Func[00] Authority_CancelOngoingScoreEvent -> Z_Construct=0x07845F90 | FFunctionParams=0x0EBE4838 | exec=0x00000000 | native=0x00000000
+  Func[01] Authority_EndOngoingScoreEvent -> Z_Construct=0x07845FDC | FFunctionParams=0x0EBE48B8 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_ForceCancelOngoingScoreEvent -> Z_Construct=0x07846028 | FFunctionParams=0x0EBE4970 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_ForceEndOngoingScoreEvent -> Z_Construct=0x07846074 | FFunctionParams=0x0EBE4A28 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_HandleScoreEvent -> Z_Construct=0x078460C0 | FFunctionParams=0x0EBE4AE0 | exec=0x00000000 | native=0x00000000
+  Func[05] ChangeStartingGameRole -> Z_Construct=0x0784610C | FFunctionParams=0x0EBE4B98 | exec=0x00000000 | native=0x00000000
+  Func[06] Client_HandleEscapeScoreEvent -> Z_Construct=0x07846158 | FFunctionParams=0x0EBE4BE0 | exec=0x00000000 | native=0x00000000
+  Func[07] Client_RemotelyDispatchGameEvent -> Z_Construct=0x078461A4 | FFunctionParams=0x0EBE4C98 | exec=0x00000000 | native=0x00000000
+  Func[08] Client_RemotelyDispatchGameEventWithScore -> Z_Construct=0x078461F0 | FFunctionParams=0x0EBE4D88 | exec=0x00000000 | native=0x00000000
+  Func[09] Client_RemoveItemFromInventory -> Z_Construct=0x07846248 | FFunctionParams=0x0EBE4E40 | exec=0x00000000 | native=0x00000000
+  Func[10] Client_SetGameRole -> Z_Construct=0x07846294 | FFunctionParams=0x0EBE4EF8 | exec=0x00000000 | native=0x00000000
+  Func[11] Client_SetInParadise -> Z_Construct=0x078462E0 | FFunctionParams=0x0EBE4F40 | exec=0x00000000 | native=0x00000000
+  Func[12] Client_UpdateInventoryItem -> Z_Construct=0x0784632C | FFunctionParams=0x0EBE4FE8 | exec=0x00000000 | native=0x00000000
+  Func[13] Client_UpdateWallet -> Z_Construct=0x07846378 | FFunctionParams=0x0EBE5090 | exec=0x00000000 | native=0x00000000
+  Func[14] FireActiveStatusEffectEvent -> Z_Construct=0x078463C4 | FFunctionParams=0x0EBE5198 | exec=0x00000000 | native=0x00000000
+  Func[15] FireActiveStatusViewEvent -> Z_Construct=0x07846410 | FFunctionParams=0x0EBE5278 | exec=0x00000000 | native=0x00000000
+  Func[16] FireScoreEvent -> Z_Construct=0x0784645C | FFunctionParams=0x0EBE5360 | exec=0x00000000 | native=0x00000000
+  Func[17] GetCamperIndex -> Z_Construct=0x078464A8 | FFunctionParams=0x0EBE53D8 | exec=0x00000000 | native=0x00000000
+  Func[18] GetClanPartyCount -> Z_Construct=0x078464F4 | FFunctionParams=0x0EBE5450 | exec=0x00000000 | native=0x00000000
+  Func[19] GetCurrentCharacterID -> Z_Construct=0x07846540 | FFunctionParams=0x0EBE54C8 | exec=0x00000000 | native=0x00000000
+  Func[20] GetCurrentPlayerRankForRole -> Z_Construct=0x0784658C | FFunctionParams=0x0EBE55B0 | exec=0x00000000 | native=0x00000000
+  Func[21] GetCurrentRankForCurrentRole -> Z_Construct=0x078465D8 | FFunctionParams=0x0EBE5628 | exec=0x00000000 | native=0x00000000
+  Func[22] GetCurrentRanklistNum -> Z_Construct=0x07846624 | FFunctionParams=0x0EBE56A0 | exec=0x00000000 | native=0x00000000
+  Func[23] GetDamageTargetNum -> Z_Construct=0x07846670 | FFunctionParams=0x0EBE5718 | exec=0x00000000 | native=0x00000000
+  Func[24] GetGameplayNotificationManager -> Z_Construct=0x078466BC | FFunctionParams=0x0EBE5798 | exec=0x00000000 | native=0x00000000
+  Func[25] GetGameRole -> Z_Construct=0x07846708 | FFunctionParams=0x0EBE5850 | exec=0x00000000 | native=0x00000000
+  Func[26] GetLevelReadyToPlayPlayerComponent -> Z_Construct=0x07846754 | FFunctionParams=0x0EBE58D0 | exec=0x00000000 | native=0x00000000
+  Func[27] GetPlayerGameState -> Z_Construct=0x078467A0 | FFunctionParams=0x0EBE5988 | exec=0x00000000 | native=0x00000000
+  Func[28] GetSlasherIndex -> Z_Construct=0x078467EC | FFunctionParams=0x0EBE5A00 | exec=0x00000000 | native=0x00000000
+  Func[29] GetUserGameStats -> Z_Construct=0x07846844 | FFunctionParams=0x0EBE5AC0 | exec=0x00000000 | native=0x00000000
+  Func[30] HasEscaped -> Z_Construct=0x0784689C | FFunctionParams=0x0EBE5B48 | exec=0x00000000 | native=0x00000000
+  Func[31] HasHappened -> Z_Construct=0x078468F4 | FFunctionParams=0x0EBE5C70 | exec=0x00000000 | native=0x00000000
+  Func[32] Multicast_FireGameplayEvent -> Z_Construct=0x07846940 | FFunctionParams=0x0EBE5DC8 | exec=0x00000000 | native=0x00000000
+  Func[33] Multicast_FireGameplayEventWithScore -> Z_Construct=0x0784698C | FFunctionParams=0x0EBE5F58 | exec=0x00000000 | native=0x00000000
+  Func[34] Multicast_ForceReliablePlayerStateFirst -> Z_Construct=0x078469D8 | FFunctionParams=0x0EBE5FA0 | exec=0x00000000 | native=0x00000000
+  Func[35] Multicast_SetAsDisconnected -> Z_Construct=0x07846A24 | FFunctionParams=0x0EBE5FE8 | exec=0x00000000 | native=0x00000000
+  Func[36] Multicast_SetAsLeftMatch -> Z_Construct=0x07846A70 | FFunctionParams=0x0EBE6030 | exec=0x00000000 | native=0x00000000
+  Func[37] Multicast_SetInParadise -> Z_Construct=0x07846ABC | FFunctionParams=0x0EBE6078 | exec=0x00000000 | native=0x00000000
+  Func[38] Multicast_SetPlayerGameState -> Z_Construct=0x07846B14 | FFunctionParams=0x0EBE6170 | exec=0x00000000 | native=0x00000000
+  Func[39] Multicast_SetSelectedCharacterId -> Z_Construct=0x07846B6C | FFunctionParams=0x0EBE6298 | exec=0x00000000 | native=0x00000000
+  Func[40] OnRep_BotDifficultyLevel -> Z_Construct=0x07846BB8 | FFunctionParams=0x0EBE62E0 | exec=0x00000000 | native=0x00000000
+  Func[41] OnRep_CustomizationData -> Z_Construct=0x07846C04 | FFunctionParams=0x0EBE6328 | exec=0x00000000 | native=0x00000000
+  Func[42] OnRep_CustomPropertyData -> Z_Construct=0x07846C50 | FFunctionParams=0x0EBE6370 | exec=0x00000000 | native=0x00000000
+  Func[43] OnRep_DisplayData -> Z_Construct=0x07846C9C | FFunctionParams=0x0EBE63B8 | exec=0x00000000 | native=0x00000000
+  Func[44] PyGetPlayerId -> Z_Construct=0x07846CE8 | FFunctionParams=0x0EBE6430 | exec=0x00000000 | native=0x00000000
+  Func[45] Server_HandleScoreEvent -> Z_Construct=0x07846D34 | FFunctionParams=0x0EBE64E8 | exec=0x00000000 | native=0x00000000
+  Func[46] Server_SelectKiller -> Z_Construct=0x07846D80 | FFunctionParams=0x0EBE6560 | exec=0x00000000 | native=0x00000000
+  Func[47] Server_SelectSurvivor -> Z_Construct=0x07846DCC | FFunctionParams=0x0EBE65D8 | exec=0x00000000 | native=0x00000000
+  Func[48] Server_SetEmblemScore -> Z_Construct=0x07846E18 | FFunctionParams=0x0EBE6688 | exec=0x00000000 | native=0x00000000
+  Func[49] Server_SetGameRole -> Z_Construct=0x07846E64 | FFunctionParams=0x0EBE6740 | exec=0x00000000 | native=0x00000000
+  Func[50] Server_SetPlayerGameState -> Z_Construct=0x07846EBC | FFunctionParams=0x0EBE6838 | exec=0x00000000 | native=0x00000000
+  Func[51] Server_SetSelectedCharacterId -> Z_Construct=0x07846F14 | FFunctionParams=0x0EBE6960 | exec=0x00000000 | native=0x00000000
+  Func[52] SetCamperIndex -> Z_Construct=0x07846F60 | FFunctionParams=0x0EBE69D8 | exec=0x00000000 | native=0x00000000
+  Func[53] SetGameRolePy -> Z_Construct=0x07846FB8 | FFunctionParams=0x0EBE6AD0 | exec=0x00000000 | native=0x00000000
+  Func[54] SetIsLeader -> Z_Construct=0x07847010 | FFunctionParams=0x0EBE6B58 | exec=0x00000000 | native=0x00000000
+  Func[55] SetSlasherIndex -> Z_Construct=0x0784705C | FFunctionParams=0x0EBE6BD0 | exec=0x00000000 | native=0x00000000
+  Func[56] UpdateOngoingScores -> Z_Construct=0x078470A8 | FFunctionParams=0x0EBE6C18 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] DefaultOutlineUpdateStrategy @ 0x0EC00000 | StaticClass=0x0789CD04 (Singleton=0x00000000) | SizeOf=0x00E0 | Props=2 | Funcs=0
+  Prop[00] +0x00C0 : _revealedColorToSurvivor (PropStruct=0x0EBFFF90, GenFlags=0x19)
+  Prop[01] +0x00D0 : _revealedColorToKiller (PropStruct=0x0EBFFFC0, GenFlags=0x19)
+
+[FClassParams] EscapeDoor @ 0x0EC0F820 | StaticClass=0x078F60A4 (Singleton=0x00000000) | SizeOf=0x0448 | Props=15 | Funcs=27
+  Prop[00] +0x0000 : EscapePositions (PropStruct=0x0EC0F4A8, GenFlags=0x19)
+  Prop[01] +0x0360 : EscapePositions (PropStruct=0x0EC0F4D8, GenFlags=0x16)
+  Prop[02] +0x0000 : EscapeFire (PropStruct=0x0EC0F508, GenFlags=0x12)
+  Prop[03] +0x0370 : EscapeFire (PropStruct=0x0EC0F538, GenFlags=0x16)
+  Prop[04] +0x0380 : _killerOpenChargeable (PropStruct=0x0EC0F568, GenFlags=0x12)
+  Prop[05] +0x0388 : _openChargeable (PropStruct=0x0EC0F598, GenFlags=0x12)
+  Prop[06] +0x0390 : _ak_audio_escape (PropStruct=0x0EC0F5C8, GenFlags=0x12)
+  Prop[07] +0x0398 : _escapeDoorAnimInstance (PropStruct=0x0EC0F5F8, GenFlags=0x12)
+  Prop[08] +0x03A0 : _rootComponent (PropStruct=0x0EC0F628, GenFlags=0x12)
+  Prop[09] +0x0001 : _activated (PropStruct=0x0EC0F658, GenFlags=0x2C) [RepNotify=OnRep_Activated]
+  Prop[10] +0x03B0 : _escapeBlockerInstance (PropStruct=0x0EC0F690, GenFlags=0x12) [RepNotify=OnRep_OnEscapeBlockerSet]
+  Prop[11] +0x03B8 : _spotlight (PropStruct=0x0EC0F6C0, GenFlags=0x12)
+  Prop[12] +0x0001 : _isOpen (PropStruct=0x0EC0F6F0, GenFlags=0x2C)
+  Prop[13] +0x0418 : _perceptionStimuliComponent (PropStruct=0x0EC0F728, GenFlags=0x12)
+  Prop[14] +0x0420 : _doorSwitchBlockableComponent (PropStruct=0x0EC0F758, GenFlags=0x12)
+  Func[00] Authority_SetEscapeBlocker -> Z_Construct=0x078F61B0 | FFunctionParams=0x0EC0E678 | exec=0x00000000 | native=0x00000000
+  Func[01] GetAtlantaExitOpeningIndicatorVisibility -> Z_Construct=0x078F6208 | FFunctionParams=0x0EC0E700 | exec=0x00000000 | native=0x00000000
+  Func[02] GetDoorSkeletalMeshComponent -> Z_Construct=0x078F6254 | FFunctionParams=0x0EC0E780 | exec=0x00000000 | native=0x00000000
+  Func[03] GetEscapeSwitchFloorLocation -> Z_Construct=0x078F62A0 | FFunctionParams=0x0EC0E800 | exec=0x00000000 | native=0x00000000
+  Func[04] GetExitArea -> Z_Construct=0x078F62EC | FFunctionParams=0x0EC0E880 | exec=0x00000000 | native=0x00000000
+  Func[05] GetIsOpen -> Z_Construct=0x078F6344 | FFunctionParams=0x0EC0E908 | exec=0x00000000 | native=0x00000000
+  Func[06] GetOpenEscapeInteraction -> Z_Construct=0x078F6390 | FFunctionParams=0x0EC0E988 | exec=0x00000000 | native=0x00000000
+  Func[07] GetParadiseServerLocation -> Z_Construct=0x078F63DC | FFunctionParams=0x0EC0EA08 | exec=0x00000000 | native=0x00000000
+  Func[08] GetSwitchSceneComponent -> Z_Construct=0x078F6428 | FFunctionParams=0x0EC0EA88 | exec=0x00000000 | native=0x00000000
+  Func[09] IsActivated -> Z_Construct=0x078F6480 | FFunctionParams=0x0EC0EB10 | exec=0x00000000 | native=0x00000000
+  Func[10] IsDoorSwitchBlocked -> Z_Construct=0x078F64D8 | FFunctionParams=0x0EC0EB98 | exec=0x00000000 | native=0x00000000
+  Func[11] LightAllLights -> Z_Construct=0x078F6524 | FFunctionParams=0x0EC0EBE0 | exec=0x00000000 | native=0x00000000
+  Func[12] OnBlockDoorSwitchCosmetic -> Z_Construct=0x078F6570 | FFunctionParams=0x0EC0EC28 | exec=0x00000000 | native=0x00000000
+  Func[13] OnCamperStartOpeningExitGate -> Z_Construct=0x078F65BC | FFunctionParams=0x0EC0ECA8 | exec=0x00000000 | native=0x00000000
+  Func[14] OnEscapeZoneBeginOverlap -> Z_Construct=0x078F6608 | FFunctionParams=0x0EC0ED28 | exec=0x00000000 | native=0x00000000
+  Func[15] OnEscapeZoneEndOverlap -> Z_Construct=0x078F6654 | FFunctionParams=0x0EC0EDA8 | exec=0x00000000 | native=0x00000000
+  Func[16] OnExitActivationChanged -> Z_Construct=0x078F66AC | FFunctionParams=0x0EC0EE30 | exec=0x00000000 | native=0x00000000
+  Func[17] OnExitGateOpened -> Z_Construct=0x078F66F8 | FFunctionParams=0x0EC0EEB0 | exec=0x00000000 | native=0x00000000
+  Func[18] OnExitOpenChanged -> Z_Construct=0x078F6750 | FFunctionParams=0x0EC0EF38 | exec=0x00000000 | native=0x00000000
+  Func[19] OnPlayerEnterExitArea -> Z_Construct=0x078F679C | FFunctionParams=0x0EC0EFB8 | exec=0x00000000 | native=0x00000000
+  Func[20] OnPlayerExitExitArea -> Z_Construct=0x078F67E8 | FFunctionParams=0x0EC0F038 | exec=0x00000000 | native=0x00000000
+  Func[21] OnRep_Activated -> Z_Construct=0x078F6840 | FFunctionParams=0x0EC0F0C0 | exec=0x00000000 | native=0x00000000
+  Func[22] OnRep_OnEscapeBlockerSet -> Z_Construct=0x078F688C | FFunctionParams=0x0EC0F140 | exec=0x00000000 | native=0x00000000
+  Func[23] OnUnblockDoorSwitchCosmetic -> Z_Construct=0x078F68D8 | FFunctionParams=0x0EC0F188 | exec=0x00000000 | native=0x00000000
+  Func[24] SetIsActivated -> Z_Construct=0x078F6930 | FFunctionParams=0x0EC0F210 | exec=0x00000000 | native=0x00000000
+  Func[25] StartAtlantaDoorBeepingSound -> Z_Construct=0x078F697C | FFunctionParams=0x0EC0F258 | exec=0x00000000 | native=0x00000000
+  Func[26] StartAtlantaDoorOpeningSound -> Z_Construct=0x078F69C8 | FFunctionParams=0x0EC0F2A0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] Generator @ 0x0EC283C8 | StaticClass=0x07941410 (Singleton=0x00000000) | SizeOf=0x0610 | Props=38 | Funcs=67
+  Prop[00] +0x0360 : _regressionRateMultiplierCurve (PropStruct=0x0EC27B30, GenFlags=0x12)
+  Prop[01] +0x0001 : Activated (PropStruct=0x0EC27B60, GenFlags=0x2C)
+  Prop[02] +0x0001 : IsRepaired (PropStruct=0x0EC27B98, GenFlags=0x2C) [RepNotify=OnRep_IsRepaired]
+  Prop[03] +0x0001 : RecordIsRepaired (PropStruct=0x0EC27BD0, GenFlags=0x2C)
+  Prop[04] +0x0001 : IsASMCachePreWarm (PropStruct=0x0EC27C08, GenFlags=0x2C)
+  Prop[05] +0x0001 : IsPlaySkillcheckAesthetic (PropStruct=0x0EC27C40, GenFlags=0x2C)
+  Prop[06] +0x0001 : ForceRevealToLocalPlayer (PropStruct=0x0EC27C78, GenFlags=0x2C)
+  Prop[07] +0x0370 : KillerOutlineFadeCurve (PropStruct=0x0EC27CB0, GenFlags=0x12)
+  Prop[08] +0x0378 : NativePercentComplete (PropStruct=0x0EC27CE0, GenFlags=0x0A) [RepNotify=OnRep_NativePercentComplete] [Bool SetBitFunc=0x00000000 ()]
+  Prop[09] +0x0380 : OnGeneratorRepaired (PropStruct=0x0EC27D08, GenFlags=0x1B)
+  Prop[10] +0x0390 : OnGeneratorRepairedBySurvivor (PropStruct=0x0EC27D38, GenFlags=0x1B)
+  Prop[11] +0x03A0 : OnIsDamagedChanged (PropStruct=0x0EC27D68, GenFlags=0x1B)
+  Prop[12] +0x0001 : FireLevelScoreEventOnFix (PropStruct=0x0EC27D98, GenFlags=0x2C)
+  Prop[13] +0x0400 : _generatorDamageComponent (PropStruct=0x0EC27DD0, GenFlags=0x12)
+  Prop[14] +0x0001 : _activatedTopLightsTransformMap (PropStruct=0x0EC27E00, GenFlags=0x19)
+  Prop[15] +0x0000 : _activatedTopLightsTransformMap_Key (PropStruct=0x0EC27E30, GenFlags=0x14)
+  Prop[16] +0x0408 : _activatedTopLightsTransformMap (PropStruct=0x0EC27E58, GenFlags=0x17)
+  Prop[17] +0x0460 : _perceptionStimuliComponent (PropStruct=0x0EC27E88, GenFlags=0x12)
+  Prop[18] +0x0468 : _regressChargeUntilThresholdIsReached (PropStruct=0x0EC27EB8, GenFlags=0x12)
+  Prop[19] +0x0490 : _repairSemanticTag (PropStruct=0x0EC27EE8, GenFlags=0x19)
+  Prop[20] +0x0001 : _isBlocked (PropStruct=0x0EC27F18, GenFlags=0x2C) [RepNotify=OnRep_IsBlocked]
+  Prop[21] +0x0001 : _isBlockedFromCharging (PropStruct=0x0EC27F50, GenFlags=0x2C)
+  Prop[22] +0x0000 : _blockingSources (PropStruct=0x0EC27F88, GenFlags=0x12)
+  Prop[23] +0x04A0 : _blockingSources (PropStruct=0x0EC27FB8, GenFlags=0x18)
+  Prop[24] +0x0520 : _generatorCharge (PropStruct=0x0EC27FE0, GenFlags=0x12)
+  Prop[25] +0x0528 : _generatorID (PropStruct=0x0EC28010, GenFlags=0x03)
+  Prop[26] +0x0000 : _playerStartTimes (PropStruct=0x0EC28038, GenFlags=0x19)
+  Prop[27] +0x0530 : _playerStartTimes (PropStruct=0x0EC28068, GenFlags=0x16)
+  Prop[28] +0x0001 : _isAutoCompleted (PropStruct=0x0EC28098, GenFlags=0x2C)
+  Prop[29] +0x0001 : _isOvercharged (PropStruct=0x0EC280D0, GenFlags=0x2C)
+  Prop[30] +0x055C : _overchargeLevel (PropStruct=0x0EC28108, GenFlags=0x03)
+  Prop[31] +0x0560 : _coopRepairTracker (PropStruct=0x0EC28130, GenFlags=0x12)
+  Prop[32] +0x0568 : _VFX_LightDistanceDefault (PropStruct=0x0EC28160, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[33] +0x0000 : _damagingInteractions (PropStruct=0x0EC28188, GenFlags=0x12)
+  Prop[34] +0x05C8 : _damagingInteractions (PropStruct=0x0EC281B8, GenFlags=0x16)
+  Prop[35] +0x05D8 : _defaultImmediateRegressionPercentage (PropStruct=0x0EC281E8, GenFlags=0x19)
+  Prop[36] +0x0001 : _shouldLimitRegressionEvents (PropStruct=0x0EC28218, GenFlags=0x2C)
+  Prop[37] +0x0608 : _broadcastProgressChangdOngoingEventIntervalTime (PropStruct=0x0EC28250, GenFlags=0x0A) [Bool SetBitFunc=0x0EC27B60 ()]
+  Func[00] AddDamagingInteraction -> Z_Construct=0x0794151C | FFunctionParams=0x0EC250A8 | exec=0x00000000 | native=0x00000000
+  Func[01] AddPlayerStartTime -> Z_Construct=0x07941568 | FFunctionParams=0x0EC25158 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_AddBlockingSource -> Z_Construct=0x079415B4 | FFunctionParams=0x0EC251D8 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_AddTimedBlockingSource -> Z_Construct=0x07941600 | FFunctionParams=0x0EC25288 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_CancelRepairInteractions -> Z_Construct=0x0794164C | FFunctionParams=0x0EC25340 | exec=0x00000000 | native=0x00000000
+  Func[05] Authority_GetRepairingCampers -> Z_Construct=0x07941698 | FFunctionParams=0x0EC253F8 | exec=0x00000000 | native=0x00000000
+  Func[06] Authority_OnChargeApplied -> Z_Construct=0x079416F0 | FFunctionParams=0x0EC25548 | exec=0x00000000 | native=0x00000000
+  Func[07] Authority_OnChargeChanged -> Z_Construct=0x0794173C | FFunctionParams=0x0EC25628 | exec=0x00000000 | native=0x00000000
+  Func[08] Authority_RemoveBlockingSource -> Z_Construct=0x07941788 | FFunctionParams=0x0EC256A8 | exec=0x00000000 | native=0x00000000
+  Func[09] Authority_RepairDamage -> Z_Construct=0x079417D4 | FFunctionParams=0x0EC25728 | exec=0x00000000 | native=0x00000000
+  Func[10] BroadcastGeneratorRepaired -> Z_Construct=0x0794182C | FFunctionParams=0x0EC257B0 | exec=0x00000000 | native=0x00000000
+  Func[11] BroadcastGeneratorRepairedBySurvivor -> Z_Construct=0x07941878 | FFunctionParams=0x0EC25830 | exec=0x00000000 | native=0x00000000
+  Func[12] BroadcastIsDamagedChangedEvent -> Z_Construct=0x079418C4 | FFunctionParams=0x0EC258B0 | exec=0x00000000 | native=0x00000000
+  Func[13] CanSurvivorReactToBlockingEntity -> Z_Construct=0x0794191C | FFunctionParams=0x0EC25970 | exec=0x00000000 | native=0x00000000
+  Func[14] ClearGeneratorOvercharge -> Z_Construct=0x07941968 | FFunctionParams=0x0EC259B8 | exec=0x00000000 | native=0x00000000
+  Func[15] GetCanGeneratorBeDamaged -> Z_Construct=0x079419C0 | FFunctionParams=0x0EC25A40 | exec=0x00000000 | native=0x00000000
+  Func[16] GetChargePercentComplete -> Z_Construct=0x07941A0C | FFunctionParams=0x0EC25AB8 | exec=0x00000000 | native=0x00000000
+  Func[17] GetGeneratorChargeComponent -> Z_Construct=0x07941A58 | FFunctionParams=0x0EC25B38 | exec=0x00000000 | native=0x00000000
+  Func[18] GetGeneratorDamageComponent -> Z_Construct=0x07941AA4 | FFunctionParams=0x0EC25BB8 | exec=0x00000000 | native=0x00000000
+  Func[19] GetGeneratorID -> Z_Construct=0x07941AF0 | FFunctionParams=0x0EC25C30 | exec=0x00000000 | native=0x00000000
+  Func[20] GetIsAutoCompleted -> Z_Construct=0x07941B48 | FFunctionParams=0x0EC25CB8 | exec=0x00000000 | native=0x00000000
+  Func[21] GetIsBlocked -> Z_Construct=0x07941BA0 | FFunctionParams=0x0EC25D40 | exec=0x00000000 | native=0x00000000
+  Func[22] GetIsBlockedFromCharging -> Z_Construct=0x07941BF8 | FFunctionParams=0x0EC25DC8 | exec=0x00000000 | native=0x00000000
+  Func[23] GetMapActorComponent -> Z_Construct=0x07941C44 | FFunctionParams=0x0EC25E48 | exec=0x00000000 | native=0x00000000
+  Func[24] GetOverchargeLevel -> Z_Construct=0x07941C90 | FFunctionParams=0x0EC25EC0 | exec=0x00000000 | native=0x00000000
+  Func[25] GetOverchargeSkillCheckToTrigger -> Z_Construct=0x07941CDC | FFunctionParams=0x0EC25F78 | exec=0x00000000 | native=0x00000000
+  Func[26] GetPlayerStartTime -> Z_Construct=0x07941D28 | FFunctionParams=0x0EC26028 | exec=0x00000000 | native=0x00000000
+  Func[27] GetPlayerStartTimes -> Z_Construct=0x07941D74 | FFunctionParams=0x0EC260E0 | exec=0x00000000 | native=0x00000000
+  Func[28] GetRepairers -> Z_Construct=0x07941DC0 | FFunctionParams=0x0EC26198 | exec=0x00000000 | native=0x00000000
+  Func[29] GetRepairPercentComplete -> Z_Construct=0x07941E0C | FFunctionParams=0x0EC26210 | exec=0x00000000 | native=0x00000000
+  Func[30] GetSkeletalMesh -> Z_Construct=0x07941E58 | FFunctionParams=0x0EC26290 | exec=0x00000000 | native=0x00000000
+  Func[31] IsBeingDamagedByKiller -> Z_Construct=0x07941EB0 | FFunctionParams=0x0EC26318 | exec=0x00000000 | native=0x00000000
+  Func[32] IsBeingRepaired -> Z_Construct=0x07941F08 | FFunctionParams=0x0EC263A0 | exec=0x00000000 | native=0x00000000
+  Func[33] IsBlocked -> Z_Construct=0x07941F60 | FFunctionParams=0x0EC26428 | exec=0x00000000 | native=0x00000000
+  Func[34] Multicast_PlayFailSparksFX -> Z_Construct=0x07941FB8 | FFunctionParams=0x0EC264E8 | exec=0x00000000 | native=0x00000000
+  Func[35] NotifyRepairFinish -> Z_Construct=0x07942004 | FFunctionParams=0x0EC265A0 | exec=0x00000000 | native=0x00000000
+  Func[36] NotifyRepairStart -> Z_Construct=0x07942050 | FFunctionParams=0x0EC26620 | exec=0x00000000 | native=0x00000000
+  Func[37] OnBlockingStatusChanged -> Z_Construct=0x079420A8 | FFunctionParams=0x0EC266A8 | exec=0x00000000 | native=0x00000000
+  Func[38] OnChargeApplied -> Z_Construct=0x07942100 | FFunctionParams=0x0EC267F8 | exec=0x00000000 | native=0x00000000
+  Func[39] OnChargeChanged -> Z_Construct=0x0794214C | FFunctionParams=0x0EC268A8 | exec=0x00000000 | native=0x00000000
+  Func[40] OnEscapeDoorActivated -> Z_Construct=0x07942198 | FFunctionParams=0x0EC268F0 | exec=0x00000000 | native=0x00000000
+  Func[41] OnPreWarmASMCache -> Z_Construct=0x079421E4 | FFunctionParams=0x0EC26938 | exec=0x00000000 | native=0x00000000
+  Func[42] OnRegressionStateChanged -> Z_Construct=0x0794223C | FFunctionParams=0x0EC269F8 | exec=0x00000000 | native=0x00000000
+  Func[43] OnRep_IsBlocked -> Z_Construct=0x07942288 | FFunctionParams=0x0EC26A40 | exec=0x00000000 | native=0x00000000
+  Func[44] OnRep_IsRepaired -> Z_Construct=0x079422D4 | FFunctionParams=0x0EC26A88 | exec=0x00000000 | native=0x00000000
+  Func[45] OnRep_NativePercentComplete -> Z_Construct=0x07942320 | FFunctionParams=0x0EC26AD0 | exec=0x00000000 | native=0x00000000
+  Func[46] OnRepaired -> Z_Construct=0x07942378 | FFunctionParams=0x0EC26B58 | exec=0x00000000 | native=0x00000000
+  Func[47] OnRepairedBP -> Z_Construct=0x079423D0 | FFunctionParams=0x0EC26BE0 | exec=0x00000000 | native=0x00000000
+  Func[48] OnResetGenerator -> Z_Construct=0x0794241C | FFunctionParams=0x0EC26C28 | exec=0x00000000 | native=0x00000000
+  Func[49] OnUpdateChargeProgress -> Z_Construct=0x07942468 | FFunctionParams=0x0EC26CA0 | exec=0x00000000 | native=0x00000000
+  Func[50] OnUpdatePistonSoundsWhenReconnect -> Z_Construct=0x079424B4 | FFunctionParams=0x0EC26D18 | exec=0x00000000 | native=0x00000000
+  Func[51] PlayFailSparksFX -> Z_Construct=0x0794250C | FFunctionParams=0x0EC26DD8 | exec=0x00000000 | native=0x00000000
+  Func[52] PostAkEvent -> Z_Construct=0x07942558 | FFunctionParams=0x0EC26F90 | exec=0x00000000 | native=0x00000000
+  Func[53] RemovePlayerStartTime -> Z_Construct=0x079425A4 | FFunctionParams=0x0EC27010 | exec=0x00000000 | native=0x00000000
+  Func[54] ResetGenerator -> Z_Construct=0x079425F0 | FFunctionParams=0x0EC27058 | exec=0x00000000 | native=0x00000000
+  Func[55] SetComplete -> Z_Construct=0x07942648 | FFunctionParams=0x0EC270E0 | exec=0x00000000 | native=0x00000000
+  Func[56] SetIsAutoCompleted -> Z_Construct=0x079426A0 | FFunctionParams=0x0EC27168 | exec=0x00000000 | native=0x00000000
+  Func[57] SetIsBlockedFromCharging -> Z_Construct=0x079426F8 | FFunctionParams=0x0EC271F0 | exec=0x00000000 | native=0x00000000
+  Func[58] SetIsOvercharged -> Z_Construct=0x07942750 | FFunctionParams=0x0EC27278 | exec=0x00000000 | native=0x00000000
+  Func[59] SetOverchargeLevel -> Z_Construct=0x0794279C | FFunctionParams=0x0EC272F0 | exec=0x00000000 | native=0x00000000
+  Func[60] SetRepaired -> Z_Construct=0x07942800 | FFunctionParams=0x0EC273B8 | exec=0x00000000 | native=0x00000000
+  Func[61] ShouldDoOverchargeSkillcheck -> Z_Construct=0x07942858 | FFunctionParams=0x0EC27440 | exec=0x00000000 | native=0x00000000
+  Func[62] SpawnBloodEffectToSocket -> Z_Construct=0x079428A4 | FFunctionParams=0x0EC274B8 | exec=0x00000000 | native=0x00000000
+  Func[63] StopDischarge -> Z_Construct=0x079428F0 | FFunctionParams=0x0EC27500 | exec=0x00000000 | native=0x00000000
+  Func[64] TriggerSkillCheck -> Z_Construct=0x0794293C | FFunctionParams=0x0EC27580 | exec=0x00000000 | native=0x00000000
+  Func[65] TriggerSkillCheckFailureLoudNoise -> Z_Construct=0x07942988 | FFunctionParams=0x0EC27600 | exec=0x00000000 | native=0x00000000
+  Func[66] VFXClampTopActivationSingleLight -> Z_Construct=0x079429D4 | FFunctionParams=0x0EC276A8 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] GeneratorOutlineUpdateStrategy @ 0x0EC2B038 | StaticClass=0x07957C60 (Singleton=0x00000000) | SizeOf=0x0170 | Props=2 | Funcs=2
+  Prop[00] +0x0138 : _unrepairedAuraColor (PropStruct=0x0EC2AFC8, GenFlags=0x19)
+  Prop[01] +0x0148 : _fullyRepairedAuraColor (PropStruct=0x0EC2AFF8, GenFlags=0x19)
+  Func[00] GetWhiteColor -> Z_Construct=0x07957D6C | FFunctionParams=0x0EC2AED0 | exec=0x00000000 | native=0x00000000
+  Func[01] GetYellowColor -> Z_Construct=0x07957DB8 | FFunctionParams=0x0EC2AF50 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] Hatch @ 0x0EC2E820 | StaticClass=0x0795C2D4 (Singleton=0x00000000) | SizeOf=0x03E0 | Props=7 | Funcs=30
+  Prop[00] +0x0000 : UnderlyingType (PropStruct=0x0EC2E668, GenFlags=0x00)
+  Prop[01] +0x03A0 : _hatchState (PropStruct=0x0EC2E698, GenFlags=0x1E) [RepNotify=OnRep_HatchState]
+  Prop[02] +0x0001 : _isSurvivorEscaping (PropStruct=0x0EC2E6C8, GenFlags=0x2C)
+  Prop[03] +0x0001 : _isEndGameOver (PropStruct=0x0EC2E700, GenFlags=0x2C)
+  Prop[04] +0x0001 : _isForceOpen (PropStruct=0x0EC2E738, GenFlags=0x2C)
+  Prop[05] +0x0001 : _attemptToCloseHatchOnNextEscape (PropStruct=0x0EC2E770, GenFlags=0x2C)
+  Prop[06] +0x03B0 : _baseCollision (PropStruct=0x0EC2E7A8, GenFlags=0x12)
+  Func[00] Authority_CheckedChangeActiveState -> Z_Construct=0x0795C3E0 | FFunctionParams=0x0EC2D630 | exec=0x00000000 | native=0x00000000
+  Func[01] Authority_CheckedCloseHatch -> Z_Construct=0x0795C42C | FFunctionParams=0x0EC2D678 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_CheckedOpenForceClosedHatch -> Z_Construct=0x0795C478 | FFunctionParams=0x0EC2D6C0 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_CheckedOpenHatch -> Z_Construct=0x0795C4C4 | FFunctionParams=0x0EC2D708 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_OnCloseTimerComplete -> Z_Construct=0x0795C510 | FFunctionParams=0x0EC2D750 | exec=0x00000000 | native=0x00000000
+  Func[05] Authority_SetHatchState -> Z_Construct=0x0795C55C | FFunctionParams=0x0EC2D808 | exec=0x00000000 | native=0x00000000
+  Func[06] Authority_SetIsForceOpen -> Z_Construct=0x0795C5B4 | FFunctionParams=0x0EC2D890 | exec=0x00000000 | native=0x00000000
+  Func[07] FXCloseHatch -> Z_Construct=0x0795C600 | FFunctionParams=0x0EC2D8D8 | exec=0x00000000 | native=0x00000000
+  Func[08] FXEndSmoke -> Z_Construct=0x0795C64C | FFunctionParams=0x0EC2D920 | exec=0x00000000 | native=0x00000000
+  Func[09] FXOpenHatch -> Z_Construct=0x0795C698 | FFunctionParams=0x0EC2D968 | exec=0x00000000 | native=0x00000000
+  Func[10] GetAnimationMontageSlave -> Z_Construct=0x0795C6E4 | FFunctionParams=0x0EC2D9E8 | exec=0x00000000 | native=0x00000000
+  Func[11] GetEscapeFocalPoint -> Z_Construct=0x0795C730 | FFunctionParams=0x0EC2DA68 | exec=0x00000000 | native=0x00000000
+  Func[12] GetHatchCenter -> Z_Construct=0x0795C77C | FFunctionParams=0x0EC2DAE8 | exec=0x00000000 | native=0x00000000
+  Func[13] GetHatchState -> Z_Construct=0x0795C7C8 | FFunctionParams=0x0EC2DBA0 | exec=0x00000000 | native=0x00000000
+  Func[14] IsOpen -> Z_Construct=0x0795C820 | FFunctionParams=0x0EC2DC28 | exec=0x00000000 | native=0x00000000
+  Func[15] IsSurvivorEscaping -> Z_Construct=0x0795C878 | FFunctionParams=0x0EC2DCB0 | exec=0x00000000 | native=0x00000000
+  Func[16] Local_SetHatchState -> Z_Construct=0x0795C8D0 | FFunctionParams=0x0EC2DD38 | exec=0x00000000 | native=0x00000000
+  Func[17] OnEndGameOver -> Z_Construct=0x0795C91C | FFunctionParams=0x0EC2DDF0 | exec=0x00000000 | native=0x00000000
+  Func[18] OnGeneratorFixed -> Z_Construct=0x0795C968 | FFunctionParams=0x0EC2DEA8 | exec=0x00000000 | native=0x00000000
+  Func[19] OnHatchStateModified -> Z_Construct=0x0795C9B4 | FFunctionParams=0x0EC2DFD0 | exec=0x00000000 | native=0x00000000
+  Func[20] OnHatchStateUnhidden -> Z_Construct=0x0795CA00 | FFunctionParams=0x0EC2E018 | exec=0x00000000 | native=0x00000000
+  Func[21] OnHatchVisibilityChanged -> Z_Construct=0x0795CA58 | FFunctionParams=0x0EC2E0A0 | exec=0x00000000 | native=0x00000000
+  Func[22] OnRep_HatchState -> Z_Construct=0x0795CAA4 | FFunctionParams=0x0EC2E158 | exec=0x00000000 | native=0x00000000
+  Func[23] OnSurvivorEscaped -> Z_Construct=0x0795CAF0 | FFunctionParams=0x0EC2E1A0 | exec=0x00000000 | native=0x00000000
+  Func[24] OnSurvivorEscapeInterrupted -> Z_Construct=0x0795CB3C | FFunctionParams=0x0EC2E1E8 | exec=0x00000000 | native=0x00000000
+  Func[25] OnSurvivorEscaping -> Z_Construct=0x0795CB88 | FFunctionParams=0x0EC2E230 | exec=0x00000000 | native=0x00000000
+  Func[26] OnSurvivorsLeftChanged -> Z_Construct=0x0795CBD4 | FFunctionParams=0x0EC2E2A8 | exec=0x00000000 | native=0x00000000
+  Func[27] ResetTimer -> Z_Construct=0x0795CC20 | FFunctionParams=0x0EC2E320 | exec=0x00000000 | native=0x00000000
+  Func[28] SetForceIsOpen -> Z_Construct=0x0795CC78 | FFunctionParams=0x0EC2E3A8 | exec=0x00000000 | native=0x00000000
+  Func[29] SetIsSurvivorEscaping -> Z_Construct=0x0795CCD0 | FFunctionParams=0x0EC2E430 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] Pallet @ 0x0EC7CB88 | StaticClass=0x07AB7474 (Singleton=0x00000000) | SizeOf=0x0468 | Props=20 | Funcs=31
+  Prop[00] +0x034C : PalletDownEvadeDoorFrontPointOffset (PropStruct=0x0EC7C718, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[01] +0x0000 : UnderlyingType (PropStruct=0x0EC7C740, GenFlags=0x00)
+  Prop[02] +0x0368 : _state (PropStruct=0x0EC7C770, GenFlags=0x1E)
+  Prop[03] +0x0000 : UnderlyingType (PropStruct=0x0EC7C7A0, GenFlags=0x00)
+  Prop[04] +0x0369 : _cacheState (PropStruct=0x0EC7C7D0, GenFlags=0x1E) [RepNotify=OnRep_CacheState]
+  Prop[05] +0x0001 : _isPendingDestruction (PropStruct=0x0EC7C800, GenFlags=0x2C)
+  Prop[06] +0x0001 : _isIllusionaryPalletDown (PropStruct=0x0EC7C838, GenFlags=0x2C)
+  Prop[07] +0x0001 : _isDestroyedByEntity (PropStruct=0x0EC7C870, GenFlags=0x2C)
+  Prop[08] +0x0370 : _illusionaryPallet (PropStruct=0x0EC7C8A8, GenFlags=0x12)
+  Prop[09] +0x0378 : _destroyLeft (PropStruct=0x0EC7C8D8, GenFlags=0x12)
+  Prop[10] +0x0380 : _destroyRight (PropStruct=0x0EC7C908, GenFlags=0x12)
+  Prop[11] +0x0388 : _pushBox (PropStruct=0x0EC7C938, GenFlags=0x12)
+  Prop[12] +0x03C0 : _stunBox (PropStruct=0x0EC7C968, GenFlags=0x12)
+  Prop[13] +0x0000 : _stunnedActors (PropStruct=0x0EC7C998, GenFlags=0x12)
+  Prop[14] +0x03C8 : _stunnedActors (PropStruct=0x0EC7C9C8, GenFlags=0x18)
+  Prop[15] +0x0418 : _palletAnimInstance (PropStruct=0x0EC7C9F0, GenFlags=0x12)
+  Prop[16] +0x0420 : _playerDoingPulldown (PropStruct=0x0EC7CA20, GenFlags=0x12)
+  Prop[17] +0x0428 : _navEvadeLoopComponent (PropStruct=0x0EC7CA50, GenFlags=0x12)
+  Prop[18] +0x0430 : _palletPulldownBlockerComponent (PropStruct=0x0EC7CA80, GenFlags=0x12)
+  Prop[19] +0x0001 : _isDreamPallet (PropStruct=0x0EC7CAB0, GenFlags=0x2C)
+  Func[00] Authority_StunSlashersinStunZone -> Z_Construct=0x07AB7580 | FFunctionParams=0x0EC7B478 | exec=0x00000000 | native=0x00000000
+  Func[01] BP_ExplodeStunPallet -> Z_Construct=0x07AB75CC | FFunctionParams=0x0EC7B4F8 | exec=0x00000000 | native=0x00000000
+  Func[02] CallMulticastStunSlasher -> Z_Construct=0x07AB7624 | FFunctionParams=0x0EC7B5F0 | exec=0x00000000 | native=0x00000000
+  Func[03] DestroyedPost -> Z_Construct=0x07AB7670 | FFunctionParams=0x0EC7B638 | exec=0x00000000 | native=0x00000000
+  Func[04] EntityExplodePallet -> Z_Construct=0x07AB76BC | FFunctionParams=0x0EC7B6B8 | exec=0x00000000 | native=0x00000000
+  Func[05] ExplodePallet -> Z_Construct=0x07AB7708 | FFunctionParams=0x0EC7B738 | exec=0x00000000 | native=0x00000000
+  Func[06] GetDestructibleAreaPrimitiveComponents -> Z_Construct=0x07AB7754 | FFunctionParams=0x0EC7B7F0 | exec=0x00000000 | native=0x00000000
+  Func[07] GetIsDreamPallet -> Z_Construct=0x07AB77AC | FFunctionParams=0x0EC7B878 | exec=0x00000000 | native=0x00000000
+  Func[08] GetIsPulledDown -> Z_Construct=0x07AB7804 | FFunctionParams=0x0EC7B900 | exec=0x00000000 | native=0x00000000
+  Func[09] GetPlayerDoingPulldown -> Z_Construct=0x07AB7850 | FFunctionParams=0x0EC7B980 | exec=0x00000000 | native=0x00000000
+  Func[10] IsDestroyedByEntity -> Z_Construct=0x07AB78A8 | FFunctionParams=0x0EC7BA08 | exec=0x00000000 | native=0x00000000
+  Func[11] IsPendingDestruction -> Z_Construct=0x07AB7900 | FFunctionParams=0x0EC7BA90 | exec=0x00000000 | native=0x00000000
+  Func[12] IsPulldownBlockedByEntity -> Z_Construct=0x07AB7958 | FFunctionParams=0x0EC7BB18 | exec=0x00000000 | native=0x00000000
+  Func[13] Multicast_EntityExplodePallet -> Z_Construct=0x07AB79A4 | FFunctionParams=0x0EC7BB98 | exec=0x00000000 | native=0x00000000
+  Func[14] Multicast_PulldownPallet -> Z_Construct=0x07AB79F0 | FFunctionParams=0x0EC7BBE0 | exec=0x00000000 | native=0x00000000
+  Func[15] Multicast_ResetPallet -> Z_Construct=0x07AB7A3C | FFunctionParams=0x0EC7BC28 | exec=0x00000000 | native=0x00000000
+  Func[16] Multicast_StunActor -> Z_Construct=0x07AB7A94 | FFunctionParams=0x0EC7BD20 | exec=0x00000000 | native=0x00000000
+  Func[17] OnOverlapPushBox -> Z_Construct=0x07AB7AEC | FFunctionParams=0x0EC7BEB8 | exec=0x00000000 | native=0x00000000
+  Func[18] OnPalletPulldownBlockedByEntityHide -> Z_Construct=0x07AB7B38 | FFunctionParams=0x0EC7BF00 | exec=0x00000000 | native=0x00000000
+  Func[19] OnPalletPulldownBlockedByEntityShow -> Z_Construct=0x07AB7B84 | FFunctionParams=0x0EC7BF48 | exec=0x00000000 | native=0x00000000
+  Func[20] OnPalletPulledUp_BP -> Z_Construct=0x07AB7BD0 | FFunctionParams=0x0EC7BF90 | exec=0x00000000 | native=0x00000000
+  Func[21] OnPalletStunHit -> Z_Construct=0x07AB7C1C | FFunctionParams=0x0EC7BFD8 | exec=0x00000000 | native=0x00000000
+  Func[22] OnRep_CacheState -> Z_Construct=0x07AB7C68 | FFunctionParams=0x0EC7C020 | exec=0x00000000 | native=0x00000000
+  Func[23] OnStunOverlap -> Z_Construct=0x07AB7CC0 | FFunctionParams=0x0EC7C1B8 | exec=0x00000000 | native=0x00000000
+  Func[24] PullDown -> Z_Construct=0x07AB7D0C | FFunctionParams=0x0EC7C238 | exec=0x00000000 | native=0x00000000
+  Func[25] PulldownPallet -> Z_Construct=0x07AB7D58 | FFunctionParams=0x0EC7C280 | exec=0x00000000 | native=0x00000000
+  Func[26] ResetPallet -> Z_Construct=0x07AB7DA4 | FFunctionParams=0x0EC7C2C8 | exec=0x00000000 | native=0x00000000
+  Func[27] SetIllusionaryPallet -> Z_Construct=0x07AB7DF0 | FFunctionParams=0x0EC7C348 | exec=0x00000000 | native=0x00000000
+  Func[28] SetPalletState -> Z_Construct=0x07AB7E88 | FFunctionParams=0x0EC7C400 | exec=0x00000000 | native=0x00000000
+  Func[29] SetPendingDestruction -> Z_Construct=0x07AB7EE0 | FFunctionParams=0x0EC7C488 | exec=0x00000000 | native=0x00000000
+  Func[30] UpdateIllusionaryPallet -> Z_Construct=0x07AB7F2C | FFunctionParams=0x0EC7C4D0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] PlayerInteractionHandler @ 0x0EC8F748 | StaticClass=0x07AEFF94 (Singleton=0x00000000) | SizeOf=0x0420 | Props=46 | Funcs=53
+  Prop[00] +0x0130 : PriorityConeAngle (PropStruct=0x0EC8ECF0, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[01] +0x0158 : Authority_SecondaryActionDoneDelegate (PropStruct=0x0EC8ED18, GenFlags=0x1B)
+  Prop[02] +0x0168 : NewInteractionRequestedDelegate (PropStruct=0x0EC8ED48, GenFlags=0x1B)
+  Prop[03] +0x0178 : ServerValidatedInteractionStartedDelegate (PropStruct=0x0EC8ED78, GenFlags=0x1B)
+  Prop[04] +0x0188 : ServerValidatedInteractionEndedDelegate (PropStruct=0x0EC8EDA8, GenFlags=0x1B)
+  Prop[05] +0x0000 : UnderlyingType (PropStruct=0x0EC8EDD8, GenFlags=0x00)
+  Prop[06] +0x0198 : InteractionLayer (PropStruct=0x0EC8EE08, GenFlags=0x1E)
+  Prop[07] +0x01A8 : OnDeactivateSkillCheckDelegate (PropStruct=0x0EC8EE38, GenFlags=0x1B)
+  Prop[08] +0x0001 : _hasInteractionRequest (PropStruct=0x0EC8EE68, GenFlags=0x2C)
+  Prop[09] +0x0001 : _hasInteractionRequestInBuffer (PropStruct=0x0EC8EEA0, GenFlags=0x2C)
+  Prop[10] +0x01F0 : _requestedInteraction (PropStruct=0x0EC8EED8, GenFlags=0x12)
+  Prop[11] +0x0000 : UnderlyingType (PropStruct=0x0EC8EF08, GenFlags=0x00)
+  Prop[12] +0x01F8 : _requestedInteractionType (PropStruct=0x0EC8EF38, GenFlags=0x1E)
+  Prop[13] +0x0000 : UnderlyingType (PropStruct=0x0EC8EF68, GenFlags=0x00)
+  Prop[14] +0x01F9 : _requestedInteractionState (PropStruct=0x0EC8EF98, GenFlags=0x1E)
+  Prop[15] +0x0200 : _currentInteraction (PropStruct=0x0EC8EFC8, GenFlags=0x12) [RepNotify=OnRep_CurrentInteraction]
+  Prop[16] +0x0210 : _currentInteractionPlayerProperties (PropStruct=0x0EC8EFF8, GenFlags=0x19)
+  Prop[17] +0x0001 : _currentInteractionChargeCompleted (PropStruct=0x0EC8F028, GenFlags=0x2C)
+  Prop[18] +0x0000 : _currentPlayerDependencies (PropStruct=0x0EC8F060, GenFlags=0x12)
+  Prop[19] +0x0278 : _currentPlayerDependencies (PropStruct=0x0EC8F090, GenFlags=0x16)
+  Prop[20] +0x0000 : UnderlyingType (PropStruct=0x0EC8F0C0, GenFlags=0x00)
+  Prop[21] +0x0288 : _currentInteractionType (PropStruct=0x0EC8F0F0, GenFlags=0x1E)
+  Prop[22] +0x0290 : _skillCheck (PropStruct=0x0EC8F120, GenFlags=0x12)
+  Prop[23] +0x0000 : _progressBasedSkillChecks (PropStruct=0x0EC8F150, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[24] +0x02A0 : _progressBasedSkillChecks (PropStruct=0x0EC8F178, GenFlags=0x16)
+  Prop[25] +0x0300 : _attachedInteractor (PropStruct=0x0EC8F1A8, GenFlags=0x0E)
+  Prop[26] +0x0001 : _hasInterruptionRequest (PropStruct=0x0EC8F1D8, GenFlags=0x2C)
+  Prop[27] +0x0001 : _hasInterruptionRequestInBuffer (PropStruct=0x0EC8F210, GenFlags=0x2C)
+  Prop[28] +0x0000 : UnderlyingType (PropStruct=0x0EC8F248, GenFlags=0x00)
+  Prop[29] +0x030B : _requestedInterruptionState (PropStruct=0x0EC8F278, GenFlags=0x1E)
+  Prop[30] +0x0310 : _requestedInterruptionOtherParty (PropStruct=0x0EC8F2A8, GenFlags=0x12)
+  Prop[31] +0x0318 : _requestedInterruptionDefinition (PropStruct=0x0EC8F2D8, GenFlags=0x12)
+  Prop[32] +0x0001 : _requestedInterruptionIsInterruptor (PropStruct=0x0EC8F308, GenFlags=0x2C)
+  Prop[33] +0x0328 : _currentInterruptionOtherParty (PropStruct=0x0EC8F340, GenFlags=0x12)
+  Prop[34] +0x0330 : _currentInterruptionDefinition (PropStruct=0x0EC8F370, GenFlags=0x12)
+  Prop[35] +0x0001 : _currentInterruptionIsInterruptor (PropStruct=0x0EC8F3A0, GenFlags=0x2C)
+  Prop[36] +0x0001 : _interactionInProgress (PropStruct=0x0EC8F3D8, GenFlags=0x2C)
+  Prop[37] +0x0340 : _waitForOtherInteractionEndTimer (PropStruct=0x0EC8F410, GenFlags=0x19)
+  Prop[38] +0x0001 : _scanForInteractions (PropStruct=0x0EC8F440, GenFlags=0x2C)
+  Prop[39] +0x0000 : _interactionsInZone (PropStruct=0x0EC8F478, GenFlags=0x12)
+  Prop[40] +0x0390 : _interactionsInZone (PropStruct=0x0EC8F4A8, GenFlags=0x16)
+  Prop[41] +0x03A0 : _currentInteractionPhase (PropStruct=0x0EC8F4D8, GenFlags=0x19)
+  Prop[42] +0x03C8 : _interactionToSwapTo (PropStruct=0x0EC8F508, GenFlags=0x12)
+  Prop[43] +0x0001 : _disableInteractionSourcesToExceptions (PropStruct=0x0EC8F538, GenFlags=0x19)
+  Prop[44] +0x0000 : _disableInteractionSourcesToExceptions_Key (PropStruct=0x0EC8F568, GenFlags=0x12)
+  Prop[45] +0x03D0 : _disableInteractionSourcesToExceptions (PropStruct=0x0EC8F598, GenFlags=0x17)
+  Func[00] AddInteraction -> Z_Construct=0x07AF00A0 | FFunctionParams=0x0EC8CB00 | exec=0x00000000 | native=0x00000000
+  Func[01] AddSelfInteractions -> Z_Construct=0x07AF00EC | FFunctionParams=0x0EC8CB80 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_ClearPlayerDependencies -> Z_Construct=0x07AF0138 | FFunctionParams=0x0EC8CBC8 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_ClearPlayerDependency -> Z_Construct=0x07AF0184 | FFunctionParams=0x0EC8CC48 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_TriggerCustomSkillCheck -> Z_Construct=0x07AF01D0 | FFunctionParams=0x0EC8CD30 | exec=0x00000000 | native=0x00000000
+  Func[05] Broadcast_ConfirmChargedCompleted -> Z_Construct=0x07AF0228 | FFunctionParams=0x0EC8CDB8 | exec=0x00000000 | native=0x00000000
+  Func[06] Broadcast_InteractionPlayerProperties -> Z_Construct=0x07AF0274 | FFunctionParams=0x0EC8CE38 | exec=0x00000000 | native=0x00000000
+  Func[07] Broadcast_InteractionPlayerProperties_Multicast -> Z_Construct=0x07AF02C0 | FFunctionParams=0x0EC8CEB8 | exec=0x00000000 | native=0x00000000
+  Func[08] Broadcast_Multicast_ConfirmChargedCompleted -> Z_Construct=0x07AF0318 | FFunctionParams=0x0EC8CF40 | exec=0x00000000 | native=0x00000000
+  Func[09] CanPerformInteraction -> Z_Construct=0x07AF0370 | FFunctionParams=0x0EC8CFF8 | exec=0x00000000 | native=0x00000000
+  Func[10] CleanInteractionArray -> Z_Construct=0x07AF03BC | FFunctionParams=0x0EC8D078 | exec=0x00000000 | native=0x00000000
+  Func[11] Client_NotifyChargeCompleted -> Z_Construct=0x07AF0408 | FFunctionParams=0x0EC8D0F8 | exec=0x00000000 | native=0x00000000
+  Func[12] Client_StartCustomSkillCheck -> Z_Construct=0x07AF0454 | FFunctionParams=0x0EC8D1E0 | exec=0x00000000 | native=0x00000000
+  Func[13] Client_StopSkillCheck -> Z_Construct=0x07AF04A0 | FFunctionParams=0x0EC8D228 | exec=0x00000000 | native=0x00000000
+  Func[14] GetAdditiveSkillCheckProbabilityModifier -> Z_Construct=0x07AF04EC | FFunctionParams=0x0EC8D2A0 | exec=0x00000000 | native=0x00000000
+  Func[15] GetAvailableInteraction -> Z_Construct=0x07AF0538 | FFunctionParams=0x0EC8D390 | exec=0x00000000 | native=0x00000000
+  Func[16] GetAvailableInteractionByID -> Z_Construct=0x07AF0584 | FFunctionParams=0x0EC8D440 | exec=0x00000000 | native=0x00000000
+  Func[17] GetAvailableInteractionIterateAll -> Z_Construct=0x07AF05D0 | FFunctionParams=0x0EC8D530 | exec=0x00000000 | native=0x00000000
+  Func[18] GetAvailableInteractions -> Z_Construct=0x07AF061C | FFunctionParams=0x0EC8D5E8 | exec=0x00000000 | native=0x00000000
+  Func[19] GetCurrentInteraction -> Z_Construct=0x07AF0668 | FFunctionParams=0x0EC8D668 | exec=0x00000000 | native=0x00000000
+  Func[20] GetCurrentInteractionOfType -> Z_Construct=0x07AF06B4 | FFunctionParams=0x0EC8D758 | exec=0x00000000 | native=0x00000000
+  Func[21] GetInteractionsInZone -> Z_Construct=0x07AF0700 | FFunctionParams=0x0EC8D810 | exec=0x00000000 | native=0x00000000
+  Func[22] GetMultiplicativeSkillCheckProbabilityModifier -> Z_Construct=0x07AF074C | FFunctionParams=0x0EC8D888 | exec=0x00000000 | native=0x00000000
+  Func[23] GetRequestedInteraction -> Z_Construct=0x07AF0798 | FFunctionParams=0x0EC8D908 | exec=0x00000000 | native=0x00000000
+  Func[24] GetSkillCheck -> Z_Construct=0x07AF07E4 | FFunctionParams=0x0EC8D988 | exec=0x00000000 | native=0x00000000
+  Func[25] HasActiveSkillCheck -> Z_Construct=0x07AF083C | FFunctionParams=0x0EC8DA10 | exec=0x00000000 | native=0x00000000
+  Func[26] HasAvailableInteraction -> Z_Construct=0x07AF0894 | FFunctionParams=0x0EC8DB08 | exec=0x00000000 | native=0x00000000
+  Func[27] IncrementSuccessiveSkillCheckCount -> Z_Construct=0x07AF08E0 | FFunctionParams=0x0EC8DB50 | exec=0x00000000 | native=0x00000000
+  Func[28] Multicast_CancelCurrentInteractionByInput -> Z_Construct=0x07AF092C | FFunctionParams=0x0EC8DB98 | exec=0x00000000 | native=0x00000000
+  Func[29] Multicast_InteractionRequestResult -> Z_Construct=0x07AF0984 | FFunctionParams=0x0EC8DCC8 | exec=0x00000000 | native=0x00000000
+  Func[30] Multicast_InterruptionRequestResult_Interruptor -> Z_Construct=0x07AF09DC | FFunctionParams=0x0EC8DD50 | exec=0x00000000 | native=0x00000000
+  Func[31] Multicast_RequestInterruption_Interruptee -> Z_Construct=0x07AF0A28 | FFunctionParams=0x0EC8DE08 | exec=0x00000000 | native=0x00000000
+  Func[32] Multicast_SetInteractionToSwapTo -> Z_Construct=0x07AF0A74 | FFunctionParams=0x0EC8DE88 | exec=0x00000000 | native=0x00000000
+  Func[33] Multicast_StoreInteraction -> Z_Construct=0x07AF0AC0 | FFunctionParams=0x0EC8DF78 | exec=0x00000000 | native=0x00000000
+  Func[34] Multicast_StoreInterruption_Interruptor -> Z_Construct=0x07AF0B0C | FFunctionParams=0x0EC8E030 | exec=0x00000000 | native=0x00000000
+  Func[35] NumInteractionsInZone -> Z_Construct=0x07AF0B58 | FFunctionParams=0x0EC8E0A8 | exec=0x00000000 | native=0x00000000
+  Func[36] OnRep_CurrentInteraction -> Z_Construct=0x07AF0BA4 | FFunctionParams=0x0EC8E0F0 | exec=0x00000000 | native=0x00000000
+  Func[37] PauseSkillCheckTimer -> Z_Construct=0x07AF0BF0 | FFunctionParams=0x0EC8E138 | exec=0x00000000 | native=0x00000000
+  Func[38] RemoveInteraction -> Z_Construct=0x07AF0C3C | FFunctionParams=0x0EC8E1B8 | exec=0x00000000 | native=0x00000000
+  Func[39] ResetSuccessiveSkillCheckCount -> Z_Construct=0x07AF0C88 | FFunctionParams=0x0EC8E200 | exec=0x00000000 | native=0x00000000
+  Func[40] Server_AnswerInterruption_Interruptee -> Z_Construct=0x07AF0CE0 | FFunctionParams=0x0EC8E288 | exec=0x00000000 | native=0x00000000
+  Func[41] Server_CancelCurrentInteractionByInput -> Z_Construct=0x07AF0D2C | FFunctionParams=0x0EC8E2D0 | exec=0x00000000 | native=0x00000000
+  Func[42] Server_DebugRequestInteraction -> Z_Construct=0x07AF0D78 | FFunctionParams=0x0EC8E3A8 | exec=0x00000000 | native=0x00000000
+  Func[43] Server_RequestInterruption_Interruptor -> Z_Construct=0x07AF0DC4 | FFunctionParams=0x0EC8E3F0 | exec=0x00000000 | native=0x00000000
+  Func[44] Server_SetInteractionToSwapTo -> Z_Construct=0x07AF0E10 | FFunctionParams=0x0EC8E470 | exec=0x00000000 | native=0x00000000
+  Func[45] Server_StoreInteraction -> Z_Construct=0x07AF0E5C | FFunctionParams=0x0EC8E560 | exec=0x00000000 | native=0x00000000
+  Func[46] Server_StoreInterruption_Interruptor -> Z_Construct=0x07AF0EA8 | FFunctionParams=0x0EC8E618 | exec=0x00000000 | native=0x00000000
+  Func[47] SetInteractionHanderZNearOffset -> Z_Construct=0x07AF0EF4 | FFunctionParams=0x0EC8E690 | exec=0x00000000 | native=0x00000000
+  Func[48] SetScanForInteractionsEnabled -> Z_Construct=0x07AF0F4C | FFunctionParams=0x0EC8E718 | exec=0x00000000 | native=0x00000000
+  Func[49] SetSkillCheckTimer -> Z_Construct=0x07AF0F98 | FFunctionParams=0x0EC8E790 | exec=0x00000000 | native=0x00000000
+  Func[50] StartCustomSkillCheck -> Z_Construct=0x07AF0FE4 | FFunctionParams=0x0EC8E878 | exec=0x00000000 | native=0x00000000
+  Func[51] UnPauseSkillCheckTimer -> Z_Construct=0x07AF1030 | FFunctionParams=0x0EC8E8C0 | exec=0x00000000 | native=0x00000000
+  Func[52] UseForceInteractionHanderZNear -> Z_Construct=0x07AF1088 | FFunctionParams=0x0EC8E948 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] Searchable @ 0x0ECB2A50 | StaticClass=0x07B87888 (Singleton=0x00000000) | SizeOf=0x0418 | Props=12 | Funcs=6
+  Prop[00] +0x0360 : Weight (PropStruct=0x0ECB2798, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[01] +0x0000 : UnderlyingType (PropStruct=0x0ECB27C0, GenFlags=0x00)
+  Prop[02] +0x0364 : ItemRarity (PropStruct=0x0ECB27F0, GenFlags=0x1E)
+  Prop[03] +0x0368 : OnSearchedChanged (PropStruct=0x0ECB2820, GenFlags=0x1B)
+  Prop[04] +0x0378 : _searchableSpawnPoint (PropStruct=0x0ECB2850, GenFlags=0x12)
+  Prop[05] +0x0380 : _itemIdToSpawn (PropStruct=0x0ECB2880, GenFlags=0x14)
+  Prop[06] +0x0001 : _hasBeenSearched (PropStruct=0x0ECB28A8, GenFlags=0x2C)
+  Prop[07] +0x0390 : _spawnedItem (PropStruct=0x0ECB28E0, GenFlags=0x12)
+  Prop[08] +0x0398 : _itemInsideSearchable (PropStruct=0x0ECB2910, GenFlags=0x12)
+  Prop[09] +0x0001 : _numberOfSearchesWhileOpenPerPlayer (PropStruct=0x0ECB2940, GenFlags=0x00)
+  Prop[10] +0x0000 : _numberOfSearchesWhileOpenPerPlayer_Key (PropStruct=0x0ECB2970, GenFlags=0x12)
+  Prop[11] +0x03A0 : _numberOfSearchesWhileOpenPerPlayer (PropStruct=0x0ECB29A0, GenFlags=0x17)
+  Func[00] Authority_SpawnObject -> Z_Construct=0x07B87948 | FFunctionParams=0x0ECB24C8 | exec=0x00000000 | native=0x00000000
+  Func[01] ContainsSpawnedItem -> Z_Construct=0x07B879A0 | FFunctionParams=0x0ECB2550 | exec=0x00000000 | native=0x00000000
+  Func[02] GetInteractorPrimitiveComponent -> Z_Construct=0x07B879EC | FFunctionParams=0x0ECB25D0 | exec=0x00000000 | native=0x00000000
+  Func[03] HasBeenSearched -> Z_Construct=0x07B87A44 | FFunctionParams=0x0ECB2658 | exec=0x00000000 | native=0x00000000
+  Func[04] OnSearchedChanged__DelegateSignature -> Z_Construct=0x07B87518 | FFunctionParams=0x0ECB23C0 | exec=0x00000000 | native=0x00000000
+  Func[05] SetHasBeenSearched -> Z_Construct=0x07B87A9C | FFunctionParams=0x0ECB26E0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] SkillCheck @ 0x0ECB5158 | StaticClass=0x07B8A898 (Singleton=0x00000000) | SizeOf=0x0420 | Props=15 | Funcs=23
+  Prop[00] +0x0001 : _activated (PropStruct=0x0ECB4E20, GenFlags=0x2C)
+  Prop[01] +0x0001 : _displayed (PropStruct=0x0ECB4E58, GenFlags=0x2C)
+  Prop[02] +0x0001 : _warningGiven (PropStruct=0x0ECB4E90, GenFlags=0x2C)
+  Prop[03] +0x0290 : _currentProgress (PropStruct=0x0ECB4EC8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[04] +0x0294 : _currentUIProgress (PropStruct=0x0ECB4EF0, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[05] +0x0298 : xOffset (PropStruct=0x0ECB4F18, GenFlags=0x03)
+  Prop[06] +0x029C : yOffset (PropStruct=0x0ECB4F40, GenFlags=0x03)
+  Prop[07] +0x02A0 : _skillCheckCount (PropStruct=0x0ECB4F68, GenFlags=0x03)
+  Prop[08] +0x02B8 : _owner (PropStruct=0x0ECB4F90, GenFlags=0x12)
+  Prop[09] +0x02C0 : _currentInteraction (PropStruct=0x0ECB4FC0, GenFlags=0x12) [RepNotify=OnRep_CurrentInteraction]
+  Prop[10] +0x0000 : UnderlyingType (PropStruct=0x0ECB4FF0, GenFlags=0x00)
+  Prop[11] +0x02C8 : _currentSkillCheckType (PropStruct=0x0ECB5020, GenFlags=0x1E)
+  Prop[12] +0x02F8 : _currentSkillCheckDefinitionCache (PropStruct=0x0ECB5050, GenFlags=0x19)
+  Prop[13] +0x0320 : _safeCancelTimer (PropStruct=0x0ECB5080, GenFlags=0x19)
+  Prop[14] +0x0368 : _showSkillCheckTimer (PropStruct=0x0ECB50B0, GenFlags=0x19)
+  Func[00] GetCheckResult -> Z_Construct=0x07B8A9A4 | FFunctionParams=0x0ECB3CD0 | exec=0x00000000 | native=0x00000000
+  Func[01] GetSkillCheckCustomType -> Z_Construct=0x07B8A9F0 | FFunctionParams=0x0ECB3D88 | exec=0x00000000 | native=0x00000000
+  Func[02] GetStartDelayInSeconds -> Z_Construct=0x07B8AA3C | FFunctionParams=0x0ECB3E00 | exec=0x00000000 | native=0x00000000
+  Func[03] GetUIProgress -> Z_Construct=0x07B8AA88 | FFunctionParams=0x0ECB3E78 | exec=0x00000000 | native=0x00000000
+  Func[04] IsDisplayed -> Z_Construct=0x07B8AAE0 | FFunctionParams=0x0ECB3F00 | exec=0x00000000 | native=0x00000000
+  Func[05] IsHexSkillCheck -> Z_Construct=0x07B8AB38 | FFunctionParams=0x0ECB3FC0 | exec=0x00000000 | native=0x00000000
+  Func[06] IsOffCenterSkillCheck -> Z_Construct=0x07B8AB90 | FFunctionParams=0x0ECB4048 | exec=0x00000000 | native=0x00000000
+  Func[07] Local_ActivateCustomSkillCheck -> Z_Construct=0x07B8ABDC | FFunctionParams=0x0ECB4130 | exec=0x00000000 | native=0x00000000
+  Func[08] Local_ActivateSkillCheck -> Z_Construct=0x07B8AC28 | FFunctionParams=0x0ECB41E0 | exec=0x00000000 | native=0x00000000
+  Func[09] Local_OnSkillCheckFailureTrigger -> Z_Construct=0x07B8AC8C | FFunctionParams=0x0ECB4318 | exec=0x00000000 | native=0x00000000
+  Func[10] Local_OnSkillCheckSuccessTrigger -> Z_Construct=0x07B8ACFC | FFunctionParams=0x0ECB4490 | exec=0x00000000 | native=0x00000000
+  Func[11] Multicast_ActivateSkillCheck -> Z_Construct=0x07B8AD94 | FFunctionParams=0x0ECB45B8 | exec=0x00000000 | native=0x00000000
+  Func[12] Multicast_DeactivateSkillCheck -> Z_Construct=0x07B8ADE0 | FFunctionParams=0x0ECB4600 | exec=0x00000000 | native=0x00000000
+  Func[13] Multicast_OnTriggerContinuousCustomSkillCheck -> Z_Construct=0x07B8AE2C | FFunctionParams=0x0ECB4728 | exec=0x00000000 | native=0x00000000
+  Func[14] Multicast_OnTriggerCustomSkillCheck -> Z_Construct=0x07B8AE78 | FFunctionParams=0x0ECB4850 | exec=0x00000000 | native=0x00000000
+  Func[15] Multicast_SkillCheckResponse -> Z_Construct=0x07B8AF10 | FFunctionParams=0x0ECB48D0 | exec=0x00000000 | native=0x00000000
+  Func[16] OnRep_CurrentInteraction -> Z_Construct=0x07B8AF5C | FFunctionParams=0x0ECB4918 | exec=0x00000000 | native=0x00000000
+  Func[17] OnSkillCheckInput -> Z_Construct=0x07B8AFA8 | FFunctionParams=0x0ECB4960 | exec=0x00000000 | native=0x00000000
+  Func[18] Server_ActivateSkillCheck -> Z_Construct=0x07B8AFF4 | FFunctionParams=0x0ECB4A88 | exec=0x00000000 | native=0x00000000
+  Func[19] Server_DeactivateSkillCheck -> Z_Construct=0x07B8B040 | FFunctionParams=0x0ECB4AD0 | exec=0x00000000 | native=0x00000000
+  Func[20] Server_OnSkillCheckFailure -> Z_Construct=0x07B8B08C | FFunctionParams=0x0ECB4B50 | exec=0x00000000 | native=0x00000000
+  Func[21] Server_OnSkillCheckSuccess -> Z_Construct=0x07B8B0D8 | FFunctionParams=0x0ECB4BD0 | exec=0x00000000 | native=0x00000000
+  Func[22] ShouldShowWarning -> Z_Construct=0x07B8B130 | FFunctionParams=0x0ECB4C58 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] SlasherOutlineUpdateStrategy @ 0x0ECB8528 | StaticClass=0x07BA063C (Singleton=0x00000000) | SizeOf=0x0108 | Props=4 | Funcs=0
+  Prop[00] +0x00C0 : OnRevealed (PropStruct=0x0ECB8448, GenFlags=0x1B)
+  Prop[01] +0x00D0 : _nonRevealedColor (PropStruct=0x0ECB8478, GenFlags=0x19)
+  Prop[02] +0x00E0 : _revealedColor (PropStruct=0x0ECB84A8, GenFlags=0x19)
+  Prop[03] +0x00F0 : _revealedColorForKiller (PropStruct=0x0ECB84D8, GenFlags=0x19)
+
+[FClassParams] SlasherPlayer @ 0x0ECBF9D8 | StaticClass=0x07BA58FC (Singleton=0x00000000) | SizeOf=0x1B40 | Props=88 | Funcs=139
+  Prop[00] +0x0001 : _setFirstPersonModeEnabledOnKillerIntroCompleted (PropStruct=0x0ECBE678, GenFlags=0x2C)
+  Prop[01] +0x1508 : OnOffensiveAction (PropStruct=0x0ECBE6B0, GenFlags=0x1B)
+  Prop[02] +0x1518 : PutDownTraceLocation (PropStruct=0x0ECBE6E0, GenFlags=0x19)
+  Prop[03] +0x1524 : DefaultSlasherPower (PropStruct=0x0ECBE710, GenFlags=0x14)
+  Prop[04] +0x1530 : LoudNoiseDisplayTime (PropStruct=0x0ECBE738, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[05] +0x1534 : TargetPriorityFactor (PropStruct=0x0ECBE760, GenFlags=0x19)
+  Prop[06] +0x0001 : ShouldDisplayAttackZones (PropStruct=0x0ECBE790, GenFlags=0x2C)
+  Prop[07] +0x1548 : CamperExposer (PropStruct=0x0ECBE7C8, GenFlags=0x11)
+  Prop[08] +0x0000 : UnderlyingType (PropStruct=0x0ECBE800, GenFlags=0x00)
+  Prop[09] +0x1550 : KillerMoodInfluence (PropStruct=0x0ECBE830, GenFlags=0x1E)
+  Prop[10] +0x0000 : UnderlyingType (PropStruct=0x0ECBE860, GenFlags=0x00)
+  Prop[11] +0x0000 : KillerAbilities (PropStruct=0x0ECBE890, GenFlags=0x1E)
+  Prop[12] +0x1558 : KillerAbilities (PropStruct=0x0ECBE8C0, GenFlags=0x16)
+  Prop[13] +0x1568 : KillerSoundCuesComponent (PropStruct=0x0ECBE8F0, GenFlags=0x12)
+  Prop[14] +0x0001 : ShowKillerPowerDebugInfo (PropStruct=0x0ECBE920, GenFlags=0x2C)
+  Prop[15] +0x0001 : HasDamagedGeneratorSinceHook (PropStruct=0x0ECBE958, GenFlags=0x2C)
+  Prop[16] +0x1578 : OnStalkModeChangedEvent (PropStruct=0x0ECBE990, GenFlags=0x1B)
+  Prop[17] +0x0001 : InKillerAdvTutorial (PropStruct=0x0ECBE9C0, GenFlags=0x2C)
+  Prop[18] +0x15EC : AttackDuration (PropStruct=0x0ECBE9F8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[19] +0x15F0 : FailAttackCount (PropStruct=0x0ECBEA20, GenFlags=0x03)
+  Prop[20] +0x0001 : NeedCountDown (PropStruct=0x0ECBEA48, GenFlags=0x2C)
+  Prop[21] +0x0001 : NeedAutoClose (PropStruct=0x0ECBEA80, GenFlags=0x2C)
+  Prop[22] +0x0001 : NeedDescribe (PropStruct=0x0ECBEAB8, GenFlags=0x2C)
+  Prop[23] +0x15F8 : TextureDescribe (PropStruct=0x0ECBEAF0, GenFlags=0x15)
+  Prop[24] +0x1610 : _killerAtlantaUIOverrideComponet (PropStruct=0x0ECBEB18, GenFlags=0x12)
+  Prop[25] +0x1618 : _killerIntroComponent (PropStruct=0x0ECBEB48, GenFlags=0x12)
+  Prop[26] +0x1620 : AttackForwardInputSmoothingCurve (PropStruct=0x0ECBEB78, GenFlags=0x12)
+  Prop[27] +0x1628 : _audioComponent (PropStruct=0x0ECBEBA8, GenFlags=0x0E)
+  Prop[28] +0x1630 : _terrorNavModifierComponent (PropStruct=0x0ECBEBD8, GenFlags=0x12)
+  Prop[29] +0x1638 : _slasherLightIntensity (PropStruct=0x0ECBEC08, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[30] +0x163C : _defaultAmountToSquish (PropStruct=0x0ECBEC30, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[31] +0x0001 : _stalkTimers (PropStruct=0x0ECBEC58, GenFlags=0x19)
+  Prop[32] +0x0000 : _stalkTimers_Key (PropStruct=0x0ECBEC88, GenFlags=0x12)
+  Prop[33] +0x1648 : _stalkTimers (PropStruct=0x0ECBECB8, GenFlags=0x17)
+  Prop[34] +0x1698 : _stillnessTracker (PropStruct=0x0ECBECE8, GenFlags=0x12)
+  Prop[35] +0x16A0 : _aimAssistComponent (PropStruct=0x0ECBED18, GenFlags=0x12)
+  Prop[36] +0x16A8 : _recentlyCloakedTimer (PropStruct=0x0ECBED48, GenFlags=0x19)
+  Prop[37] +0x16F0 : _flashlightBlindEvasionScoreTimer (PropStruct=0x0ECBED78, GenFlags=0x19)
+  Prop[38] +0x1738 : _flashlightBurnoutEvasionScoreTimer (PropStruct=0x0ECBEDA8, GenFlags=0x19)
+  Prop[39] +0x1780 : AttackFrenzyOnHealthyCurve (PropStruct=0x0ECBEDD8, GenFlags=0x12)
+  Prop[40] +0x1788 : AttackFrenzyOnInjuredCurve (PropStruct=0x0ECBEE08, GenFlags=0x12)
+  Prop[41] +0x1790 : AttackFrenzyOnBleedoutCurve (PropStruct=0x0ECBEE38, GenFlags=0x12)
+  Prop[42] +0x0001 : _useAttackMontage (PropStruct=0x0ECBEE68, GenFlags=0x2C)
+  Prop[43] +0x0001 : _predictedCamperHitMontages (PropStruct=0x0ECBEEA0, GenFlags=0x19)
+  Prop[44] +0x0000 : _predictedCamperHitMontages_Key (PropStruct=0x0ECBEED0, GenFlags=0x12)
+  Prop[45] +0x17A0 : _predictedCamperHitMontages (PropStruct=0x0ECBEF00, GenFlags=0x17)
+  Prop[46] +0x17F0 : _blindingFxComponent (PropStruct=0x0ECBEF30, GenFlags=0x12)
+  Prop[47] +0x17F8 : _killerInstinctIndicatorComponent (PropStruct=0x0ECBEF60, GenFlags=0x12)
+  Prop[48] +0x1808 : _terrorRadiusEmitter (PropStruct=0x0ECBEF90, GenFlags=0x12)
+  Prop[49] +0x1818 : _loudNoiseIndicator (PropStruct=0x0ECBEFC0, GenFlags=0x12)
+  Prop[50] +0x1820 : _fullBodyFlashLightReceiver (PropStruct=0x0ECBEFF0, GenFlags=0x12)
+  Prop[51] +0x1828 : _invisibilityBurnoutChargeableComponent (PropStruct=0x0ECBF020, GenFlags=0x12)
+  Prop[52] +0x1830 : _hitsWhileCarryingTracker (PropStruct=0x0ECBF050, GenFlags=0x12)
+  Prop[53] +0x1838 : _stealthIncreaseRate (PropStruct=0x0ECBF080, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[54] +0x183C : _stealthDecreaseRate (PropStruct=0x0ECBF0A8, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[55] +0x1840 : _stillnessStartTime (PropStruct=0x0ECBF0D0, GenFlags=0x19)
+  Prop[56] +0x18B0 : _isInStalkMode (PropStruct=0x0ECBF100, GenFlags=0x19)
+  Prop[57] +0x18E0 : _isCloaked (PropStruct=0x0ECBF130, GenFlags=0x19)
+  Prop[58] +0x1910 : _isCarrying (PropStruct=0x0ECBF160, GenFlags=0x19)
+  Prop[59] +0x19A0 : _isDormant (PropStruct=0x0ECBF190, GenFlags=0x19)
+  Prop[60] +0x0001 : _isKilling (PropStruct=0x0ECBF1C0, GenFlags=0x2C)
+  Prop[61] +0x19D1 : _allowedKillCount (PropStruct=0x0ECBF1F8, GenFlags=0x01)
+  Prop[62] +0x19D2 : _allowedKillAfterStrugglePhase (PropStruct=0x0ECBF220, GenFlags=0x01)
+  Prop[63] +0x0001 : _allowedKillLastSurvivor (PropStruct=0x0ECBF248, GenFlags=0x2C)
+  Prop[64] +0x19DC : _cachedBloodlustTier (PropStruct=0x0ECBF280, GenFlags=0x03)
+  Prop[65] +0x19EC : _killerPowerDebugFlags (PropStruct=0x0ECBF2A8, GenFlags=0x06)
+  Prop[66] +0x19F0 : _presenceTag (PropStruct=0x0ECBF2D0, GenFlags=0x19)
+  Prop[67] +0x1A00 : _persistantStateTags (PropStruct=0x0ECBF300, GenFlags=0x19)
+  Prop[68] +0x0001 : _enableKillerCrouchInput (PropStruct=0x0ECBF330, GenFlags=0x2C)
+  Prop[69] +0x0001 : _canStartAttackWhileCrouched (PropStruct=0x0ECBF368, GenFlags=0x2C)
+  Prop[70] +0x1A28 : _carriedCamper (PropStruct=0x0ECBF3A0, GenFlags=0x12)
+  Prop[71] +0x1A30 : _moriComponent (PropStruct=0x0ECBF3D0, GenFlags=0x12)
+  Prop[72] +0x1A38 : _hitValidator (PropStruct=0x0ECBF400, GenFlags=0x12)
+  Prop[73] +0x1A40 : _hitValidationConfigurator (PropStruct=0x0ECBF430, GenFlags=0x12)
+  Prop[74] +0x1A48 : _attackerComponent (PropStruct=0x0ECBF460, GenFlags=0x12)
+  Prop[75] +0x0000 : UnderlyingType (PropStruct=0x0ECBF490, GenFlags=0x00)
+  Prop[76] +0x1A60 : _basicAttackType (PropStruct=0x0ECBF4C0, GenFlags=0x1E)
+  Prop[77] +0x1A68 : _armIKSensorComponent (PropStruct=0x0ECBF4F0, GenFlags=0x12)
+  Prop[78] +0x1A70 : _survivorBeingKilled (PropStruct=0x0ECBF520, GenFlags=0x12)
+  Prop[79] +0x1AA8 : _firstPersonViewComponentClass (PropStruct=0x0ECBF550, GenFlags=0x11)
+  Prop[80] +0x1AB0 : _firstPersonViewComponent (PropStruct=0x0ECBF588, GenFlags=0x12)
+  Prop[81] +0x0001 : _isCrouched (PropStruct=0x0ECBF5B8, GenFlags=0x2C)
+  Prop[82] +0x1AE0 : _slasherStunnableComponent (PropStruct=0x0ECBF5F0, GenFlags=0x12)
+  Prop[83] +0x1AEC : _turnInPlaceThresholdAngle (PropStruct=0x0ECBF620, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[84] +0x1AF8 : _squishFactorParameter (PropStruct=0x0ECBF648, GenFlags=0x14)
+  Prop[85] +0x1B08 : _attackZonePivot (PropStruct=0x0ECBF670, GenFlags=0x12)
+  Prop[86] +0x1B18 : _killerAtlantaUIOverrideComponetClass (PropStruct=0x0ECBF6A0, GenFlags=0x11)
+  Prop[87] +0x1B20 : _undetectableTags (PropStruct=0x0ECBF6D8, GenFlags=0x19)
+  Func[00] ActionKillerPressed -> Z_Construct=0x07BA59BC | FFunctionParams=0x0ECB8EA8 | exec=0x00000000 | native=0x00000000
+  Func[01] ActionKillerReleased -> Z_Construct=0x07BA5A08 | FFunctionParams=0x0ECB8EF0 | exec=0x00000000 | native=0x00000000
+  Func[02] AttackInputPressed -> Z_Construct=0x07BA5A54 | FFunctionParams=0x0ECB8F38 | exec=0x00000000 | native=0x00000000
+  Func[03] AttackInputReleased -> Z_Construct=0x07BA5AA0 | FFunctionParams=0x0ECB8F80 | exec=0x00000000 | native=0x00000000
+  Func[04] Authority_AddInvisibilityBurnoutCharge -> Z_Construct=0x07BA5AEC | FFunctionParams=0x0ECB9068 | exec=0x00000000 | native=0x00000000
+  Func[05] Authority_AllowKilling -> Z_Construct=0x07BA5B38 | FFunctionParams=0x0ECB90E0 | exec=0x00000000 | native=0x00000000
+  Func[06] Authority_AttemptEscapeCarry -> Z_Construct=0x07BA5B84 | FFunctionParams=0x0ECB9160 | exec=0x00000000 | native=0x00000000
+  Func[07] Authority_HandleKillerInterruptingSurvivor -> Z_Construct=0x07BA5BD0 | FFunctionParams=0x0ECB91E0 | exec=0x00000000 | native=0x00000000
+  Func[08] Authority_SetInStalkMode -> Z_Construct=0x07BA5C34 | FFunctionParams=0x0ECB92A8 | exec=0x00000000 | native=0x00000000
+  Func[09] BroadcastOffensiveAction -> Z_Construct=0x07BA5C80 | FFunctionParams=0x0ECB92F0 | exec=0x00000000 | native=0x00000000
+  Func[10] BroadcastOnInstantTeleport -> Z_Construct=0x07BA5CCC | FFunctionParams=0x0ECB9338 | exec=0x00000000 | native=0x00000000
+  Func[11] CanAffectLocalPlayer -> Z_Construct=0x07BA5D24 | FFunctionParams=0x0ECB93C0 | exec=0x00000000 | native=0x00000000
+  Func[12] CanAttack -> Z_Construct=0x07BA5D7C | FFunctionParams=0x0ECB94B8 | exec=0x00000000 | native=0x00000000
+  Func[13] CanAttack_BP -> Z_Construct=0x07BA5DD4 | FFunctionParams=0x0ECB95B0 | exec=0x00000000 | native=0x00000000
+  Func[14] CancelAttackByInput -> Z_Construct=0x07BA5E2C | FFunctionParams=0x0ECB9638 | exec=0x00000000 | native=0x00000000
+  Func[15] CanEscapeCarry -> Z_Construct=0x07BA5E84 | FFunctionParams=0x0ECB96F8 | exec=0x00000000 | native=0x00000000
+  Func[16] CanGainRage -> Z_Construct=0x07BA5EDC | FFunctionParams=0x0ECB9780 | exec=0x00000000 | native=0x00000000
+  Func[17] CanPerformKillerAbility -> Z_Construct=0x07BA5F34 | FFunctionParams=0x0ECB9878 | exec=0x00000000 | native=0x00000000
+  Func[18] CanPickupSurvivor -> Z_Construct=0x07BA5F8C | FFunctionParams=0x0ECB9900 | exec=0x00000000 | native=0x00000000
+  Func[19] CanSlashAttack_BP -> Z_Construct=0x07BA5FE4 | FFunctionParams=0x0ECB9988 | exec=0x00000000 | native=0x00000000
+  Func[20] Client_RequestStun -> Z_Construct=0x07BA6030 | FFunctionParams=0x0ECB9A78 | exec=0x00000000 | native=0x00000000
+  Func[21] DBD_AllowKilling -> Z_Construct=0x07BA607C | FFunctionParams=0x0ECB9AC0 | exec=0x00000000 | native=0x00000000
+  Func[22] DBD_DisplayAttackZones -> Z_Construct=0x07BA60D4 | FFunctionParams=0x0ECB9B48 | exec=0x00000000 | native=0x00000000
+  Func[23] DBD_MergeLockOnDamageZones -> Z_Construct=0x07BA612C | FFunctionParams=0x0ECB9BD0 | exec=0x00000000 | native=0x00000000
+  Func[24] DBD_SetAttackZones -> Z_Construct=0x07BA6178 | FFunctionParams=0x0ECB9C88 | exec=0x00000000 | native=0x00000000
+  Func[25] DBD_WalkLocked -> Z_Construct=0x07BA61D0 | FFunctionParams=0x0ECB9D10 | exec=0x00000000 | native=0x00000000
+  Func[26] DecrementInterruptBlock -> Z_Construct=0x07BA621C | FFunctionParams=0x0ECB9D58 | exec=0x00000000 | native=0x00000000
+  Func[27] DetectObstruction -> Z_Construct=0x07BA6274 | FFunctionParams=0x0ECB9EF8 | exec=0x00000000 | native=0x00000000
+  Func[28] DisplayAttackZones -> Z_Construct=0x07BA62CC | FFunctionParams=0x0ECB9F80 | exec=0x00000000 | native=0x00000000
+  Func[29] ForceZNear -> Z_Construct=0x07BA6318 | FFunctionParams=0x0ECB9FF8 | exec=0x00000000 | native=0x00000000
+  Func[30] GetAnimDirection -> Z_Construct=0x07BA6364 | FFunctionParams=0x0ECBA070 | exec=0x00000000 | native=0x00000000
+  Func[31] GetBlindedPercent -> Z_Construct=0x07BA63B0 | FFunctionParams=0x0ECBA0E8 | exec=0x00000000 | native=0x00000000
+  Func[32] GetCarriedCamper -> Z_Construct=0x07BA63FC | FFunctionParams=0x0ECBA168 | exec=0x00000000 | native=0x00000000
+  Func[33] GetCharacterCustomAnimTags -> Z_Construct=0x07BA6448 | FFunctionParams=0x0ECBA218 | exec=0x00000000 | native=0x00000000
+  Func[34] GetCharacterOverrideAnimTags -> Z_Construct=0x07BA6494 | FFunctionParams=0x0ECBA2C8 | exec=0x00000000 | native=0x00000000
+  Func[35] GetChaserCharacterComponent -> Z_Construct=0x07BA64E0 | FFunctionParams=0x0ECBA348 | exec=0x00000000 | native=0x00000000
+  Func[36] GetCurrentRotationYaw -> Z_Construct=0x07BA652C | FFunctionParams=0x0ECBA3C0 | exec=0x00000000 | native=0x00000000
+  Func[37] GetCurZNear -> Z_Construct=0x07BA6578 | FFunctionParams=0x0ECBA438 | exec=0x00000000 | native=0x00000000
+  Func[38] GetDifferenceBetweenIdleNeutralAndCurrentRotationYaw -> Z_Construct=0x07BA65C4 | FFunctionParams=0x0ECBA4B0 | exec=0x00000000 | native=0x00000000
+  Func[39] GetGuidedAction -> Z_Construct=0x07BA6610 | FFunctionParams=0x0ECBA568 | exec=0x00000000 | native=0x00000000
+  Func[40] GetIdleNeutralRotationYaw -> Z_Construct=0x07BA665C | FFunctionParams=0x0ECBA5E0 | exec=0x00000000 | native=0x00000000
+  Func[41] GetInvisibilityBurnoutChargeableComponent -> Z_Construct=0x07BA66A8 | FFunctionParams=0x0ECBA660 | exec=0x00000000 | native=0x00000000
+  Func[42] GetIsAttacking -> Z_Construct=0x07BA6700 | FFunctionParams=0x0ECBA6E8 | exec=0x00000000 | native=0x00000000
+  Func[43] GetKillerCarryAnimWeight -> Z_Construct=0x07BA674C | FFunctionParams=0x0ECBA7A0 | exec=0x00000000 | native=0x00000000
+  Func[44] GetLightIntensity -> Z_Construct=0x07BA6798 | FFunctionParams=0x0ECBA818 | exec=0x00000000 | native=0x00000000
+  Func[45] GetLookRotation -> Z_Construct=0x07BA67E4 | FFunctionParams=0x0ECBA898 | exec=0x00000000 | native=0x00000000
+  Func[46] GetNavModifierComponent -> Z_Construct=0x07BA6830 | FFunctionParams=0x0ECBA918 | exec=0x00000000 | native=0x00000000
+  Func[47] GetObsessionTarget -> Z_Construct=0x07BA687C | FFunctionParams=0x0ECBA998 | exec=0x00000000 | native=0x00000000
+  Func[48] GetPlayerDropOffPoint -> Z_Construct=0x07BA68C8 | FFunctionParams=0x0ECBAA18 | exec=0x00000000 | native=0x00000000
+  Func[49] GetPresenceTag -> Z_Construct=0x07BA6914 | FFunctionParams=0x0ECBAA98 | exec=0x00000000 | native=0x00000000
+  Func[50] GetRageTier -> Z_Construct=0x07BA6960 | FFunctionParams=0x0ECBAB10 | exec=0x00000000 | native=0x00000000
+  Func[51] GetSlasherMovement -> Z_Construct=0x07BA69AC | FFunctionParams=0x0ECBAB90 | exec=0x00000000 | native=0x00000000
+  Func[52] GetSpecialCustomAnimTag -> Z_Construct=0x07BA69F8 | FFunctionParams=0x0ECBAC08 | exec=0x00000000 | native=0x00000000
+  Func[53] GetStalkTierWalkSpeedMultiplier -> Z_Construct=0x07BA6A44 | FFunctionParams=0x0ECBAC80 | exec=0x00000000 | native=0x00000000
+  Func[54] GetStealthRatio -> Z_Construct=0x07BA6A90 | FFunctionParams=0x0ECBACF8 | exec=0x00000000 | native=0x00000000
+  Func[55] GetStillnessStartTime -> Z_Construct=0x07BA6ADC | FFunctionParams=0x0ECBAD78 | exec=0x00000000 | native=0x00000000
+  Func[56] GetSurvivorBeingKilled -> Z_Construct=0x07BA6B28 | FFunctionParams=0x0ECBADF8 | exec=0x00000000 | native=0x00000000
+  Func[57] GetTerrorRadiusEmitter -> Z_Construct=0x07BA6B74 | FFunctionParams=0x0ECBAE78 | exec=0x00000000 | native=0x00000000
+  Func[58] HasKillerAbility -> Z_Construct=0x07BA6BCC | FFunctionParams=0x0ECBAF70 | exec=0x00000000 | native=0x00000000
+  Func[59] HasPreLevelGenerationModifier -> Z_Construct=0x07BA6C24 | FFunctionParams=0x0ECBB028 | exec=0x00000000 | native=0x00000000
+  Func[60] HitAttackableComponent -> Z_Construct=0x07BA6C70 | FFunctionParams=0x0ECBB0A8 | exec=0x00000000 | native=0x00000000
+  Func[61] IncrementInterruptBlock -> Z_Construct=0x07BA6CBC | FFunctionParams=0x0ECBB0F0 | exec=0x00000000 | native=0x00000000
+  Func[62] IsAllowedToKill -> Z_Construct=0x07BA6D14 | FFunctionParams=0x0ECBB1B0 | exec=0x00000000 | native=0x00000000
+  Func[63] IsASurvivorInTerrorRadius -> Z_Construct=0x07BA6D6C | FFunctionParams=0x0ECBB238 | exec=0x00000000 | native=0x00000000
+  Func[64] IsAttackOpening -> Z_Construct=0x07BA6DC4 | FFunctionParams=0x0ECBB2C0 | exec=0x00000000 | native=0x00000000
+  Func[65] IsCarrying -> Z_Construct=0x07BA6E1C | FFunctionParams=0x0ECBB348 | exec=0x00000000 | native=0x00000000
+  Func[66] IsChainBlinking -> Z_Construct=0x07BA6E74 | FFunctionParams=0x0ECBB3D0 | exec=0x00000000 | native=0x00000000
+  Func[67] IsChargingBlink -> Z_Construct=0x07BA6ECC | FFunctionParams=0x0ECBB458 | exec=0x00000000 | native=0x00000000
+  Func[68] IsCloaking -> Z_Construct=0x07BA6F24 | FFunctionParams=0x0ECBB4E0 | exec=0x00000000 | native=0x00000000
+  Func[69] IsCrouchAvailable_BP -> Z_Construct=0x07BA6F7C | FFunctionParams=0x0ECBB568 | exec=0x00000000 | native=0x00000000
+  Func[70] IsHooking -> Z_Construct=0x07BA6FD4 | FFunctionParams=0x0ECBB5F0 | exec=0x00000000 | native=0x00000000
+  Func[71] IsIdling -> Z_Construct=0x07BA702C | FFunctionParams=0x0ECBB678 | exec=0x00000000 | native=0x00000000
+  Func[72] IsImmuneToObservingPlayerDetection -> Z_Construct=0x07BA7084 | FFunctionParams=0x0ECBB738 | exec=0x00000000 | native=0x00000000
+  Func[73] IsInBlinkCooldown -> Z_Construct=0x07BA70DC | FFunctionParams=0x0ECBB7C0 | exec=0x00000000 | native=0x00000000
+  Func[74] IsInterruptBlocked -> Z_Construct=0x07BA7134 | FFunctionParams=0x0ECBB848 | exec=0x00000000 | native=0x00000000
+  Func[75] IsKilling -> Z_Construct=0x07BA718C | FFunctionParams=0x0ECBB8D0 | exec=0x00000000 | native=0x00000000
+  Func[76] IsOfferingAllowingKill -> Z_Construct=0x07BA71E4 | FFunctionParams=0x0ECBB990 | exec=0x00000000 | native=0x00000000
+  Func[77] IsSlasherSatisfyUndetectableTag -> Z_Construct=0x07BA723C | FFunctionParams=0x0ECBBA18 | exec=0x00000000 | native=0x00000000
+  Func[78] IsUncloaking -> Z_Construct=0x07BA7294 | FFunctionParams=0x0ECBBAA0 | exec=0x00000000 | native=0x00000000
+  Func[79] IsWalkLocked -> Z_Construct=0x07BA72EC | FFunctionParams=0x0ECBBB28 | exec=0x00000000 | native=0x00000000
+  Func[80] Local_CancelAttack -> Z_Construct=0x07BA7344 | FFunctionParams=0x0ECBBBB0 | exec=0x00000000 | native=0x00000000
+  Func[81] Local_RequestAttack -> Z_Construct=0x07BA7390 | FFunctionParams=0x0ECBBC68 | exec=0x00000000 | native=0x00000000
+  Func[82] MergeLockOnDamageZones -> Z_Construct=0x07BA73E8 | FFunctionParams=0x0ECBBCF0 | exec=0x00000000 | native=0x00000000
+  Func[83] Multicast_CamperHitCosmetic -> Z_Construct=0x07BA744C | FFunctionParams=0x0ECBBDF0 | exec=0x00000000 | native=0x00000000
+  Func[84] Multicast_CamperHitCosmetic_NonLocal -> Z_Construct=0x07BA74B0 | FFunctionParams=0x0ECBBEF0 | exec=0x00000000 | native=0x00000000
+  Func[85] Multicast_DisplayAttackZones -> Z_Construct=0x07BA7508 | FFunctionParams=0x0ECBBF78 | exec=0x00000000 | native=0x00000000
+  Func[86] Multicast_MergeLockOnDamageZones -> Z_Construct=0x07BA7560 | FFunctionParams=0x0ECBC000 | exec=0x00000000 | native=0x00000000
+  Func[87] Multicast_SetAttackDetectionZoneSet -> Z_Construct=0x07BA75AC | FFunctionParams=0x0ECBC0B8 | exec=0x00000000 | native=0x00000000
+  Func[88] Multicast_SetGuidedAction -> Z_Construct=0x07BA75F8 | FFunctionParams=0x0ECBC170 | exec=0x00000000 | native=0x00000000
+  Func[89] OnAttackFinish -> Z_Construct=0x07BA7644 | FFunctionParams=0x0ECBC228 | exec=0x00000000 | native=0x00000000
+  Func[90] OnAttackStart -> Z_Construct=0x07BA7690 | FFunctionParams=0x0ECBC2E0 | exec=0x00000000 | native=0x00000000
+  Func[91] OnCamperHitFX -> Z_Construct=0x07BA76E8 | FFunctionParams=0x0ECBC3A0 | exec=0x00000000 | native=0x00000000
+  Func[92] OnDropCamperEnd_BP -> Z_Construct=0x07BA7734 | FFunctionParams=0x0ECBC3E8 | exec=0x00000000 | native=0x00000000
+  Func[93] OnInvisibilityBurnoutChargeCompletionChanged -> Z_Construct=0x07BA778C | FFunctionParams=0x0ECBC4E0 | exec=0x00000000 | native=0x00000000
+  Func[94] OnInvisibilityChargeEmptied -> Z_Construct=0x07BA77D8 | FFunctionParams=0x0ECBC528 | exec=0x00000000 | native=0x00000000
+  Func[95] OnKillerAbilityBeginActivate -> Z_Construct=0x07BA7824 | FFunctionParams=0x0ECBC5E0 | exec=0x00000000 | native=0x00000000
+  Func[96] OnKillerAbilityBeginDeactivate -> Z_Construct=0x07BA787C | FFunctionParams=0x0ECBC6D8 | exec=0x00000000 | native=0x00000000
+  Func[97] OnKillerAbilityEndActivate -> Z_Construct=0x07BA78C8 | FFunctionParams=0x0ECBC790 | exec=0x00000000 | native=0x00000000
+  Func[98] OnKillerAbilityEndDeactivate -> Z_Construct=0x07BA7920 | FFunctionParams=0x0ECBC888 | exec=0x00000000 | native=0x00000000
+  Func[99] OnKillerAbilityUpdateActivate -> Z_Construct=0x07BA796C | FFunctionParams=0x0ECBC970 | exec=0x00000000 | native=0x00000000
+  Func[100] OnLoudNoiseIndicatorDestroyed -> Z_Construct=0x07BA79B8 | FFunctionParams=0x0ECBC9B8 | exec=0x00000000 | native=0x00000000
+  Func[101] OnLoudNoiseTriggered -> Z_Construct=0x07BA7A28 | FFunctionParams=0x0ECBCB98 | exec=0x00000000 | native=0x00000000
+  Func[102] OnPerformingChargableInteraction -> Z_Construct=0x07BA7A74 | FFunctionParams=0x0ECBCC10 | exec=0x00000000 | native=0x00000000
+  Func[103] OnPickUpEnd_BP -> Z_Construct=0x07BA7AC0 | FFunctionParams=0x0ECBCC58 | exec=0x00000000 | native=0x00000000
+  Func[104] OnPickupStart_BP -> Z_Construct=0x07BA7B0C | FFunctionParams=0x0ECBCCA0 | exec=0x00000000 | native=0x00000000
+  Func[105] OnStalkModeChanged -> Z_Construct=0x07BA7B64 | FFunctionParams=0x0ECBCD28 | exec=0x00000000 | native=0x00000000
+  Func[106] OnStalkModeChangedCosmetic -> Z_Construct=0x07BA7BBC | FFunctionParams=0x0ECBCDB0 | exec=0x00000000 | native=0x00000000
+  Func[107] OnStalkModeChangedEvent__DelegateSignature -> Z_Construct=0x07BA08DC | FFunctionParams=0x0ECB85B8 | exec=0x00000000 | native=0x00000000
+  Func[108] OnStealthChanged -> Z_Construct=0x07BA7C14 | FFunctionParams=0x0ECBCE38 | exec=0x00000000 | native=0x00000000
+  Func[109] OnSuccessfulInterruption -> Z_Construct=0x07BA7C60 | FFunctionParams=0x0ECBCEB8 | exec=0x00000000 | native=0x00000000
+  Func[110] OnSurvivorKilled -> Z_Construct=0x07BA7CB8 | FFunctionParams=0x0ECBCF78 | exec=0x00000000 | native=0x00000000
+  Func[111] OnSurvivorsLeftChanged -> Z_Construct=0x07BA7D04 | FFunctionParams=0x0ECBCFF0 | exec=0x00000000 | native=0x00000000
+  Func[112] PlayBloodHitsEffects -> Z_Construct=0x07BA7D50 | FFunctionParams=0x0ECBD038 | exec=0x00000000 | native=0x00000000
+  Func[113] ResetNeutralIdleRotationYaw -> Z_Construct=0x07BA7D9C | FFunctionParams=0x0ECBD080 | exec=0x00000000 | native=0x00000000
+  Func[114] Server_AllowKilling -> Z_Construct=0x07BA7DE8 | FFunctionParams=0x0ECBD0F8 | exec=0x00000000 | native=0x00000000
+  Func[115] Server_DisplayAttackZones -> Z_Construct=0x07BA7E40 | FFunctionParams=0x0ECBD180 | exec=0x00000000 | native=0x00000000
+  Func[116] Server_MergeLockOnDamageZones -> Z_Construct=0x07BA7E98 | FFunctionParams=0x0ECBD208 | exec=0x00000000 | native=0x00000000
+  Func[117] Server_SendAttackInput -> Z_Construct=0x07BA7EF0 | FFunctionParams=0x0ECBD290 | exec=0x00000000 | native=0x00000000
+  Func[118] Server_SetKillerPowerDebugFlag -> Z_Construct=0x07BA7F48 | FFunctionParams=0x0ECBD348 | exec=0x00000000 | native=0x00000000
+  Func[119] SetAttackDetectionZoneSet -> Z_Construct=0x07BA7F94 | FFunctionParams=0x0ECBD400 | exec=0x00000000 | native=0x00000000
+  Func[120] SetAttackZonePivot -> Z_Construct=0x07BA7FE0 | FFunctionParams=0x0ECBD480 | exec=0x00000000 | native=0x00000000
+  Func[121] SetBeingWiggled -> Z_Construct=0x07BA8038 | FFunctionParams=0x0ECBD508 | exec=0x00000000 | native=0x00000000
+  Func[122] SetCarriedCamper -> Z_Construct=0x07BA8084 | FFunctionParams=0x0ECBD588 | exec=0x00000000 | native=0x00000000
+  Func[123] SetGuidedAction -> Z_Construct=0x07BA80D0 | FFunctionParams=0x0ECBD640 | exec=0x00000000 | native=0x00000000
+  Func[124] SetIsHookingSurvivor -> Z_Construct=0x07BA8128 | FFunctionParams=0x0ECBD6C8 | exec=0x00000000 | native=0x00000000
+  Func[125] SetIsKilling -> Z_Construct=0x07BA8180 | FFunctionParams=0x0ECBD750 | exec=0x00000000 | native=0x00000000
+  Func[126] SetLightIntensity -> Z_Construct=0x07BA81CC | FFunctionParams=0x0ECBD7C8 | exec=0x00000000 | native=0x00000000
+  Func[127] SetStalkTierWalkSpeedMultiplier -> Z_Construct=0x07BA8218 | FFunctionParams=0x0ECBD840 | exec=0x00000000 | native=0x00000000
+  Func[128] SetSurvivorBeingKilled -> Z_Construct=0x07BA8264 | FFunctionParams=0x0ECBD8C0 | exec=0x00000000 | native=0x00000000
+  Func[129] ShouldApplyBloodlustSpeedModifier -> Z_Construct=0x07BA82BC | FFunctionParams=0x0ECBD948 | exec=0x00000000 | native=0x00000000
+  Func[130] ShouldTurnInPlace -> Z_Construct=0x07BA8314 | FFunctionParams=0x0ECBD9D0 | exec=0x00000000 | native=0x00000000
+  Func[131] ShouldTurnInPlaceLeft -> Z_Construct=0x07BA836C | FFunctionParams=0x0ECBDA58 | exec=0x00000000 | native=0x00000000
+  Func[132] ShouldTurnInPlaceRight -> Z_Construct=0x07BA83C4 | FFunctionParams=0x0ECBDAE0 | exec=0x00000000 | native=0x00000000
+  Func[133] SpawnSlasherPower -> Z_Construct=0x07BA8410 | FFunctionParams=0x0ECBDB28 | exec=0x00000000 | native=0x00000000
+  Func[134] TriggerPickUpAnimation -> Z_Construct=0x07BA845C | FFunctionParams=0x0ECBDB70 | exec=0x00000000 | native=0x00000000
+  Func[135] TriggerPutDownAnimation -> Z_Construct=0x07BA84A8 | FFunctionParams=0x0ECBDBB8 | exec=0x00000000 | native=0x00000000
+  Func[136] UpdateRageTierEffect -> Z_Construct=0x07BA84F4 | FFunctionParams=0x0ECBDC60 | exec=0x00000000 | native=0x00000000
+  Func[137] UseForceZNear -> Z_Construct=0x07BA854C | FFunctionParams=0x0ECBDCE8 | exec=0x00000000 | native=0x00000000
+  Func[138] WasRecentlyCloaked -> Z_Construct=0x07BA85A4 | FFunctionParams=0x0ECBDD70 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] SurvivorOutlineUpdateStrategy @ 0x0ECD7C10 | StaticClass=0x07C23250 (Singleton=0x00000000) | SizeOf=0x0148 | Props=13 | Funcs=6
+  Prop[00] +0x00C0 : _inDangerColorForSurvivor (PropStruct=0x0ECD7930, GenFlags=0x19)
+  Prop[01] +0x00D0 : _noRecoveryDyingColor (PropStruct=0x0ECD7960, GenFlags=0x19)
+  Prop[02] +0x00E0 : _fullRecoveryDyingColor (PropStruct=0x0ECD7990, GenFlags=0x19)
+  Prop[03] +0x00F0 : _saviourColorForSurvivor (PropStruct=0x0ECD79C0, GenFlags=0x19)
+  Prop[04] +0x0100 : _colorForKiller (PropStruct=0x0ECD79F0, GenFlags=0x19)
+  Prop[05] +0x0110 : _customColor (PropStruct=0x0ECD7A20, GenFlags=0x19)
+  Prop[06] +0x0120 : _revealedGradient (PropStruct=0x0ECD7A50, GenFlags=0x12)
+  Prop[07] +0x0128 : _nonRevealedGradient (PropStruct=0x0ECD7A80, GenFlags=0x12)
+  Prop[08] +0x0000 : _revealToKillerDurationTags (PropStruct=0x0ECD7AB0, GenFlags=0x19)
+  Prop[09] +0x0130 : _revealToKillerDurationTags (PropStruct=0x0ECD7AE0, GenFlags=0x16)
+  Prop[10] +0x0140 : _revealToKillerLingerTimer (PropStruct=0x0ECD7B10, GenFlags=0x0A) [Bool SetBitFunc=0x00000000 ()]
+  Prop[11] +0x0001 : _trappedIconActive (PropStruct=0x0ECD7B38, GenFlags=0x2C)
+  Prop[12] +0x0001 : _useCustomColor (PropStruct=0x0ECD7B70, GenFlags=0x2C)
+  Func[00] GetEffectsProtectingFromKillerAuraReading -> Z_Construct=0x07C2335C | FFunctionParams=0x0ECD7480 | exec=0x00000000 | native=0x00000000
+  Func[01] IsActivelyHidingAuraFromKiller -> Z_Construct=0x07C233B4 | FFunctionParams=0x0ECD7578 | exec=0x00000000 | native=0x00000000
+  Func[02] IsActivelyHidingAuraFromKillerOnTrapped -> Z_Construct=0x07C2340C | FFunctionParams=0x0ECD7670 | exec=0x00000000 | native=0x00000000
+  Func[03] IsBlockingAuraReadingFromKiller -> Z_Construct=0x07C23464 | FFunctionParams=0x0ECD7730 | exec=0x00000000 | native=0x00000000
+  Func[04] SetCustomColor -> Z_Construct=0x07C234BC | FFunctionParams=0x0ECD77F0 | exec=0x00000000 | native=0x00000000
+  Func[05] SetTrappedIconActive -> Z_Construct=0x07C23514 | FFunctionParams=0x0ECD7878 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] Totem @ 0x0ECE2A38 | StaticClass=0x07C5FA74 (Singleton=0x00000000) | SizeOf=0x04C0 | Props=17 | Funcs=22
+  Prop[00] +0x0360 : OnTotemBound (PropStruct=0x0ECE2658, GenFlags=0x1B)
+  Prop[01] +0x0388 : _boonAuraRevealColor (PropStruct=0x0ECE2688, GenFlags=0x19)
+  Prop[02] +0x0000 : _boundPerks (PropStruct=0x0ECE26B8, GenFlags=0x12)
+  Prop[03] +0x0398 : _boundPerks (PropStruct=0x0ECE26E8, GenFlags=0x16)
+  Prop[04] +0x0000 : UnderlyingType (PropStruct=0x0ECE2718, GenFlags=0x00)
+  Prop[05] +0x03A8 : _totemState (PropStruct=0x0ECE2748, GenFlags=0x1E) [RepNotify=OnRep_TotemState]
+  Prop[06] +0x03B0 : _baseBoonTotemBlessingRange (PropStruct=0x0ECE2778, GenFlags=0x19)
+  Prop[07] +0x03D8 : _baseBoonTotemAuraRevealRange (PropStruct=0x0ECE27A8, GenFlags=0x19)
+  Prop[08] +0x0410 : _perceptionStimuliComponent (PropStruct=0x0ECE27D8, GenFlags=0x12)
+  Prop[09] +0x0418 : _totemBlockableComponent (PropStruct=0x0ECE2808, GenFlags=0x12)
+  Prop[10] +0x0430 : _localPlayerTracker (PropStruct=0x0ECE2838, GenFlags=0x12)
+  Prop[11] +0x0438 : _activatorComponent (PropStruct=0x0ECE2868, GenFlags=0x12)
+  Prop[12] +0x0440 : _objectState (PropStruct=0x0ECE2898, GenFlags=0x12)
+  Prop[13] +0x0448 : _interactionsAttachPoint (PropStruct=0x0ECE28C8, GenFlags=0x12)
+  Prop[14] +0x0450 : _totemOutlineUpdateStrategy (PropStruct=0x0ECE28F8, GenFlags=0x12)
+  Prop[15] +0x0001 : _canBeBoundToBoonPerk (PropStruct=0x0ECE2928, GenFlags=0x2C)
+  Prop[16] +0x0490 : _isUsedByHexPentimento (PropStruct=0x0ECE2960, GenFlags=0x19)
+  Func[00] Authority_BindToPerk -> Z_Construct=0x07C5FBF4 | FFunctionParams=0x0ECE19C0 | exec=0x00000000 | native=0x00000000
+  Func[01] Authority_Cleanse -> Z_Construct=0x07C5FC40 | FFunctionParams=0x0ECE1A08 | exec=0x00000000 | native=0x00000000
+  Func[02] Authority_UnbindFromAllPerks -> Z_Construct=0x07C5FC8C | FFunctionParams=0x0ECE1A50 | exec=0x00000000 | native=0x00000000
+  Func[03] Authority_UnbindFromPerk -> Z_Construct=0x07C5FCD8 | FFunctionParams=0x0ECE1AD0 | exec=0x00000000 | native=0x00000000
+  Func[04] BindingDelegate__DelegateSignature -> Z_Construct=0x07C5F170 | FFunctionParams=0x0ECE17F0 | exec=0x00000000 | native=0x00000000
+  Func[05] GetAkAudioComponent -> Z_Construct=0x07C5FD24 | FFunctionParams=0x0ECE1B50 | exec=0x00000000 | native=0x00000000
+  Func[06] GetBlessTotemInteraction -> Z_Construct=0x07C5FD70 | FFunctionParams=0x0ECE1BD0 | exec=0x00000000 | native=0x00000000
+  Func[07] GetBoonAuraRevealColor -> Z_Construct=0x07C5FDBC | FFunctionParams=0x0ECE1C50 | exec=0x00000000 | native=0x00000000
+  Func[08] GetBoonTotemAuraRevealRange -> Z_Construct=0x07C5FE08 | FFunctionParams=0x0ECE1CC8 | exec=0x00000000 | native=0x00000000
+  Func[09] GetBoonTotemBlessingRange -> Z_Construct=0x07C5FE54 | FFunctionParams=0x0ECE1D40 | exec=0x00000000 | native=0x00000000
+  Func[10] GetCleanseTotemInteraction -> Z_Construct=0x07C5FEA0 | FFunctionParams=0x0ECE1DC0 | exec=0x00000000 | native=0x00000000
+  Func[11] GetMainInteractor -> Z_Construct=0x07C5FEEC | FFunctionParams=0x0ECE1E40 | exec=0x00000000 | native=0x00000000
+  Func[12] GetTotemState -> Z_Construct=0x07C5FF38 | FFunctionParams=0x0ECE1EF8 | exec=0x00000000 | native=0x00000000
+  Func[13] IsBoundToPerk -> Z_Construct=0x07C5FF90 | FFunctionParams=0x0ECE1F80 | exec=0x00000000 | native=0x00000000
+  Func[14] IsTotemBlockedForPlayer -> Z_Construct=0x07C5FFE8 | FFunctionParams=0x0ECE2040 | exec=0x00000000 | native=0x00000000
+  Func[15] OnBlockTotemCosmetic -> Z_Construct=0x07C60034 | FFunctionParams=0x0ECE20C0 | exec=0x00000000 | native=0x00000000
+  Func[16] OnCleanseTotem -> Z_Construct=0x07C60140 | FFunctionParams=0x0ECE21B0 | exec=0x00000000 | native=0x00000000
+  Func[17] OnLocallyObservedChanged -> Z_Construct=0x07C6018C | FFunctionParams=0x0ECE21F8 | exec=0x00000000 | native=0x00000000
+  Func[18] OnRep_TotemState -> Z_Construct=0x07C601D8 | FFunctionParams=0x0ECE22B0 | exec=0x00000000 | native=0x00000000
+  Func[19] OnTotemBlockChanged -> Z_Construct=0x07C60224 | FFunctionParams=0x0ECE22F8 | exec=0x00000000 | native=0x00000000
+  Func[20] OnTotemStateChanged -> Z_Construct=0x07C60270 | FFunctionParams=0x0ECE2420 | exec=0x00000000 | native=0x00000000
+  Func[21] OnUnblockTotemCosmetic -> Z_Construct=0x07C602BC | FFunctionParams=0x0ECE24A0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] TotemOutlineUpdateStrategy @ 0x0ECE32E0 | StaticClass=0x07C60E84 (Singleton=0x00000000) | SizeOf=0x0160 | Props=3 | Funcs=1
+  Prop[00] +0x0138 : _revealedColorToSurvivor (PropStruct=0x0ECE3238, GenFlags=0x19)
+  Prop[01] +0x0148 : _boonTotemRevealedColorToSurvivor (PropStruct=0x0ECE3268, GenFlags=0x19)
+  Prop[02] +0x0158 : _revealedColorToKiller (PropStruct=0x0ECE3298, GenFlags=0x12)
+  Func[00] GetRevealColorToSurvivor -> Z_Construct=0x07C60F90 | FFunctionParams=0x0ECE31D0 | exec=0x00000000 | native=0x00000000
+
+[FClassParams] Window @ 0x0ED1D798 | StaticClass=0x07D6BA8C (Singleton=0x00000000) | SizeOf=0x0458 | Props=16 | Funcs=13
+  Prop[00] +0x0350 : NativeSmokeOtherIndicatorData (PropStruct=0x0ED1D410, GenFlags=0x19)
+  Prop[01] +0x0368 : NativeEntityIndicatorData (PropStruct=0x0ED1D440, GenFlags=0x19)
+  Prop[02] +0x0380 : NativeSmokeSelfIndicatorData (PropStruct=0x0ED1D470, GenFlags=0x19)
+  Prop[03] +0x0398 : _windowCollider (PropStruct=0x0ED1D4A0, GenFlags=0x12)
+  Prop[04] +0x0001 : _isBlockedByLevel (PropStruct=0x0ED1D4D0, GenFlags=0x2C) [RepNotify=OnRep_blockedByLevel]
+  Prop[05] +0x03A8 : _entityAssets (PropStruct=0x0ED1D508, GenFlags=0x12)
+  Prop[06] +0x03B0 : _materialHelper (PropStruct=0x0ED1D538, GenFlags=0x12)
+  Prop[07] +0x03B8 : _akAudioWindow (PropStruct=0x0ED1D568, GenFlags=0x12)
+  Prop[08] +0x03C0 : akAudioEventWindowsBlocStart (PropStruct=0x0ED1D598, GenFlags=0x12)
+  Prop[09] +0x03C8 : akAudioEventWindowsBlocStop (PropStruct=0x0ED1D5C8, GenFlags=0x12)
+  Prop[10] +0x0001 : _survivorVaultData (PropStruct=0x0ED1D5F8, GenFlags=0x19)
+  Prop[11] +0x0000 : _survivorVaultData_Key (PropStruct=0x0ED1D628, GenFlags=0x12)
+  Prop[12] +0x03D0 : _survivorVaultData (PropStruct=0x0ED1D658, GenFlags=0x17)
+  Prop[13] +0x0428 : _localPlayerTracker (PropStruct=0x0ED1D688, GenFlags=0x12)
+  Prop[14] +0x0430 : _blockableComponent (PropStruct=0x0ED1D6B8, GenFlags=0x12)
+  Prop[15] +0x0448 : _navEvadeLoopComponent (PropStruct=0x0ED1D6E8, GenFlags=0x12)
+  Func[00] Authority_OnVaultInternal -> Z_Construct=0x07D6BBA4 | FFunctionParams=0x0ED1CC88 | exec=0x00000000 | native=0x00000000
+  Func[01] Authority_SetBlockedByLevel -> Z_Construct=0x07D6BBFC | FFunctionParams=0x0ED1CD10 | exec=0x00000000 | native=0x00000000
+  Func[02] ForceBlockLocalWindowInteraction -> Z_Construct=0x07D6BC54 | FFunctionParams=0x0ED1CD98 | exec=0x00000000 | native=0x00000000
+  Func[03] GetAudioComponent -> Z_Construct=0x07D6BCA0 | FFunctionParams=0x0ED1CE18 | exec=0x00000000 | native=0x00000000
+  Func[04] GetBlockedByLevel -> Z_Construct=0x07D6BCF8 | FFunctionParams=0x0ED1CEA0 | exec=0x00000000 | native=0x00000000
+  Func[05] GetEntityAssets -> Z_Construct=0x07D6BD44 | FFunctionParams=0x0ED1CF20 | exec=0x00000000 | native=0x00000000
+  Func[06] GetMaterialHelper -> Z_Construct=0x07D6BD90 | FFunctionParams=0x0ED1CFA0 | exec=0x00000000 | native=0x00000000
+  Func[07] IsWindowVaultBlockedFor -> Z_Construct=0x07D6BDE8 | FFunctionParams=0x0ED1D060 | exec=0x00000000 | native=0x00000000
+  Func[08] IsWindowVaultBlockedForAnyPlayer -> Z_Construct=0x07D6BE40 | FFunctionParams=0x0ED1D0E8 | exec=0x00000000 | native=0x00000000
+  Func[09] NotifyOnFastVault -> Z_Construct=0x07D6BE8C | FFunctionParams=0x0ED1D1A0 | exec=0x00000000 | native=0x00000000
+  Func[10] OnFastVault -> Z_Construct=0x07D6BED8 | FFunctionParams=0x0ED1D258 | exec=0x00000000 | native=0x00000000
+  Func[11] OnLocallyObservedChanged -> Z_Construct=0x07D6BF24 | FFunctionParams=0x0ED1D2A0 | exec=0x00000000 | native=0x00000000
+  Func[12] OnRep_blockedByLevel -> Z_Construct=0x07D6BF70 | FFunctionParams=0x0ED1D2E8 | exec=0x00000000 | native=0x00000000

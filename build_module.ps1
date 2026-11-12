@@ -44,20 +44,23 @@ if (-not $env:ANDROID_NDK_HOME) {
 }
 
 $AdbExe = "adb"
-if (Test-Path "C:\Users\Walker\Downloads\platform-tools\adb.exe") {
+if (Test-Path "C:\Users\walker\Desktop\anydesk\tools\android-sdk\platform-tools\adb.exe") {
+    $AdbExe = "C:\Users\walker\Desktop\anydesk\tools\android-sdk\platform-tools\adb.exe"
+} elseif (Test-Path "C:\Users\Walker\Downloads\platform-tools\adb.exe") {
     $AdbExe = "C:\Users\Walker\Downloads\platform-tools\adb.exe"
 } elseif (Test-Path "E:\android-sdk\platform-tools\adb.exe") {
     $AdbExe = "E:\android-sdk\platform-tools\adb.exe"
 }
 
-$AppDir    = "app"
-$JniDir    = "jni"
-$ZygiskDir = "zygisk"
-$BuildDir  = "build-arm64"
-$ModDir    = "modulos"
-$StageDir  = "$ModDir\ue4_instrument_zygisk"
-$ZipOut    = "$ModDir\ue4_instrument_zygisk.zip"
-$ApkOut    = "$ModDir\DBDM_FloatingModMenu.apk"
+$AppDir     = "app"
+$JniDir     = "jni"
+$ZygiskDir  = "zygisk"
+$BuildDir   = "build-arm64"
+$ModDir     = "modulos"
+$StageDir   = "$ModDir\ue4_instrument_zygisk"
+$ZipOut     = "$ModDir\ue4_instrument_zygisk.zip"
+$ApkOut     = "$ModDir\DBDM_FloatingModMenu.apk"
+$WdbdApkOut = "$ModDir\wdbd.apk"
 $CoreSo    = Join-Path $BuildDir "libinstrument_core.so"
 $DiagSo    = Join-Path $BuildDir "libue4_diagnostics.so"
 $ZygiskSo  = Join-Path $BuildDir "libzygisk_loader.so"
@@ -194,6 +197,11 @@ exit 0
 [System.IO.File]::WriteAllText("$StageDir\META-INF\com\google\android\update-binary", ($UpdateBinary -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
 Copy-Item -Force $CoreSo "$ModDir\libinstrument_core.so"
+$DaemonBin = Join-Path $BuildDir "dbdm_telemetry_daemon"
+if (Test-Path $DaemonBin) {
+    & $LlvmStrip --strip-unneeded $DaemonBin
+    Copy-Item -Force $DaemonBin "$ModDir\dbdm_telemetry_daemon"
+}
 if (Test-Path $DiagSo) {
     & $LlvmStrip --strip-unneeded $DiagSo
     Copy-Item -Force $DiagSo "$ModDir\libue4_diagnostics.so"
@@ -242,14 +250,47 @@ try {
     $ZipStream.Dispose()
 }
 
-Write-Host "[5/6] Compilando e assinando Standalone Floating Mod Menu APK a partir de app/ ($ApkOut)..." -ForegroundColor Cyan
-$JavacExe   = "C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot\bin\javac.exe"
-$KeytoolExe = "C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot\bin\keytool.exe"
-$BuildTools = "E:\android-sdk\build-tools\34.0.0"
-$AndroidJar = "E:\android-sdk\platforms\android-34\android.jar"
+Write-Host "[5/6] Compilando e assinando Standalone Floating Mod Menu APK a partir de app/ ($WdbdApkOut / $ApkOut)..." -ForegroundColor Cyan
+$JavaHomeCandidates = @(
+    "C:\Program Files\Java\jdk-21.0.12.1",
+    "C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot"
+)
+$ResolvedJavaHome = $env:JAVA_HOME
+foreach ($Cand in $JavaHomeCandidates) {
+    if (Test-Path "$Cand\bin\javac.exe") {
+        $ResolvedJavaHome = $Cand
+        break
+    }
+}
+$JavacExe   = Join-Path $ResolvedJavaHome "bin\javac.exe"
+$KeytoolExe = Join-Path $ResolvedJavaHome "bin\keytool.exe"
+
+$BuildToolsCandidates = @(
+    "C:\Users\walker\Desktop\anydesk\tools\android-sdk\build-tools\35.0.0",
+    "E:\android-sdk\build-tools\34.0.0"
+)
+$BuildTools = $BuildToolsCandidates[0]
+foreach ($Cand in $BuildToolsCandidates) {
+    if (Test-Path $Cand) {
+        $BuildTools = $Cand
+        break
+    }
+}
+
+$AndroidJarCandidates = @(
+    "C:\Users\walker\Desktop\anydesk\tools\android-sdk\platforms\android-35\android.jar",
+    "E:\android-sdk\platforms\android-34\android.jar"
+)
+$AndroidJar = $AndroidJarCandidates[0]
+foreach ($Cand in $AndroidJarCandidates) {
+    if (Test-Path $Cand) {
+        $AndroidJar = $Cand
+        break
+    }
+}
 
 if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJar)) {
-    $env:JAVA_HOME = "C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot"
+    $env:JAVA_HOME = $ResolvedJavaHome
     $env:PATH      = "$env:JAVA_HOME\bin;$env:PATH"
 
     $ApkSrcDir   = $AppDir
@@ -293,14 +334,16 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
             "classes.dex",
             [System.IO.Compression.CompressionLevel]::Optimal
         ) | Out-Null
-        $LogoAsset = "$ApkSrcDir\assets\wdbd_logo_circle.png"
-        if (Test-Path $LogoAsset) {
-            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
-                $ApkArchive,
-                (Resolve-Path $LogoAsset).Path,
-                "assets/wdbd_logo_circle.png",
-                [System.IO.Compression.CompressionLevel]::NoCompression
-            ) | Out-Null
+        foreach ($AssetFile in @("wdbd_logo_circle.png", "logo.jpg")) {
+            $AssetPath = "$ApkSrcDir\assets\$AssetFile"
+            if (Test-Path $AssetPath) {
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                    $ApkArchive,
+                    (Resolve-Path $AssetPath).Path,
+                    "assets/$AssetFile",
+                    [System.IO.Compression.CompressionLevel]::NoCompression
+                ) | Out-Null
+            }
         }
         [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
             $ApkArchive,
@@ -335,49 +378,26 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
         $ErrorActionPreference = $PrevEap
     }
 
-    if (Test-Path $ApkOut) { Remove-Item -Force $ApkOut }
+    if (Test-Path $ApkOut)     { Remove-Item -Force $ApkOut }
+    if (Test-Path $WdbdApkOut) { Remove-Item -Force $WdbdApkOut }
     & "$BuildTools\apksigner.bat" sign --ks $KeystorePath --ks-pass pass:android --key-pass pass:android `
-        --out $ApkOut $AlignedApk
-    Write-Host "    -> Standalone Floating Mod Menu APK: $ApkOut" -ForegroundColor Green
-}
-
-Write-Host "[6/6] Verificando conexao ADB (192.168.1.68:10001) para deploy..." -ForegroundColor Cyan
-$PrevEapAdb = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-& $AdbExe connect 192.168.1.68:10001 *> $null
-$ErrorActionPreference = $PrevEapAdb
-
-$AdbDevices = (& $AdbExe devices) -join "`n"
-$TargetSerial = $null
-if ($AdbDevices -match "192\.168\.1\.68:10001\s+device") {
-    $TargetSerial = "192.168.1.68:10001"
-} elseif ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
-    $TargetSerial = $Matches[1]
-}
-
-if ($TargetSerial) {
-    Write-Host "    -> Dispositivo alvo detectado: $TargetSerial" -ForegroundColor Cyan
-    & $AdbExe -s $TargetSerial push $ZipOut /sdcard/Download/ue4_instrument_zygisk.zip
-    & $AdbExe -s $TargetSerial push $ZipOut /data/local/tmp/ue4_instrument_zygisk.zip
-    & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64; cp -f /data/local/tmp/ue4_instrument_zygisk.zip /data/adb/modules/ue4_instrument_core/ 2>/dev/null; magisk --install-module /data/local/tmp/ue4_instrument_zygisk.zip'"
-    & $AdbExe -s $TargetSerial push $CoreSo /data/local/tmp/libinstrument_core.so
-    & $AdbExe -s $TargetSerial push "$StageDir\service.sh" /data/local/tmp/service.sh
-    & $AdbExe -s $TargetSerial push "$StageDir\module.prop" /data/local/tmp/module.prop
-    & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64 && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so && cp -f /data/local/tmp/service.sh /data/adb/modules/ue4_instrument_core/service.sh && cp -f /data/local/tmp/module.prop /data/adb/modules/ue4_instrument_core/module.prop && chmod 755 /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so /data/adb/modules/ue4_instrument_core/service.sh && chmod 1777 /data/local/tmp && chmod 666 /data/local/tmp/dbdm_* 2>/dev/null; rm -f /data/adb/modules/ue4_instrument_core/update && rm -rf /data/adb/modules_update/ue4_instrument_core'"
-    $DaemonBin = Join-Path $BuildDir "dbdm_telemetry_daemon"
-    if (Test-Path $DaemonBin) {
-        & $LlvmStrip --strip-unneeded $DaemonBin
-        & $AdbExe -s $TargetSerial push $DaemonBin /data/local/tmp/dbdm_telemetry_daemon
-        & $AdbExe -s $TargetSerial shell "su -c 'killall -9 dbdm_telemetry_daemon >/dev/null 2>&1; chmod 755 /data/local/tmp/dbdm_telemetry_daemon && /data/local/tmp/dbdm_telemetry_daemon --daemon'"
-    }
-    if (Test-Path $ApkOut) {
-        & $AdbExe -s $TargetSerial push $ApkOut /sdcard/Download/DBDM_FloatingModMenu.apk
-        & $AdbExe -s $TargetSerial push $ApkOut /data/local/tmp/DBDM_FloatingModMenu.apk
-        & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu >/dev/null 2>&1; pm install -r /data/local/tmp/DBDM_FloatingModMenu.apk && appops set com.dbdm.modmenu SYSTEM_ALERT_WINDOW allow && am start -n com.dbdm.modmenu/.MainActivity"
-    }
-    Write-Host "    -> Verificando logs de inicializacao do processo (UE4Diag / FloatingModService)..." -ForegroundColor Cyan
-    & $AdbExe -s $TargetSerial logcat -d -t 40 -s UE4Diag:V FloatingModService:V AndroidRuntime:E
-    Write-Host "[OK] Modulo Zygisk e Floating Mod Menu APK implantados em $TargetSerial." -ForegroundColor Green
+        --out $WdbdApkOut $AlignedApk
+    Copy-Item -Force $WdbdApkOut $ApkOut
+    Copy-Item -Force $WdbdApkOut "$WorkspaceRoot\wdbd.apk"
+    Write-Host "    -> WDBD Floating Mod Menu APK: $WdbdApkOut (e espelhado em $ApkOut)" -ForegroundColor Green
 } else {
-    Write-Host "[OK] Artefatos gerados em $ZipOut e $ApkOut (nenhum dispositivo ADB online)." -ForegroundColor Yellow
+    throw "Ferramentas de build do APK nao encontradas (Javac=$JavacExe, BuildTools=$BuildTools, AndroidJar=$AndroidJar)"
+}
+
+Write-Host "[6/6] Verificando conexao ADB com a VM 192.168.1.8:10001..." -ForegroundColor Cyan
+if (Test-Path "$WorkspaceRoot\scripts\deploy_adb.py") {
+    $PrevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    python "$WorkspaceRoot\scripts\deploy_adb.py" 192.168.1.8 10001
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[AVISO] VM 192.168.1.8:10001 offline no momento. Artefatos prontos em $ZipOut e $WdbdApkOut." -ForegroundColor Yellow
+    }
+    $ErrorActionPreference = $PrevEap
+} else {
+    Write-Host "[OK] Artefatos gerados em $ZipOut e $ApkOut." -ForegroundColor Yellow
 }
