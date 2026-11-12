@@ -1,0 +1,399 @@
+
+=== APlayerState (via PlayerNamePrivate) FClassParams @ 0x0F3A5B88 | NoRegisterFunc=0x078472FC | Props=15 | Funcs=9 ===
+  Prop[00] +0x0230 : Score (0x0F3A5830, Gen=0x0A)
+  Prop[01] +0x0234 : PlayerId (0x0F3A5858, Gen=0x03)
+  Prop[02] +0x0238 : Ping (0x0F3A5880, Gen=0x00)
+  Prop[03] +0x0001 : bShouldUpdateReplicatedPing (0x0F3A58B0, Gen=0x0C) [Bool SetBitFunc=0x0C9B32D8 (+0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8))]
+  Prop[04] +0x0001 : bIsSpectator (0x0F3A58E8, Gen=0x0C) [Bool SetBitFunc=0x0C9B32E8 (+0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8))]
+  Prop[05] +0x0001 : bOnlySpectator (0x0F3A5920, Gen=0x0C) [Bool SetBitFunc=0x0C9B32F8 (+0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8))]
+  Prop[06] +0x0001 : bIsABot (0x0F3A5958, Gen=0x0C) [Bool SetBitFunc=0x0C9B3308 (+0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8))]
+  Prop[07] +0x0001 : bIsInactive (0x0F3A5990, Gen=0x0C) [Bool SetBitFunc=0x0C9B3318 (+0x023A(u8) +0x023A(u8) +0x023A(u8) +0x023A(u8))]
+  Prop[08] +0x0001 : bFromPreviousLevel (0x0F3A59C8, Gen=0x0C) [Bool SetBitFunc=0x0C9B3328 (+0x023A(u8) +0x023A(u8))]
+  Prop[09] +0x023C : StartTime (0x0F3A5A00, Gen=0x03)
+  Prop[10] +0x0240 : EngineMessageClass (0x0F3A5A28, Gen=0x11)
+  Prop[11] +0x0250 : SavedNetworkAddress (0x0F3A5A60, Gen=0x15)
+  Prop[12] +0x0260 : UniqueId (0x0F3A5A88, Gen=0x19)
+  Prop[13] +0x0298 : PawnPrivate (0x0F3A5AB8, Gen=0x12)
+  Prop[14] +0x0310 : PlayerNamePrivate (0x0F3A5AE8, Gen=0x15)
+  Func[00] GetPlayerName -> Z_Construct=0x0C9B2F60
+  Func[01] IsOnlyASpectator -> Z_Construct=0x0C9B2FB8
+  Func[02] OnRep_bIsInactive -> Z_Construct=0x0C9B3004
+  Func[03] OnRep_PlayerId -> Z_Construct=0x0C9B3050
+  Func[04] OnRep_PlayerName -> Z_Construct=0x0C9B309C
+  Func[05] OnRep_Score -> Z_Construct=0x0C9B30E8
+  Func[06] OnRep_UniqueId -> Z_Construct=0x0C9B3134
+  Func[07] ReceiveCopyProperties -> Z_Construct=0x0C9B3240
+  Func[08] ReceiveOverrideWith -> Z_Construct=0x0C9B328C
+
+=== APlayerCameraManager (via DefaultFOV) FClassParams @ 0x0F39C238 | NoRegisterFunc=0x07823FF4 | Props=42 | Funcs=32 ===
+  Prop[00] +0x0230 : PCOwner (0x0F39B930, Gen=0x12)
+  Prop[01] +0x0238 : TransformComponent (0x0F39B960, Gen=0x12)
+  Prop[02] +0x024C : DefaultFOV (0x0F39B990, Gen=0x0A)
+  Prop[03] +0x0254 : DefaultOrthoWidth (0x0F39B9B8, Gen=0x0A)
+  Prop[04] +0x025C : DefaultAspectRatio (0x0F39B9E0, Gen=0x0A)
+  Prop[05] +0x02A0 : CameraCache (0x0F39BA08, Gen=0x19)
+  Prop[06] +0x08A0 : LastFrameCameraCache (0x0F39BA38, Gen=0x19)
+  Prop[07] +0x0EA0 : ViewTarget (0x0F39BA68, Gen=0x19)
+  Prop[08] +0x14B0 : PendingViewTarget (0x0F39BA98, Gen=0x19)
+  Prop[09] +0x1AF0 : CameraCachePrivate (0x0F39BAC8, Gen=0x19)
+  Prop[10] +0x20F0 : LastFrameCameraCachePrivate (0x0F39BAF8, Gen=0x19)
+  Prop[11] +0x0000 : ModifierList (0x0F39BB28, Gen=0x12)
+  Prop[12] +0x26F0 : ModifierList (0x0F39BB58, Gen=0x16)
+  Prop[13] +0x0000 : DefaultModifiers (0x0F39BB88, Gen=0x11)
+  Prop[14] +0x2700 : DefaultModifiers (0x0F39BBC0, Gen=0x16)
+  Prop[15] +0x2710 : FreeCamDistance (0x0F39BBF0, Gen=0x0A)
+  Prop[16] +0x2714 : FreeCamOffset (0x0F39BC18, Gen=0x19)
+  Prop[17] +0x2720 : ViewTargetOffset (0x0F39BC48, Gen=0x19)
+  Prop[18] +0x2730 : OnAudioFadeChangeEvent (0x0F39BC78, Gen=0x1B)
+  Prop[19] +0x0000 : CameraLensEffects (0x0F39BCA8, Gen=0x12)
+  Prop[20] +0x2750 : CameraLensEffects (0x0F39BCD8, Gen=0x16)
+  Prop[21] +0x2760 : CachedCameraShakeMod (0x0F39BD08, Gen=0x12)
+  Prop[22] +0x2768 : AnimInstPool (0x0F39BD38, Gen=0x12)
+  Prop[23] +0x0000 : PostProcessBlendCache (0x0F39BD68, Gen=0x19)
+  Prop[24] +0x27A8 : PostProcessBlendCache (0x0F39BD98, Gen=0x16)
+  Prop[25] +0x0000 : ActiveAnims (0x0F39BDC8, Gen=0x12)
+  Prop[26] +0x27C8 : ActiveAnims (0x0F39BDF8, Gen=0x16)
+  Prop[27] +0x0000 : FreeAnims (0x0F39BE28, Gen=0x12)
+  Prop[28] +0x27D8 : FreeAnims (0x0F39BE58, Gen=0x16)
+  Prop[29] +0x27E8 : AnimCameraActor (0x0F39BE88, Gen=0x12)
+  Prop[30] +0x0001 : bIsOrthographic (0x0F39BEB8, Gen=0x0C) [Bool SetBitFunc=0x0C9A2D2C ()]
+  Prop[31] +0x0001 : bDefaultConstrainAspectRatio (0x0F39BEF0, Gen=0x0C) [Bool SetBitFunc=0x0C9A2D40 ()]
+  Prop[32] +0x0001 : bClientSimulatingViewTarget (0x0F39BF28, Gen=0x0C) [Bool SetBitFunc=0x0C9A2D54 ()]
+  Prop[33] +0x0001 : bUseClientSideCameraUpdates (0x0F39BF60, Gen=0x0C) [Bool SetBitFunc=0x0C9A2D68 ()]
+  Prop[34] +0x0001 : bGameCameraCutThisFrame (0x0F39BF98, Gen=0x0C) [Bool SetBitFunc=0x0C9A2D7C ()]
+  Prop[35] +0x27F4 : ViewPitchMin (0x0F39BFD0, Gen=0x0A)
+  Prop[36] +0x27F8 : ViewPitchMax (0x0F39BFF8, Gen=0x0A)
+  Prop[37] +0x27FC : ViewYawMin (0x0F39C020, Gen=0x0A)
+  Prop[38] +0x2800 : ViewYawMax (0x0F39C048, Gen=0x0A)
+  Prop[39] +0x2804 : ViewRollMin (0x0F39C070, Gen=0x0A)
+  Prop[40] +0x2808 : ViewRollMax (0x0F39C098, Gen=0x0A)
+  Prop[41] +0x2810 : ServerUpdateCameraTimeout (0x0F39C0C0, Gen=0x0A)
+  Func[00] AddCameraLensEffect -> Z_Construct=0x0C9A2178
+  Func[01] AddNewCameraModifier -> Z_Construct=0x0C9A21C4
+  Func[02] BlueprintUpdateCamera -> Z_Construct=0x0C9A221C
+  Func[03] ClearCameraLensEffects -> Z_Construct=0x0C9A2268
+  Func[04] FindCameraModifierByClass -> Z_Construct=0x0C9A22B4
+  Func[05] GetCameraLocation -> Z_Construct=0x0C9A2300
+  Func[06] GetCameraRotation -> Z_Construct=0x0C9A234C
+  Func[07] GetFOVAngle -> Z_Construct=0x0C9A2398
+  Func[08] GetOwningPlayerController -> Z_Construct=0x0C9A24A4
+  Func[09] OnPhotographyMultiPartCaptureEnd -> Z_Construct=0x0C9A24F0
+  Func[10] OnPhotographyMultiPartCaptureStart -> Z_Construct=0x0C9A253C
+  Func[11] OnPhotographySessionEnd -> Z_Construct=0x0C9A2588
+  Func[12] OnPhotographySessionStart -> Z_Construct=0x0C9A25D4
+  Func[13] PhotographyCameraModify -> Z_Construct=0x0C9A2620
+  Func[14] PlayCameraAnim -> Z_Construct=0x0C9A2684
+  Func[15] RemoveCameraLensEffect -> Z_Construct=0x0C9A26D0
+  Func[16] RemoveCameraModifier -> Z_Construct=0x0C9A2728
+  Func[17] SetGameCameraCutThisFrame -> Z_Construct=0x0C9A2774
+  Func[18] SetManualCameraFade -> Z_Construct=0x0C9A27CC
+  Func[19] StartCameraFade -> Z_Construct=0x0C9A2830
+  Func[20] StartCameraShake -> Z_Construct=0x0C9A287C
+  Func[21] StartCameraShakeFromSource -> Z_Construct=0x0C9A28C8
+  Func[22] StopAllCameraAnims -> Z_Construct=0x0C9A2920
+  Func[23] StopAllCameraShakes -> Z_Construct=0x0C9A2978
+  Func[24] StopAllCameraShakesFromSource -> Z_Construct=0x0C9A29D0
+  Func[25] StopAllInstancesOfCameraAnim -> Z_Construct=0x0C9A2A28
+  Func[26] StopAllInstancesOfCameraShake -> Z_Construct=0x0C9A2A80
+  Func[27] StopAllInstancesOfCameraShakeFromSource -> Z_Construct=0x0C9A2AD8
+  Func[28] StopCameraAnimInst -> Z_Construct=0x0C9A2B30
+  Func[29] StopCameraFade -> Z_Construct=0x0C9A2B7C
+  Func[30] StopCameraShake -> Z_Construct=0x0C9A2BD4
+  Func[31] SwapPendingViewTargetWhenUsingClientSideCameraUpdates -> Z_Construct=0x0C9A2C20
+
+=== UCameraComponent (via FieldOfView) FClassParams @ 0x0E7D8470 | NoRegisterFunc=0x05775C90 | Props=11 | Funcs=0 ===
+  Prop[00] +0x0038 : FieldOfView (0x0E7D8220, Gen=0x0A)
+  Prop[01] +0x0001 : bConstrainAspectRatio (0x0E7D8248, Gen=0x0C) [Bool SetBitFunc=0x05775D44 (+0x003C(u8) +0x003C(u8))]
+  Prop[02] +0x0040 : AspectRatio (0x0E7D8280, Gen=0x0A)
+  Prop[03] +0x0050 : PostProcessSettings (0x0E7D82A8, Gen=0x19)
+  Prop[04] +0x05B0 : PostProcessBlendWeight (0x0E7D82D8, Gen=0x0A)
+  Prop[05] +0x05B4 : Filmback (0x0E7D8300, Gen=0x19)
+  Prop[06] +0x05C0 : LensSettings (0x0E7D8330, Gen=0x19)
+  Prop[07] +0x05D8 : FocusSettings (0x0E7D8360, Gen=0x19)
+  Prop[08] +0x0638 : CurrentFocalLength (0x0E7D8390, Gen=0x0A)
+  Prop[09] +0x063C : CurrentAperture (0x0E7D83B8, Gen=0x0A)
+  Prop[10] +0x0640 : CurrentFocusDistance (0x0E7D83E0, Gen=0x0A)
+
+=== UCharacterMovementComponent (via MaxWalkSpeedCrouched) FClassParams @ 0x0F290888 | NoRegisterFunc=0x07713A18 | Props=156 | Funcs=38 ===
+  Prop[00] +0x0158 : CharacterOwner (0x0F28E6F0, Gen=0x12)
+  Prop[01] +0x0160 : GravityScale (0x0F28E720, Gen=0x0A)
+  Prop[02] +0x0164 : MaxStepHeight (0x0F28E748, Gen=0x0A)
+  Prop[03] +0x0168 : JumpZVelocity (0x0F28E770, Gen=0x0A)
+  Prop[04] +0x016C : JumpOffJumpZFactor (0x0F28E798, Gen=0x0A)
+  Prop[05] +0x0170 : WalkableFloorAngle (0x0F28E7C0, Gen=0x0A)
+  Prop[06] +0x0174 : WalkableFloorZ (0x0F28E7E8, Gen=0x0A)
+  Prop[07] +0x0178 : MovementMode (0x0F28E810, Gen=0x00)
+  Prop[08] +0x0179 : CustomMovementMode (0x0F28E840, Gen=0x00)
+  Prop[09] +0x0000 : UnderlyingType (0x0F28E870, Gen=0x00)
+  Prop[10] +0x017A : NetworkSmoothingMode (0x0F28E8A0, Gen=0x1E)
+  Prop[11] +0x017C : GroundFriction (0x0F28E8D0, Gen=0x0A)
+  Prop[12] +0x019C : MaxWalkSpeed (0x0F28E8F8, Gen=0x0A)
+  Prop[13] +0x01A0 : MaxWalkSpeedCrouched (0x0F28E920, Gen=0x0A)
+  Prop[14] +0x01A4 : MaxSwimSpeed (0x0F28E948, Gen=0x0A)
+  Prop[15] +0x01A8 : MaxFlySpeed (0x0F28E970, Gen=0x0A)
+  Prop[16] +0x01AC : MaxCustomMovementSpeed (0x0F28E998, Gen=0x0A)
+  Prop[17] +0x01B0 : MaxAcceleration (0x0F28E9C0, Gen=0x0A)
+  Prop[18] +0x01B4 : MinAnalogWalkSpeed (0x0F28E9E8, Gen=0x0A)
+  Prop[19] +0x01B8 : BrakingFrictionFactor (0x0F28EA10, Gen=0x0A)
+  Prop[20] +0x01BC : BrakingFriction (0x0F28EA38, Gen=0x0A)
+  Prop[21] +0x01C0 : BrakingSubStepTime (0x0F28EA60, Gen=0x0A)
+  Prop[22] +0x01C4 : BrakingDecelerationWalking (0x0F28EA88, Gen=0x0A)
+  Prop[23] +0x01C8 : BrakingDecelerationFalling (0x0F28EAB0, Gen=0x0A)
+  Prop[24] +0x01CC : BrakingDecelerationSwimming (0x0F28EAD8, Gen=0x0A)
+  Prop[25] +0x01D0 : BrakingDecelerationFlying (0x0F28EB00, Gen=0x0A)
+  Prop[26] +0x01D4 : AirControl (0x0F28EB28, Gen=0x0A)
+  Prop[27] +0x01D8 : AirControlBoostMultiplier (0x0F28EB50, Gen=0x0A)
+  Prop[28] +0x01DC : AirControlBoostVelocityThreshold (0x0F28EB78, Gen=0x0A)
+  Prop[29] +0x01E0 : FallingLateralFriction (0x0F28EBA0, Gen=0x0A)
+  Prop[30] +0x01E4 : CrouchedHalfHeight (0x0F28EBC8, Gen=0x0A)
+  Prop[31] +0x01E8 : Buoyancy (0x0F28EBF0, Gen=0x0A)
+  Prop[32] +0x01EC : PerchRadiusThreshold (0x0F28EC18, Gen=0x0A)
+  Prop[33] +0x01F0 : PerchAdditionalHeight (0x0F28EC40, Gen=0x0A)
+  Prop[34] +0x01F4 : RotationRate (0x0F28EC68, Gen=0x19)
+  Prop[35] +0x0001 : bUseSeparateBrakingFriction (0x0F28EC98, Gen=0x0C) [Bool SetBitFunc=0x0C822890 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[36] +0x0001 : bApplyGravityWhileJumping (0x0F28ECD0, Gen=0x0C) [Bool SetBitFunc=0x0C8228A0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[37] +0x0001 : bUseControllerDesiredRotation (0x0F28ED08, Gen=0x0C) [Bool SetBitFunc=0x0C8228B0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[38] +0x0001 : bOrientRotationToMovement (0x0F28ED40, Gen=0x0C) [Bool SetBitFunc=0x0C8228C0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[39] +0x0001 : bSweepWhileNavWalking (0x0F28ED78, Gen=0x0C) [Bool SetBitFunc=0x0C8228D0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[40] +0x0001 : bMovementInProgress (0x0F28EDB0, Gen=0x0C) [Bool SetBitFunc=0x0C8228E0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[41] +0x0001 : bEnableScopedMovementUpdates (0x0F28EDE8, Gen=0x0C) [Bool SetBitFunc=0x0C8228F0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[42] +0x0001 : bEnableServerDualMoveScopedMovementUpdates (0x0F28EE20, Gen=0x0C) [Bool SetBitFunc=0x0C822900 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[43] +0x0001 : bForceMaxAccel (0x0F28EE58, Gen=0x0C) [Bool SetBitFunc=0x0C822910 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[44] +0x0001 : bRunPhysicsWithNoController (0x0F28EE90, Gen=0x0C) [Bool SetBitFunc=0x0C822920 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[45] +0x0001 : bForceNextFloorCheck (0x0F28EEC8, Gen=0x0C) [Bool SetBitFunc=0x0C822930 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[46] +0x0001 : bShrinkProxyCapsule (0x0F28EF00, Gen=0x0C) [Bool SetBitFunc=0x0C822940 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[47] +0x0001 : bCanWalkOffLedges (0x0F28EF38, Gen=0x0C) [Bool SetBitFunc=0x0C822950 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[48] +0x0001 : bCanWalkOffLedgesWhenCrouching (0x0F28EF70, Gen=0x0C) [Bool SetBitFunc=0x0C822960 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[49] +0x0001 : bNetworkSkipProxyPredictionOnNetUpdate (0x0F28EFA8, Gen=0x0C) [Bool SetBitFunc=0x0C822970 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[50] +0x0001 : bNetworkAlwaysReplicateTransformUpdateTimestamp (0x0F28EFE0, Gen=0x0C) [Bool SetBitFunc=0x0C822980 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[51] +0x0001 : bDeferUpdateMoveComponent (0x0F28F018, Gen=0x0C) [Bool SetBitFunc=0x0C822990 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[52] +0x0001 : bEnablePhysicsInteraction (0x0F28F050, Gen=0x0C) [Bool SetBitFunc=0x0C8229A0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[53] +0x0001 : bTouchForceScaledToMass (0x0F28F088, Gen=0x0C) [Bool SetBitFunc=0x0C8229B0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[54] +0x0001 : bPushForceScaledToMass (0x0F28F0C0, Gen=0x0C) [Bool SetBitFunc=0x0C8229C0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32))]
+  Prop[55] +0x0001 : bPushForceUsingZOffset (0x0F28F0F8, Gen=0x0C) [Bool SetBitFunc=0x0C8229D0 (+0x0200(u32) +0x0200(u32) +0x0200(u32) +0x0200(u32) base+0x039F)]
+  Prop[56] +0x0001 : bScalePushForceToVelocity (0x0F28F130, Gen=0x0C) [Bool SetBitFunc=0x0C8229E0 (+0x0200(u32) +0x0200(u32) base+0x039F base+0x039F)]
+  Prop[57] +0x0208 : DeferredUpdatedMoveComponent (0x0F28F168, Gen=0x12)
+  Prop[58] +0x0210 : MaxOutOfWaterStepHeight (0x0F28F198, Gen=0x0A)
+  Prop[59] +0x0214 : OutofWaterZ (0x0F28F1C0, Gen=0x0A)
+  Prop[60] +0x0218 : Mass (0x0F28F1E8, Gen=0x0A)
+  Prop[61] +0x021C : StandingDownwardForceScale (0x0F28F210, Gen=0x0A)
+  Prop[62] +0x0220 : InitialPushForceFactor (0x0F28F238, Gen=0x0A)
+  Prop[63] +0x0224 : PushForceFactor (0x0F28F260, Gen=0x0A)
+  Prop[64] +0x0228 : PushForcePointZOffsetFactor (0x0F28F288, Gen=0x0A)
+  Prop[65] +0x022C : TouchForceFactor (0x0F28F2B0, Gen=0x0A)
+  Prop[66] +0x0230 : MinTouchForce (0x0F28F2D8, Gen=0x0A)
+  Prop[67] +0x0234 : MaxTouchForce (0x0F28F300, Gen=0x0A)
+  Prop[68] +0x0238 : RepulsionForce (0x0F28F328, Gen=0x0A)
+  Prop[69] +0x023C : Acceleration (0x0F28F350, Gen=0x19)
+  Prop[70] +0x0250 : LastUpdateRotation (0x0F28F380, Gen=0x19)
+  Prop[71] +0x0260 : LastUpdateLocation (0x0F28F3B0, Gen=0x19)
+  Prop[72] +0x026C : LastUpdateVelocity (0x0F28F3E0, Gen=0x19)
+  Prop[73] +0x0278 : ServerLastTransformUpdateTimeStamp (0x0F28F410, Gen=0x0A)
+  Prop[74] +0x027C : ServerLastClientGoodMoveAckTime (0x0F28F438, Gen=0x0A)
+  Prop[75] +0x0280 : ServerLastClientAdjustmentTime (0x0F28F460, Gen=0x0A)
+  Prop[76] +0x0284 : PendingImpulseToApply (0x0F28F488, Gen=0x19)
+  Prop[77] +0x0290 : PendingForceToApply (0x0F28F4B8, Gen=0x19)
+  Prop[78] +0x029C : AnalogInputModifier (0x0F28F4E8, Gen=0x0A)
+  Prop[79] +0x02AC : MaxSimulationTimeStep (0x0F28F510, Gen=0x0A)
+  Prop[80] +0x02B0 : MaxSimulationIterations (0x0F28F538, Gen=0x03)
+  Prop[81] +0x02B4 : MaxJumpApexAttemptsPerSimulation (0x0F28F560, Gen=0x03)
+  Prop[82] +0x02B8 : MaxDepenetrationWithGeometry (0x0F28F588, Gen=0x0A)
+  Prop[83] +0x02BC : MaxDepenetrationWithGeometryAsProxy (0x0F28F5B0, Gen=0x0A)
+  Prop[84] +0x02C0 : MaxDepenetrationWithPawn (0x0F28F5D8, Gen=0x0A)
+  Prop[85] +0x02C4 : MaxDepenetrationWithPawnAsProxy (0x0F28F600, Gen=0x0A)
+  Prop[86] +0x02C8 : NetworkSimulatedSmoothLocationTime (0x0F28F628, Gen=0x0A)
+  Prop[87] +0x02CC : NetworkSimulatedSmoothRotationTime (0x0F28F650, Gen=0x0A)
+  Prop[88] +0x02D0 : ListenServerNetworkSimulatedSmoothLocationTime (0x0F28F678, Gen=0x0A)
+  Prop[89] +0x02D4 : ListenServerNetworkSimulatedSmoothRotationTime (0x0F28F6A0, Gen=0x0A)
+  Prop[90] +0x02D8 : NetProxyShrinkRadius (0x0F28F6C8, Gen=0x0A)
+  Prop[91] +0x02DC : NetProxyShrinkHalfHeight (0x0F28F6F0, Gen=0x0A)
+  Prop[92] +0x02E0 : NetworkMaxSmoothUpdateDistance (0x0F28F718, Gen=0x0A)
+  Prop[93] +0x02E4 : NetworkNoSmoothUpdateDistance (0x0F28F740, Gen=0x0A)
+  Prop[94] +0x02E8 : NetworkMinTimeBetweenClientAckGoodMoves (0x0F28F768, Gen=0x0A)
+  Prop[95] +0x02EC : NetworkMinTimeBetweenClientAdjustments (0x0F28F790, Gen=0x0A)
+  Prop[96] +0x02F0 : NetworkMinTimeBetweenClientAdjustmentsLargeCorrection (0x0F28F7B8, Gen=0x0A)
+  Prop[97] +0x02F4 : NetworkLargeClientCorrectionDistance (0x0F28F7E0, Gen=0x0A)
+  Prop[98] +0x02F8 : LedgeCheckThreshold (0x0F28F808, Gen=0x0A)
+  Prop[99] +0x02FC : JumpOutOfWaterPitch (0x0F28F830, Gen=0x0A)
+  Prop[100] +0x0300 : CurrentFloor (0x0F28F858, Gen=0x19)
+  Prop[101] +0x039C : DefaultLandMovementMode (0x0F28F888, Gen=0x00)
+  Prop[102] +0x039D : DefaultWaterMovementMode (0x0F28F8B8, Gen=0x00)
+  Prop[103] +0x039E : GroundMovementMode (0x0F28F8E8, Gen=0x00)
+  Prop[104] +0x0001 : bMaintainHorizontalGroundVelocity (0x0F28F918, Gen=0x0C) [Bool SetBitFunc=0x0C8229F0 (base+0x039F base+0x039F)]
+  Prop[105] +0x0001 : bImpartBaseVelocityX (0x0F28F950, Gen=0x0C) [Bool SetBitFunc=0x0C822A04 (base+0x039F base+0x039F)]
+  Prop[106] +0x0001 : bImpartBaseVelocityY (0x0F28F988, Gen=0x0C) [Bool SetBitFunc=0x0C822A18 (base+0x039F base+0x039F)]
+  Prop[107] +0x0001 : bImpartBaseVelocityZ (0x0F28F9C0, Gen=0x0C) [Bool SetBitFunc=0x0C822A2C (base+0x039F base+0x039F)]
+  Prop[108] +0x0001 : bImpartBaseAngularVelocity (0x0F28F9F8, Gen=0x0C) [Bool SetBitFunc=0x0C822A40 (base+0x039F base+0x039F)]
+  Prop[109] +0x0001 : bJustTeleported (0x0F28FA30, Gen=0x0C) [Bool SetBitFunc=0x0C822A54 (base+0x039F base+0x039F)]
+  Prop[110] +0x0001 : bNetworkUpdateReceived (0x0F28FA68, Gen=0x0C) [Bool SetBitFunc=0x0C822A68 (base+0x039F base+0x039F)]
+  Prop[111] +0x0001 : bNetworkMovementModeChanged (0x0F28FAA0, Gen=0x0C) [Bool SetBitFunc=0x0C822A7C (base+0x039F base+0x039F)]
+  Prop[112] +0x0001 : bIgnoreClientMovementErrorChecksAndCorrection (0x0F28FAD8, Gen=0x0C) [Bool SetBitFunc=0x0C822A90 (base+0x039F base+0x039F)]
+  Prop[113] +0x0001 : bServerAcceptClientAuthoritativePosition (0x0F28FB10, Gen=0x0C) [Bool SetBitFunc=0x0C822AA4 (base+0x039F base+0x039F)]
+  Prop[114] +0x0001 : bNotifyApex (0x0F28FB48, Gen=0x0C) [Bool SetBitFunc=0x0C822AB8 (base+0x039F base+0x039F)]
+  Prop[115] +0x0001 : bCheatFlying (0x0F28FB80, Gen=0x0C) [Bool SetBitFunc=0x0C822ACC (base+0x039F base+0x039F)]
+  Prop[116] +0x0001 : bWantsToCrouch (0x0F28FBB8, Gen=0x0C) [Bool SetBitFunc=0x0C822AE0 (base+0x039F base+0x039F)]
+  Prop[117] +0x0001 : bCrouchMaintainsBaseLocation (0x0F28FBF0, Gen=0x0C) [Bool SetBitFunc=0x0C822AF4 (base+0x039F base+0x039F)]
+  Prop[118] +0x0001 : bIgnoreBaseRotation (0x0F28FC28, Gen=0x0C) [Bool SetBitFunc=0x0C822B08 (base+0x039F base+0x039F)]
+  Prop[119] +0x0001 : bFastAttachedMove (0x0F28FC60, Gen=0x0C) [Bool SetBitFunc=0x0C822B1C (base+0x039F base+0x039F)]
+  Prop[120] +0x0001 : bAlwaysCheckFloor (0x0F28FC98, Gen=0x0C) [Bool SetBitFunc=0x0C822B30 (base+0x039F base+0x039F)]
+  Prop[121] +0x0001 : bUseFlatBaseForFloorChecks (0x0F28FCD0, Gen=0x0C) [Bool SetBitFunc=0x0C822B44 (base+0x039F base+0x039F)]
+  Prop[122] +0x0001 : bPerformingJumpOff (0x0F28FD08, Gen=0x0C) [Bool SetBitFunc=0x0C822B58 (base+0x039F base+0x039F)]
+  Prop[123] +0x0001 : bWantsToLeaveNavWalking (0x0F28FD40, Gen=0x0C) [Bool SetBitFunc=0x0C822B6C (base+0x039F base+0x039F)]
+  Prop[124] +0x0001 : bUseRVOAvoidance (0x0F28FD78, Gen=0x0C) [Bool SetBitFunc=0x0C822B80 (base+0x039F base+0x039F)]
+  Prop[125] +0x0001 : bRequestedMoveUseAcceleration (0x0F28FDB0, Gen=0x0C) [Bool SetBitFunc=0x0C822B94 (base+0x039F base+0x039F)]
+  Prop[126] +0x0001 : bWasSimulatingRootMotion (0x0F28FDE8, Gen=0x0C) [Bool SetBitFunc=0x0C822BA8 (base+0x039F base+0x039F)]
+  Prop[127] +0x0001 : bAllowPhysicsRotationDuringAnimRootMotion (0x0F28FE20, Gen=0x0C) [Bool SetBitFunc=0x0C822BBC (base+0x039F +0x03A3(u8) +0x03A4(u8))]
+  Prop[128] +0x0001 : LockRootMotionRotationPitch (0x0F28FE58, Gen=0x2C) [Bool SetBitFunc=0x0C822BD0 (+0x03A3(u8) +0x03A4(u8) +0x03A5(u8) +0x03A6(u8))]
+  Prop[129] +0x0001 : LockRootMotionRotationYaw (0x0F28FE90, Gen=0x2C) [Bool SetBitFunc=0x0C822BDC (+0x03A4(u8) +0x03A5(u8) +0x03A6(u8) +0x03A6(u8))]
+  Prop[130] +0x0001 : LockRootMotionRotationRoll (0x0F28FEC8, Gen=0x2C) [Bool SetBitFunc=0x0C822BE8 (+0x03A5(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8))]
+  Prop[131] +0x0001 : bHasRequestedVelocity (0x0F28FF00, Gen=0x0C) [Bool SetBitFunc=0x0C822BF4 (+0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8))]
+  Prop[132] +0x0001 : bRequestedMoveWithMaxSpeed (0x0F28FF38, Gen=0x0C) [Bool SetBitFunc=0x0C822C04 (+0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8))]
+  Prop[133] +0x0001 : bWasAvoidanceUpdated (0x0F28FF70, Gen=0x0C) [Bool SetBitFunc=0x0C822C14 (+0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8))]
+  Prop[134] +0x0001 : bProjectNavMeshWalking (0x0F28FFA8, Gen=0x0C) [Bool SetBitFunc=0x0C822C24 (+0x03A6(u8) +0x03A6(u8) +0x03A6(u8) +0x03A6(u8))]
+  Prop[135] +0x0001 : bProjectNavMeshOnBothWorldChannels (0x0F28FFE0, Gen=0x0C) [Bool SetBitFunc=0x0C822C34 (+0x03A6(u8) +0x03A6(u8))]
+  Prop[136] +0x03B8 : AvoidanceConsiderationRadius (0x0F290018, Gen=0x0A)
+  Prop[137] +0x03BC : RequestedVelocity (0x0F290040, Gen=0x19)
+  Prop[138] +0x03C8 : AvoidanceUID (0x0F290070, Gen=0x03)
+  Prop[139] +0x03CC : AvoidanceGroup (0x0F290098, Gen=0x19)
+  Prop[140] +0x03D0 : GroupsToAvoid (0x0F2900C8, Gen=0x19)
+  Prop[141] +0x03D4 : GroupsToIgnore (0x0F2900F8, Gen=0x19)
+  Prop[142] +0x03D8 : AvoidanceWeight (0x0F290128, Gen=0x0A)
+  Prop[143] +0x03DC : PendingLaunchVelocity (0x0F290150, Gen=0x19)
+  Prop[144] +0x0490 : NavMeshProjectionInterval (0x0F290180, Gen=0x0A)
+  Prop[145] +0x0494 : NavMeshProjectionTimer (0x0F2901A8, Gen=0x0A)
+  Prop[146] +0x0498 : NavMeshProjectionInterpSpeed (0x0F2901D0, Gen=0x0A)
+  Prop[147] +0x049C : NavMeshProjectionHeightScaleUp (0x0F2901F8, Gen=0x0A)
+  Prop[148] +0x04A0 : NavMeshProjectionHeightScaleDown (0x0F290220, Gen=0x0A)
+  Prop[149] +0x04A4 : NavWalkingFloorDistTolerance (0x0F290248, Gen=0x0A)
+  Prop[150] +0x04A8 : PostPhysicsTickFunction (0x0F290270, Gen=0x19)
+  Prop[151] +0x04F0 : MinTimeBetweenTimeStampResets (0x0F2902A0, Gen=0x0A)
+  Prop[152] +0x09A0 : CurrentRootMotion (0x0F2902C8, Gen=0x19)
+  Prop[153] +0x09D8 : ServerCorrectionRootMotion (0x0F2902F8, Gen=0x19)
+  Prop[154] +0x0AA0 : RootMotionParams (0x0F290328, Gen=0x19)
+  Prop[155] +0x0AE0 : AnimRootMotionVelocity (0x0F290358, Gen=0x19)
+  Func[00] AddForce -> Z_Construct=0x0C821C40
+  Func[01] AddImpulse -> Z_Construct=0x0C821C98
+  Func[02] CalcVelocity -> Z_Construct=0x0C821CF0
+  Func[03] CapsuleTouched -> Z_Construct=0x0C821D48
+  Func[04] ClearAccumulatedForces -> Z_Construct=0x0C821D94
+  Func[05] DisableMovement -> Z_Construct=0x0C821DE0
+  Func[06] GetAnalogInputModifier -> Z_Construct=0x0C821E2C
+  Func[07] GetCharacterOwner -> Z_Construct=0x0C821E78
+  Func[08] GetCurrentAcceleration -> Z_Construct=0x0C821EC4
+  Func[09] GetImpartedMovementBaseVelocity -> Z_Construct=0x0C821F10
+  Func[10] GetLastUpdateLocation -> Z_Construct=0x0C821F5C
+  Func[11] GetLastUpdateRotation -> Z_Construct=0x0C821FA8
+  Func[12] GetLastUpdateVelocity -> Z_Construct=0x0C821FF4
+  Func[13] GetMaxAcceleration -> Z_Construct=0x0C822040
+  Func[14] GetMaxBrakingDeceleration -> Z_Construct=0x0C82208C
+  Func[15] GetMaxJumpHeight -> Z_Construct=0x0C8220D8
+  Func[16] GetMaxJumpHeightWithJumpTime -> Z_Construct=0x0C822124
+  Func[17] GetMinAnalogSpeed -> Z_Construct=0x0C822170
+  Func[18] GetMovementBase -> Z_Construct=0x0C8221BC
+  Func[19] GetPerchRadiusThreshold -> Z_Construct=0x0C822208
+  Func[20] GetValidPerchRadius -> Z_Construct=0x0C822254
+  Func[21] IsWalkable -> Z_Construct=0x0C8222AC
+  Func[22] IsWalking -> Z_Construct=0x0C822304
+  Func[23] K2_ComputeFloorDist -> Z_Construct=0x0C822350
+  Func[24] K2_FindFloor -> Z_Construct=0x0C82239C
+  Func[25] K2_GetModifiedMaxAcceleration -> Z_Construct=0x0C8223E8
+  Func[26] K2_GetWalkableFloorAngle -> Z_Construct=0x0C822434
+  Func[27] K2_GetWalkableFloorZ -> Z_Construct=0x0C822480
+  Func[28] SetAvoidanceEnabled -> Z_Construct=0x0C8224D8
+  Func[29] SetAvoidanceGroup -> Z_Construct=0x0C822524
+  Func[30] SetAvoidanceGroupMask -> Z_Construct=0x0C822570
+  Func[31] SetGroupsToAvoid -> Z_Construct=0x0C8225BC
+  Func[32] SetGroupsToAvoidMask -> Z_Construct=0x0C822608
+  Func[33] SetGroupsToIgnore -> Z_Construct=0x0C822654
+  Func[34] SetGroupsToIgnoreMask -> Z_Construct=0x0C8226A0
+  Func[35] SetMovementMode -> Z_Construct=0x0C8226EC
+  Func[36] SetWalkableFloorAngle -> Z_Construct=0x0C822738
+  Func[37] SetWalkableFloorZ -> Z_Construct=0x0C822784
+
+=== UMovementComponent (via UpdatedComponent) FClassParams @ 0x0F36F6D0 | NoRegisterFunc=0x090985FC | Props=15 | Funcs=22 ===
+  Prop[00] +0x00B8 : UpdatedComponent (0x0F36F348, Gen=0x12)
+  Prop[01] +0x00C0 : UpdatedPrimitive (0x0F36F378, Gen=0x12)
+  Prop[02] +0x00CC : Velocity (0x0F36F3A8, Gen=0x19)
+  Prop[03] +0x00D8 : PlaneConstraintNormal (0x0F36F3D8, Gen=0x19)
+  Prop[04] +0x00E4 : PlaneConstraintOrigin (0x0F36F408, Gen=0x19)
+  Prop[05] +0x0001 : bUpdateOnlyIfRendered (0x0F36F438, Gen=0x0C) [Bool SetBitFunc=0x0C9623FC (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[06] +0x0001 : bAutoUpdateTickRegistration (0x0F36F470, Gen=0x0C) [Bool SetBitFunc=0x0C96240C (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[07] +0x0001 : bTickBeforeOwner (0x0F36F4A8, Gen=0x0C) [Bool SetBitFunc=0x0C96241C (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[08] +0x0001 : bAutoRegisterUpdatedComponent (0x0F36F4E0, Gen=0x0C) [Bool SetBitFunc=0x0C96242C (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[09] +0x0001 : bConstrainToPlane (0x0F36F518, Gen=0x0C) [Bool SetBitFunc=0x0C96243C (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[10] +0x0001 : bSnapToPlaneAtStart (0x0F36F550, Gen=0x0C) [Bool SetBitFunc=0x0C96244C (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[11] +0x0001 : bAutoRegisterPhysicsVolumeUpdates (0x0F36F588, Gen=0x0C) [Bool SetBitFunc=0x0C96245C (+0x00F0(u8) +0x00F0(u8) +0x00F0(u8) +0x00F0(u8))]
+  Prop[12] +0x0001 : bComponentShouldUpdatePhysicsVolume (0x0F36F5C0, Gen=0x0C) [Bool SetBitFunc=0x0C96246C (+0x00F0(u8) +0x00F0(u8))]
+  Prop[13] +0x0000 : UnderlyingType (0x0F36F5F8, Gen=0x00)
+  Prop[14] +0x00F3 : PlaneConstraintAxisSetting (0x0F36F628, Gen=0x1E)
+  Func[00] ConstrainDirectionToPlane -> Z_Construct=0x0C961C78
+  Func[01] ConstrainLocationToPlane -> Z_Construct=0x0C961CC4
+  Func[02] ConstrainNormalToPlane -> Z_Construct=0x0C961D10
+  Func[03] GetGravityZ -> Z_Construct=0x0C961D5C
+  Func[04] GetMaxSpeed -> Z_Construct=0x0C961DA8
+  Func[05] GetPhysicsVolume -> Z_Construct=0x0C961DF4
+  Func[06] GetPlaneConstraintAxisSetting -> Z_Construct=0x0C961E40
+  Func[07] GetPlaneConstraintNormal -> Z_Construct=0x0C961E8C
+  Func[08] GetPlaneConstraintOrigin -> Z_Construct=0x0C961ED8
+  Func[09] IsExceedingMaxSpeed -> Z_Construct=0x0C961F30
+  Func[10] K2_GetMaxSpeedModifier -> Z_Construct=0x0C961F7C
+  Func[11] K2_GetModifiedMaxSpeed -> Z_Construct=0x0C961FC8
+  Func[12] K2_MoveUpdatedComponent -> Z_Construct=0x0C962038
+  Func[13] PhysicsVolumeChanged -> Z_Construct=0x0C962084
+  Func[14] SetPlaneConstraintAxisSetting -> Z_Construct=0x0C9620D0
+  Func[15] SetPlaneConstraintEnabled -> Z_Construct=0x0C962128
+  Func[16] SetPlaneConstraintFromVectors -> Z_Construct=0x0C962174
+  Func[17] SetPlaneConstraintNormal -> Z_Construct=0x0C9621C0
+  Func[18] SetPlaneConstraintOrigin -> Z_Construct=0x0C96220C
+  Func[19] SetUpdatedComponent -> Z_Construct=0x0C962258
+  Func[20] SnapUpdatedComponentToPlane -> Z_Construct=0x0C9622A4
+  Func[21] StopMovementImmediately -> Z_Construct=0x0C9622F0
+
+=== UOutlineUpdateStrategy (via _outlineComponent) FClassParams @ 0x0E8AF978 | NoRegisterFunc=0x05DEDDA0 | Props=25 | Funcs=15 ===
+  Prop[00] +0x0001 : showCueIndicator (0x0E8AF400, Gen=0x2C) [Bool SetBitFunc=0x05DEE410 (+0x0380(u8) +0x0468(u8))]
+  Prop[01] +0x0384 : _survivorChargeDuration (0x0E8AF438, Gen=0x0A)
+  Prop[02] +0x0388 : _slasherChargeDuration (0x0E8AF460, Gen=0x0A)
+  Prop[03] +0x0390 : _crownPillarInteractionSecondsToCharge (0x0E8AF488, Gen=0x19)
+  Prop[04] +0x03B8 : _crownPillarInteractionSecondsToChargeKiller (0x0E8AF4B8, Gen=0x19)
+  Prop[05] +0x03E0 : _offeringEnabledAuraVisibilityDistance (0x0E8AF4E8, Gen=0x19)
+  Prop[06] +0x0408 : _defaultAuraVisibilityDistance (0x0E8AF518, Gen=0x19)
+  Prop[07] +0x0430 : _noiseIndicatorMinimumDistance (0x0E8AF548, Gen=0x0A)
+  Prop[08] +0x0434 : _noiseIndicatorMaximumDistance (0x0E8AF570, Gen=0x0A)
+  Prop[09] +0x0438 : _survivorCrownPickup (0x0E8AF598, Gen=0x12)
+  Prop[10] +0x0440 : _slasherCrownPickup (0x0E8AF5C8, Gen=0x12)
+  Prop[11] +0x0001 : _debugForcePillarStayEnabled (0x0E8AF5F8, Gen=0x2C) [Bool SetBitFunc=0x05DEE41C (+0x0468(u8))]
+  Prop[12] +0x0470 : _debugIndicatorBlueprintClass (0x0E8AF630, Gen=0x11)
+  Prop[13] +0x0478 : _spawnedCrownPillarDebugIndicator (0x0E8AF668, Gen=0x12)
+  Prop[14] +0x0480 : _anniversaryOfferingTag (0x0E8AF698, Gen=0x14)
+  Prop[15] +0x0490 : _crownPillarInteraction (0x0E8AF6C0, Gen=0x12)
+  Prop[16] +0x0498 : _crownPillarInteractionKiller (0x0E8AF6F0, Gen=0x12)
+  Prop[17] +0x04A0 : _crownPillarInteractionChargeable (0x0E8AF720, Gen=0x12)
+  Prop[18] +0x04A8 : _crownPillarInteractionChargeableKiller (0x0E8AF750, Gen=0x12)
+  Prop[19] +0x04B0 : _crownPillarInteractor (0x0E8AF780, Gen=0x12)
+  Prop[20] +0x04B8 : _crownPillarInteractionZone (0x0E8AF7B0, Gen=0x12)
+  Prop[21] +0x04C0 : _crownPillarStaticMesh (0x0E8AF7E0, Gen=0x12)
+  Prop[22] +0x04C8 : _outlineComponent (0x0E8AF810, Gen=0x12)
+  Prop[23] +0x04D0 : _nearTrackedActorComponent (0x0E8AF840, Gen=0x12)
+  Prop[24] +0x04D8 : _crownPillarOutlineUpdateStrategy (0x0E8AF870, Gen=0x12)
+  Func[00] Cosmetic_OnInteractionCancelled -> Z_Construct=0x05DEDEAC
+  Func[01] Cosmetic_OnInteractionCompleted -> Z_Construct=0x05DEDEF8
+  Func[02] Cosmetic_OnStartedInteracting -> Z_Construct=0x05DEDF44
+  Func[03] Cosmetic_OnStoppedInteracting -> Z_Construct=0x05DEDF90
+  Func[04] GetSlasherChargeDuration -> Z_Construct=0x05DEDFDC
+  Func[05] GetSlasherCrownPickupInteraction -> Z_Construct=0x05DEE028
+  Func[06] GetSurvivorChargeDuration -> Z_Construct=0x05DEE074
+  Func[07] GetSurvivorCrownPickupInteraction -> Z_Construct=0x05DEE0C0
+  Func[08] IsLocallyObservedPlayerEquippedWithAnniversaryOffering -> Z_Construct=0x05DEE118
+  Func[09] Local_OnIntroCompleted -> Z_Construct=0x05DEE164
+  Func[10] OnCrownPillarDisabled -> Z_Construct=0x05DEE1B0
+  Func[11] OnCrownPillarEnabled -> Z_Construct=0x05DEE1FC
+  Func[12] OnCrownPillarInteractionEndedCosmetic -> Z_Construct=0x05DEE260
+  Func[13] OnCrownPillarInteractionStartedCosmetic -> Z_Construct=0x05DEE2B8
+  Func[14] OnLocallyObservedChanged -> Z_Construct=0x05DEE304
+
+=== UPalletOutlineUpdateStrategy (via _revealedByPowerColor) FClassParams @ 0x0EC7D3C0 | NoRegisterFunc=0x078B8EEC | Props=1 | Funcs=0 ===
+  Prop[00] +0x013C : _revealedByPowerColor (0x0EC7D388, Gen=0x19)
+
+=== UVaultableOutlineUpdateStrategy (via _canBeRevealedToLocalPlayer) FClassParams @ 0x0ED19EF8 | NoRegisterFunc=0x07AB8BC0 | Props=1 | Funcs=1 ===
+  Prop[00] +0x0001 : _canBeRevealedToLocalPlayer (0x0ED19EB8, Gen=0x2C) [Bool SetBitFunc=0x07D672EC (+0x0138(u8))]
+  Func[00] SetCanBeRevealedToLocalPlayer -> Z_Construct=0x07D672A0
