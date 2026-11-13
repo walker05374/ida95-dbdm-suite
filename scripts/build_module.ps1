@@ -73,6 +73,43 @@ $LlvmStrip = Join-Path $LlvmBin "llvm-strip.exe"
 
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 
+Write-Host "[Pre-Check] Validando offsets e integridade ELF (check_drift.py)..." -ForegroundColor Cyan
+$OffsetsJsonPath = Join-Path $WorkspaceRoot "docs\offsets\offsets.json"
+$TargetSoForDrift = if (Test-Path "$WorkspaceRoot\binaries\libUE4_fixed.so") {
+    "$WorkspaceRoot\binaries\libUE4_fixed.so"
+} elseif (Test-Path "$WorkspaceRoot\binaries\libUE4.so") {
+    "$WorkspaceRoot\binaries\libUE4.so"
+} else {
+    $null
+}
+if ($env:SKIP_DRIFT -eq "1") {
+    Write-Warning "[Pre-Check] SKIP_DRIFT=1 definido; verificacao de drift em modo de aviso."
+    if ((Test-Path $OffsetsJsonPath) -and $TargetSoForDrift -and (Get-Command python -ErrorAction SilentlyContinue)) {
+        $PrevEapDrift = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        python "$WorkspaceRoot\tools\re_scripts\dump\check_drift.py" --offsets $OffsetsJsonPath --so $TargetSoForDrift
+        $ErrorActionPreference = $PrevEapDrift
+    }
+} elseif (-not (Test-Path $OffsetsJsonPath)) {
+    Write-Warning "[Pre-Check] $OffsetsJsonPath ausente (clone limpo); pulando validacao de drift."
+} elseif ($TargetSoForDrift) {
+    $PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $PythonCmd) {
+        throw "Build abortado: executavel 'python' nao encontrado no PATH para rodar check_drift.py."
+    }
+    $global:LASTEXITCODE = 0
+    & $PythonCmd.Source "$WorkspaceRoot\tools\re_scripts\dump\check_drift.py" --offsets $OffsetsJsonPath --so $TargetSoForDrift
+    if ($LASTEXITCODE -eq 2) {
+        throw "Build abortado: check_drift.py internal error (exit=$LASTEXITCODE)."
+    } elseif ($LASTEXITCODE -eq 1) {
+        throw "Build abortado: drift detected (exit=$LASTEXITCODE). Defina SKIP_DRIFT=1 para ignorar."
+    } elseif (-not $? -or $LASTEXITCODE -ne 0) {
+        throw "Build abortado: check_drift.py internal error (exit=$LASTEXITCODE)."
+    }
+} else {
+    Write-Warning "[Pre-Check] Binario libUE4.so ausente em binaries/; pulando validacao de drift."
+}
+
 Write-Host "[0/6] Executando limpeza profunda de caches de build (build-arm64/ e app/build/)..." -ForegroundColor Cyan
 if (Test-Path $BuildDir) {
     Remove-Item -Recurse -Force $BuildDir
