@@ -48,12 +48,15 @@ struct GameplayManipulationConfig {
     bool            apply_fov_override{false};
     float           target_fov{90.0f};
 
-    // 2. Auto Skillcheck & Trap Immunity
+    // 2. Auto Skillcheck (Chaining + Auto-Great), Auto Heal & Trap Immunity
     bool            auto_skillcheck{false};
+    int             skillcheck_interval_ms{650};
+    bool            auto_heal{false};
     bool            trap_immunity{false};
 
-    // 3. Fly Cheat & Force Escape
+    // 3. Bidirectional Fly Cheat (Signed Vertical Velocity) & Force Escape
     bool            fly_cheat_enabled{false};
+    float           fly_vertical_speed{0.0f}; // > 0 ascends, < 0 descends, 0 holds position with damping
     bool            force_escape{false};
 
     // 4. Immobilize State & Player Role Setters
@@ -104,8 +107,11 @@ struct KinematicsSyncResult {
     bool            should_apply_fov{false};
     float           target_fov{90.0f};
     bool            auto_skillcheck{false};
+    int             skillcheck_interval_ms{650};
+    bool            auto_heal{false};
     bool            trap_immunity{false};
     bool            fly_cheat_enabled{false};
+    float           fly_vertical_speed{0.0f};
     bool            force_escape{false};
     bool            should_apply_immobilize{false};
     ImmobilizeState immobilize_state{ImmobilizeState::None};
@@ -499,11 +505,37 @@ inline bool parse_gameplay_ipc_string(
                 gp_cfg.target_fov = std::clamp(fv, 80.0f, 120.0f);
             }
         } else if (std::strcmp(k, "s") == 0 || std::strcmp(k, "skill") == 0) {
-            gp_cfg.auto_skillcheck = (v[0] == '1');
+            int son = 0;
+            int sint = gp_cfg.skillcheck_interval_ms;
+            if (std::sscanf(v, "%d:%d", &son, &sint) == 2) {
+                gp_cfg.auto_skillcheck        = (son != 0);
+                gp_cfg.skillcheck_interval_ms = std::clamp(sint, 150, 5000);
+            } else {
+                gp_cfg.auto_skillcheck = (v[0] == '1');
+            }
+        } else if (std::strcmp(k, "si") == 0) {
+            int sint = gp_cfg.skillcheck_interval_ms;
+            if (std::sscanf(v, "%d", &sint) == 1) {
+                gp_cfg.skillcheck_interval_ms = std::clamp(sint, 150, 5000);
+            }
+        } else if (std::strcmp(k, "ah") == 0 || std::strcmp(k, "heal") == 0) {
+            gp_cfg.auto_heal = (v[0] == '1');
         } else if (std::strcmp(k, "t") == 0 || std::strcmp(k, "trap") == 0) {
             gp_cfg.trap_immunity = (v[0] == '1');
         } else if (std::strcmp(k, "y") == 0 || std::strcmp(k, "fly") == 0) {
-            gp_cfg.fly_cheat_enabled = (v[0] == '1');
+            int   yon = 0;
+            float vy  = gp_cfg.fly_vertical_speed;
+            if (std::sscanf(v, "%d:%f", &yon, &vy) == 2 && std::isfinite(vy)) {
+                gp_cfg.fly_cheat_enabled  = (yon != 0);
+                gp_cfg.fly_vertical_speed = std::clamp(vy, -1600.0f, 1600.0f);
+            } else {
+                gp_cfg.fly_cheat_enabled = (v[0] == '1');
+            }
+        } else if (std::strcmp(k, "vy") == 0) {
+            float vy = gp_cfg.fly_vertical_speed;
+            if (std::sscanf(v, "%f", &vy) == 1 && std::isfinite(vy)) {
+                gp_cfg.fly_vertical_speed = std::clamp(vy, -1600.0f, 1600.0f);
+            }
         } else if (std::strcmp(k, "e") == 0 || std::strcmp(k, "esc") == 0) {
             gp_cfg.force_escape = (v[0] == '1');
         } else if (std::strcmp(k, "i") == 0 || std::strcmp(k, "imm") == 0) {
@@ -958,8 +990,11 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
     }
 
     result.auto_skillcheck         = match_ready && gp_cfg.auto_skillcheck;
+    result.skillcheck_interval_ms  = std::clamp(gp_cfg.skillcheck_interval_ms, 150, 5000);
+    result.auto_heal               = match_ready && gp_cfg.auto_heal;
     result.trap_immunity           = match_ready && gp_cfg.trap_immunity;
     result.fly_cheat_enabled       = match_ready && walk_speed_valid && gp_cfg.fly_cheat_enabled;
+    result.fly_vertical_speed      = std::clamp(detail::sanitize_float(gp_cfg.fly_vertical_speed, 0.0f), -1600.0f, 1600.0f);
     result.force_escape            = match_ready && walk_speed_valid && gp_cfg.force_escape;
     result.should_apply_immobilize = match_ready && walk_speed_valid && gp_cfg.apply_immobilize_state;
     result.immobilize_state        = gp_cfg.target_immobilize_state;

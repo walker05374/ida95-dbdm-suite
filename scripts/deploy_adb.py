@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 
-REMOTE_IP = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.8"
+REMOTE_IP = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.68"
 REMOTE_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 10001
 PROXY_PORT = 15555
 
@@ -72,6 +72,7 @@ def start_proxy(local_bind_ip: str, remote_ip: str, remote_port: int, proxy_port
 
 def main() -> int:
     adb_candidates = [
+        r"C:\Users\Walker\Downloads\platform-tools\adb.exe",
         r"C:\Users\walker\Desktop\anydesk\tools\android-sdk\platform-tools\adb.exe",
         r"E:\android-sdk\platform-tools\adb.exe",
         r"C:\Android\sdk\platform-tools\adb.exe",
@@ -141,7 +142,7 @@ def main() -> int:
         "cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so && "
         "cp -f /data/local/tmp/service.sh /data/adb/modules/ue4_instrument_core/service.sh && "
         "cp -f /data/local/tmp/module.prop /data/adb/modules/ue4_instrument_core/module.prop && "
-        "killall -9 dbdm_telemetry_daemon >/dev/null 2>&1; "
+        "killall -9 dbdm_telemetry_daemon dbdm_telemetry_ >/dev/null 2>&1; pkill -9 -x dbdm_telemetry_ >/dev/null 2>&1; "
         "if [ -f /data/local/tmp/dbdm_telemetry_daemon_new ]; then "
         "  mv -f /data/local/tmp/dbdm_telemetry_daemon_new /data/local/tmp/dbdm_telemetry_daemon; "
         "  cp -f /data/local/tmp/dbdm_telemetry_daemon /data/adb/modules/ue4_instrument_core/dbdm_telemetry_daemon 2>/dev/null; "

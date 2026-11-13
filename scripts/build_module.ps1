@@ -23,7 +23,8 @@ if (Test-Path "E:\android-sdk\cmake\3.22.1\bin") {
 }
 if (Test-Path "$WorkspaceRoot\scripts\tools_bin") {
     $env:PATH = "$WorkspaceRoot\scripts\tools_bin;$env:PATH"
-} elseif (Test-Path "$WorkspaceRoot\tools_bin") {
+}
+elseif (Test-Path "$WorkspaceRoot\tools_bin") {
     $env:PATH = "$WorkspaceRoot\tools_bin;$env:PATH"
 }
 
@@ -46,26 +47,28 @@ if (-not $env:ANDROID_NDK_HOME) {
 $AdbExe = "adb"
 if (Test-Path "C:\Users\walker\Desktop\anydesk\tools\android-sdk\platform-tools\adb.exe") {
     $AdbExe = "C:\Users\walker\Desktop\anydesk\tools\android-sdk\platform-tools\adb.exe"
-} elseif (Test-Path "C:\Users\Walker\Downloads\platform-tools\adb.exe") {
+}
+elseif (Test-Path "C:\Users\Walker\Downloads\platform-tools\adb.exe") {
     $AdbExe = "C:\Users\Walker\Downloads\platform-tools\adb.exe"
-} elseif (Test-Path "E:\android-sdk\platform-tools\adb.exe") {
+}
+elseif (Test-Path "E:\android-sdk\platform-tools\adb.exe") {
     $AdbExe = "E:\android-sdk\platform-tools\adb.exe"
 }
 
-$AppDir     = "app"
-$JniDir     = "jni"
-$ZygiskDir  = "zygisk"
-$BuildDir   = "build-arm64"
-$ModDir     = "modulos"
-$StageDir   = "$ModDir\ue4_instrument_zygisk"
-$ZipOut     = "$ModDir\ue4_instrument_zygisk.zip"
-$ApkOut     = "$ModDir\DBDM_FloatingModMenu.apk"
+$AppDir = "app"
+$JniDir = "jni"
+$ZygiskDir = "zygisk"
+$BuildDir = "build-arm64"
+$ModDir = "modulos"
+$StageDir = "$ModDir\ue4_instrument_zygisk"
+$ZipOut = "$ModDir\ue4_instrument_zygisk.zip"
+$ApkOut = "$ModDir\DBDM_FloatingModMenu.apk"
 $WdbdApkOut = "$ModDir\wdbd.apk"
-$CoreSo    = Join-Path $BuildDir "libinstrument_core.so"
-$DiagSo    = Join-Path $BuildDir "libue4_diagnostics.so"
-$ZygiskSo  = Join-Path $BuildDir "libzygisk_loader.so"
-$LlvmBin   = Join-Path $env:ANDROID_NDK_HOME "toolchains\llvm\prebuilt\windows-x86_64\bin"
-$LlvmNm    = Join-Path $LlvmBin "llvm-nm.exe"
+$CoreSo = Join-Path $BuildDir "libinstrument_core.so"
+$DiagSo = Join-Path $BuildDir "libue4_diagnostics.so"
+$ZygiskSo = Join-Path $BuildDir "libzygisk_loader.so"
+$LlvmBin = Join-Path $env:ANDROID_NDK_HOME "toolchains\llvm\prebuilt\windows-x86_64\bin"
+$LlvmNm = Join-Path $LlvmBin "llvm-nm.exe"
 $LlvmStrip = Join-Path $LlvmBin "llvm-strip.exe"
 
 # Mirror structured jni/ sources into modulos/ue4_instrument_zygisk and app/ into modulos/floating_mod_menu_apk
@@ -102,19 +105,20 @@ foreach ($CleanDir in @("$AppDir\build", "$AppDir\.gradle", "$ModDir\floating_mo
 }
 if (Test-Path ".\gradlew.bat") {
     & .\gradlew.bat clean
-} elseif (Test-Path "$AppDir\gradlew.bat") {
+}
+elseif (Test-Path "$AppDir\gradlew.bat") {
     Push-Location $AppDir
     try { & .\gradlew.bat clean } finally { Pop-Location }
 }
 
 Write-Host "[1/6] Compilando artefatos ELF64 AArch64 (Release) a partir de jni/..." -ForegroundColor Cyan
 cmake -S . -B $BuildDir `
-  -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_TOOLCHAIN_FILE="$env:ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" `
-  -DANDROID_ABI=arm64-v8a `
-  -DANDROID_PLATFORM=android-29 `
-  -DANDROID_STL=c++_static
+    -G Ninja `
+    -DCMAKE_BUILD_TYPE=Release `
+    -DCMAKE_TOOLCHAIN_FILE="$env:ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" `
+    -DANDROID_ABI=arm64-v8a `
+    -DANDROID_PLATFORM=android-29 `
+    -DANDROID_STL=c++_static
 
 cmake --build $BuildDir --config Release --clean-first --parallel
 
@@ -128,7 +132,7 @@ if (Test-Path $ZipOut) { Remove-Item -Force $ZipOut }
 New-Item -ItemType Directory -Force -Path "$StageDir\META-INF\com\google\android" | Out-Null
 New-Item -ItemType Directory -Force -Path "$StageDir\system\lib64"                | Out-Null
 New-Item -ItemType Directory -Force -Path "$StageDir\zygisk"                      | Out-Null
-New-Item -ItemType Directory -Force -Path "$ZygiskDir\META-INF\com\google\android"| Out-Null
+New-Item -ItemType Directory -Force -Path "$ZygiskDir\META-INF\com\google\android" | Out-Null
 
 $ModuleProp = @"
 id=ue4_instrument_core
@@ -197,6 +201,11 @@ exit 0
 [System.IO.File]::WriteAllText("$StageDir\META-INF\com\google\android\update-binary", ($UpdateBinary -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
 
 Copy-Item -Force $CoreSo "$ModDir\libinstrument_core.so"
+$DaemonBin = Join-Path $BuildDir "dbdm_telemetry_daemon"
+if (Test-Path $DaemonBin) {
+    & $LlvmStrip --strip-unneeded $DaemonBin
+    Copy-Item -Force $DaemonBin "$ModDir\dbdm_telemetry_daemon"
+}
 if (Test-Path $DiagSo) {
     & $LlvmStrip --strip-unneeded $DiagSo
     Copy-Item -Force $DiagSo "$ModDir\libue4_diagnostics.so"
@@ -205,7 +214,8 @@ Copy-Item -Force $CoreSo "$StageDir\system\lib64\libinstrument_core.so"
 if (Test-Path $ZygiskSo) {
     & $LlvmStrip --strip-unneeded $ZygiskSo
     Copy-Item -Force $ZygiskSo "$StageDir\zygisk\arm64-v8a.so"
-} else {
+}
+else {
     Copy-Item -Force $CoreSo "$StageDir\zygisk\arm64-v8a.so"
 }
 
@@ -213,8 +223,8 @@ Write-Host "[4/6] Empacotando arquivo ZIP com separadores POSIX (/)..." -Foregro
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $ResolvedStage = (Resolve-Path $StageDir).Path
-$ZipFullPath   = Join-Path (Get-Location).Path $ZipOut
-$ZipStream     = [System.IO.File]::Open($ZipFullPath, [System.IO.FileMode]::Create)
+$ZipFullPath = Join-Path (Get-Location).Path $ZipOut
+$ZipStream = [System.IO.File]::Open($ZipFullPath, [System.IO.FileMode]::Create)
 $PkgFiles = @(
     "module.prop",
     "customize.sh",
@@ -238,10 +248,12 @@ try {
                 ) | Out-Null
             }
         }
-    } finally {
+    }
+    finally {
         $ZipArchive.Dispose()
     }
-} finally {
+}
+finally {
     $ZipStream.Dispose()
 }
 
@@ -257,7 +269,7 @@ foreach ($Cand in $JavaHomeCandidates) {
         break
     }
 }
-$JavacExe   = Join-Path $ResolvedJavaHome "bin\javac.exe"
+$JavacExe = Join-Path $ResolvedJavaHome "bin\javac.exe"
 $KeytoolExe = Join-Path $ResolvedJavaHome "bin\keytool.exe"
 
 $BuildToolsCandidates = @(
@@ -286,9 +298,9 @@ foreach ($Cand in $AndroidJarCandidates) {
 
 if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJar)) {
     $env:JAVA_HOME = $ResolvedJavaHome
-    $env:PATH      = "$env:JAVA_HOME\bin;$env:PATH"
+    $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 
-    $ApkSrcDir   = $AppDir
+    $ApkSrcDir = $AppDir
     $ApkBuildDir = "$BuildDir\apk_build"
     if (Test-Path $ApkBuildDir) { Remove-Item -Recurse -Force $ApkBuildDir }
     New-Item -ItemType Directory -Force -Path "$ApkBuildDir\classes" | Out-Null
@@ -313,7 +325,8 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
             --manifest "$ApkSrcDir\AndroidManifest.xml" `
             --auto-add-overlay `
             -R $ResZip
-    } else {
+    }
+    else {
         & "$BuildTools\aapt2.exe" link -o $UnalignedApk `
             -I $AndroidJar `
             --manifest "$ApkSrcDir\AndroidManifest.xml"
@@ -356,7 +369,8 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
                 [System.IO.Compression.CompressionLevel]::NoCompression
             ) | Out-Null
         }
-    } finally {
+    }
+    finally {
         $ApkArchive.Dispose()
     }
 
@@ -373,20 +387,73 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
         $ErrorActionPreference = $PrevEap
     }
 
-    if (Test-Path $ApkOut)     { Remove-Item -Force $ApkOut }
+    if (Test-Path $ApkOut) { Remove-Item -Force $ApkOut }
     if (Test-Path $WdbdApkOut) { Remove-Item -Force $WdbdApkOut }
     & "$BuildTools\apksigner.bat" sign --ks $KeystorePath --ks-pass pass:android --key-pass pass:android `
         --out $WdbdApkOut $AlignedApk
     Copy-Item -Force $WdbdApkOut $ApkOut
     Copy-Item -Force $WdbdApkOut "$WorkspaceRoot\wdbd.apk"
     Write-Host "    -> WDBD Floating Mod Menu APK: $WdbdApkOut (e espelhado em $ApkOut)" -ForegroundColor Green
-} else {
+}
+else {
     throw "Ferramentas de build do APK nao encontradas (Javac=$JavacExe, BuildTools=$BuildTools, AndroidJar=$AndroidJar)"
 }
 
-Write-Host "[6/6] Enviando artefatos via ADB para a VM 192.168.1.8:10001..." -ForegroundColor Cyan
+Write-Host "[6/6] Verificando conexao ADB com o dispositivo 192.168.1.68:10001..." -ForegroundColor Cyan
+$DeploySuccess = $false
 if (Test-Path "$WorkspaceRoot\scripts\deploy_adb.py") {
-    python "$WorkspaceRoot\scripts\deploy_adb.py" 192.168.1.8 10001
-} else {
-    Write-Host "[OK] Artefatos gerados em $ZipOut e $ApkOut." -ForegroundColor Yellow
+    $PrevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    python "$WorkspaceRoot\scripts\deploy_adb.py" 192.168.1.68 10001
+    if ($LASTEXITCODE -eq 0) {
+        $DeploySuccess = $true
+    }
+    $ErrorActionPreference = $PrevEap
+}
+
+if (-not $DeploySuccess) {
+    $PrevEapAdb = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $AdbExe connect 192.168.1.68:10001 *> $null
+    $ErrorActionPreference = $PrevEapAdb
+
+    $AdbDevices = (& $AdbExe devices) -join "`n"
+    $TargetSerial = $null
+    if ($AdbDevices -match "192\.168\.1\.68:10001\s+device") {
+        $TargetSerial = "192.168.1.68:10001"
+    } elseif ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
+        $TargetSerial = $Matches[1]
+    }
+
+    if ($TargetSerial) {
+        Write-Host "    -> Executando limpeza/desinstalacao completa no dispositivo $TargetSerial..." -ForegroundColor Cyan
+        & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu 2>/dev/null; su -c 'killall -9 dbdm_telemetry_daemon 2>/dev/null; rm -rf /data/adb/modules/ue4_instrument_core /data/adb/modules_update/ue4_instrument_core /sdcard/Download/ue4_instrument_zygisk.zip /data/local/tmp/ue4_instrument_zygisk.zip /sdcard/Download/wdbd.apk /sdcard/Download/DBDM_FloatingModMenu.apk /data/local/tmp/wdbd.apk /data/local/tmp/DBDM_FloatingModMenu.apk /data/local/tmp/libinstrument_core.so /data/local/tmp/dbdm_telemetry_daemon*'"
+
+        Write-Host "    -> Instalando novo modulo Zygisk e novo APK..." -ForegroundColor Cyan
+        & $AdbExe -s $TargetSerial push $ZipOut /sdcard/Download/ue4_instrument_zygisk.zip
+        & $AdbExe -s $TargetSerial push $ZipOut /data/local/tmp/ue4_instrument_zygisk.zip
+        & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64; cp -f /data/local/tmp/ue4_instrument_zygisk.zip /data/adb/modules/ue4_instrument_core/ 2>/dev/null; magisk --install-module /data/local/tmp/ue4_instrument_zygisk.zip'"
+        & $AdbExe -s $TargetSerial push $CoreSo /data/local/tmp/libinstrument_core.so
+        & $AdbExe -s $TargetSerial push "$StageDir\service.sh" /data/local/tmp/service.sh
+        & $AdbExe -s $TargetSerial push "$StageDir\module.prop" /data/local/tmp/module.prop
+        & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64 && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so && cp -f /data/local/tmp/service.sh /data/adb/modules/ue4_instrument_core/service.sh && cp -f /data/local/tmp/module.prop /data/adb/modules/ue4_instrument_core/module.prop && chmod 755 /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so /data/adb/modules/ue4_instrument_core/service.sh && chmod 1777 /data/local/tmp && chmod 666 /data/local/tmp/dbdm_* 2>/dev/null; rm -f /data/adb/modules/ue4_instrument_core/update && rm -rf /data/adb/modules_update/ue4_instrument_core'"
+
+        $DaemonBin = Join-Path $BuildDir "dbdm_telemetry_daemon"
+        if (Test-Path $DaemonBin) {
+            & $LlvmStrip --strip-unneeded $DaemonBin
+            & $AdbExe -s $TargetSerial push $DaemonBin /data/local/tmp/dbdm_telemetry_daemon
+            & $AdbExe -s $TargetSerial shell "su -c 'killall -9 dbdm_telemetry_daemon >/dev/null 2>&1; chmod 755 /data/local/tmp/dbdm_telemetry_daemon && /data/local/tmp/dbdm_telemetry_daemon --daemon'"
+        }
+        $TargetApk = if (Test-Path $WdbdApkOut) { $WdbdApkOut } else { $ApkOut }
+        if (Test-Path $TargetApk) {
+            & $AdbExe -s $TargetSerial push $TargetApk /sdcard/Download/wdbd.apk
+            & $AdbExe -s $TargetSerial push $TargetApk /data/local/tmp/wdbd.apk
+            & $AdbExe -s $TargetSerial shell "pm install -r /data/local/tmp/wdbd.apk && appops set com.dbdm.modmenu SYSTEM_ALERT_WINDOW allow && am start -n com.dbdm.modmenu/.MainActivity"
+        }
+        Write-Host "    -> Verificando logs de inicializacao do processo (UE4Diag / FloatingModService)..." -ForegroundColor Cyan
+        & $AdbExe -s $TargetSerial logcat -d -t 40 -s UE4Diag:V FloatingModService:V AndroidRuntime:E
+        Write-Host "[OK] Modulo Zygisk e Floating Mod Menu APK reinstalados com sucesso em $TargetSerial." -ForegroundColor Green
+    } else {
+        Write-Host "[OK] Artefatos gerados em $ZipOut e $WdbdApkOut (nenhum dispositivo ADB online)." -ForegroundColor Yellow
+    }
 }

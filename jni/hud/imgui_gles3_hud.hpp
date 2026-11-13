@@ -168,6 +168,9 @@ struct SceneTelemetryData {
     SceneNode     nodes[kMaxSceneNodes]{};
     std::size_t   node_count           = 0;
     bool          match_active         = false;
+    bool          has_authority        = false;
+    std::uint8_t  gs_local_role        = 0;
+    std::uint8_t  ps_game_role         = 0;
     std::uint64_t uworld_ptr           = 0;
     std::uint64_t ulevel_ptr           = 0;
     std::uint64_t local_pawn           = 0;

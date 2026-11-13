@@ -260,6 +260,10 @@ struct WireNode {
 struct TelemetrySnapshotPayload {
     std::uint32_t magic                   = kIpcMagicVersion;
     std::uint32_t match_active            = 0;
+    std::uint8_t  has_authority           = 0;
+    std::uint8_t  gs_local_role           = 0;
+    std::uint8_t  ps_game_role            = 0;
+    std::uint8_t  reserved_auth_pad       = 0;
     std::uint32_t node_count              = 0;
     std::uint32_t remaining_nodes         = 0;
     std::uint32_t active_generators       = 0;
@@ -301,6 +305,10 @@ inline void fill_snapshot_from_telemetry(TelemetrySnapshotPayload& out) noexcept
 
     out.magic                = kIpcMagicVersion;
     out.match_active         = data.match_active ? 1U : 0U;
+    out.has_authority        = data.has_authority ? 1U : 0U;
+    out.gs_local_role        = data.gs_local_role;
+    out.ps_game_role         = data.ps_game_role;
+    out.reserved_auth_pad    = 0U;
     const std::size_t count  = (data.match_active && data.node_count <= hud::kMaxSceneNodes)
         ? data.node_count
         : 0U;

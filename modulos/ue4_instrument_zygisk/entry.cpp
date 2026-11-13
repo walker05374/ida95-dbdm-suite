@@ -12,6 +12,7 @@
 #include "scene_collector_helpers.hpp"
 #include "telemetry_adapter.hpp"
 #include "diagnostic_tick_bridge.hpp"
+#include "crash_logger.hpp"
 #include <dirent.h>
 #include <jni.h>
 #include <pthread.h>
@@ -101,10 +102,10 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t uobject_class_private     = 0x0010;     // UObjectBase::ClassPrivate (UClass*, +0x10)
     uintptr_t fname_comparison_index    = 0x0018;     // UObjectBase::NamePrivate.ComparisonIndex (+0x18)
     uintptr_t fname_index               = 0x001C;     // UObjectBase::NamePrivate.DisplayIndex (+0x1C)
-    uintptr_t custom_time_dilation      = 0x0098;     // AActor::CustomTimeDilation (float, +0x98)
+    uintptr_t custom_time_dilation      = 0x00A0;     // float AActor::CustomTimeDilation (FClassParams @ 0x0F23EEA0, FPropertyParams @ 0x0F23DC70)
     uintptr_t root_component            = 0x0140;     // AActor::RootComponent (FClassParams @ 0x0C7ABD84)
-    uintptr_t skeletal_mesh             = 0x0288;     // ACharacter::Mesh (USkeletalMeshComponent*, +0x288)
-    uintptr_t character_movement        = 0x0290;     // ACharacter::CharacterMovement (UCharacterMovementComponent*, +0x290)
+    uintptr_t skeletal_mesh             = 0x0290;     // USkeletalMeshComponent* ACharacter::Mesh (FClassParams @ 0x0F28ACE8, FPropertyParams @ 0x0F28AE78)
+    uintptr_t character_movement        = 0x0298;     // UCharacterMovementComponent* ACharacter::CharacterMovement (FClassParams @ 0x0F28ACE8, FPropertyParams @ 0x0F28AED0)
 
     // APlayerCameraManager -> CameraCachePrivate (+0x1AE0 / +0x1AF0) -> POV (+0x10 inside FCameraCacheEntry)
     uintptr_t camera_cache_private      = 0x1AF0;     // FCameraCacheEntry (FClassParams @ 0x0F3B0910)
@@ -126,17 +127,21 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t guobject_num_chunks_offset= 0x002C;     // ObjObjects.NumChunks (int32)
 
     // UCharacterMovementComponent
-    uintptr_t jump_z_velocity           = 0x0158;     // float (+0x158)
-    uintptr_t movement_mode             = 0x0174;     // uint8 EMovementMode (+0x174; MOVE_Walking=1, MOVE_Flying=5)
-    uintptr_t movement_dirty_flags      = 0x0178;     // uint8 bitfield (bNetworkUpdateReceived / bJustTeleported / bCheatFlying, +0x178)
-    uintptr_t max_walk_speed            = 0x018C;     // float (+0x18C)
-    uintptr_t max_walk_speed_crouched   = 0x0190;     // float (+0x190)
-    uintptr_t max_fly_speed             = 0x0194;     // float (+0x194)
-    uintptr_t max_acceleration          = 0x0198;     // float (+0x198)
-    uintptr_t max_custom_movement_speed = 0x019C;     // float (+0x19C)
+    uintptr_t movement_velocity         = 0x00CC;     // FVector UMovementComponent::Velocity (FPropertyParams @ 0x0F36F3A8)
+    uintptr_t gravity_scale             = 0x0160;     // float UCharacterMovementComponent::GravityScale (FPropertyParams @ 0x0F28E720)
+    uintptr_t jump_z_velocity           = 0x0168;     // float UCharacterMovementComponent::JumpZVelocity (FPropertyParams @ 0x0F28E770)
+    uintptr_t movement_mode             = 0x0178;     // uint8 EMovementMode UCharacterMovementComponent::MovementMode (Walking=1, Flying=5)
+    uintptr_t max_walk_speed            = 0x019C;     // float UCharacterMovementComponent::MaxWalkSpeed
+    uintptr_t max_walk_speed_crouched   = 0x01A0;     // float UCharacterMovementComponent::MaxWalkSpeedCrouched
+    uintptr_t max_fly_speed             = 0x01A8;     // float UCharacterMovementComponent::MaxFlySpeed
+    uintptr_t max_custom_movement_speed = 0x01AC;     // float UCharacterMovementComponent::MaxCustomMovementSpeed
+    uintptr_t max_acceleration          = 0x01B0;     // float UCharacterMovementComponent::MaxAcceleration
+    uintptr_t braking_decel_flying      = 0x01D0;     // float UCharacterMovementComponent::BrakingDecelerationFlying
+    uintptr_t movement_dirty_flags      = 0x039F;     // uint8 UCharacterMovementComponent bitfield (bCheatFlying/bJustTeleported/bNetworkUpdateReceived)
 
-    // APlayerCameraManager FOV & AActor Collision
+    // APlayerCameraManager FOV & AActor Collision / NetRole
     uintptr_t actor_collision_flags     = 0x0058;     // uint8 bitfield (bActorEnableCollision)
+    uintptr_t actor_local_role          = 0x00FC;     // uint8 ENetRole AActor::Role (+0x00FC: 3 = ROLE_Authority)
     uintptr_t camera_default_fov        = 0x0248;     // float APlayerCameraManager::DefaultFOV (+0x248)
     uintptr_t camera_locked_fov         = 0x0250;     // float APlayerCameraManager::LockedFOV (+0x250)
 
@@ -151,11 +156,40 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t chargeable_tunable_data   = 0x02F8;     // TMap<FName, float> UChargeableComponent::_tunableValueMap.Data (+0x2F8)
     uintptr_t chargeable_tunable_count  = 0x0300;     // int32 UChargeableComponent::_tunableValueMap.ArrayNum (+0x300)
     uintptr_t chargeable_tunable_val    = 0x000C;     // float first tunable entry value at Data + 0x0C (MaxCharge ~ 90.0f)
-    uintptr_t player_interaction_handler= 0x08D0;     // UPlayerInteractionHandler* (+0x8D0)
-    uintptr_t skillcheck_component      = 0x02E8;     // USkillCheck* (+0x2E8)
-    uintptr_t skillcheck_success_start  = 0x0164;     // float USkillCheck::SuccessZoneStart (+0x164)
-    uintptr_t skillcheck_success_length = 0x0168;     // float USkillCheck::SuccessZoneLength (+0x168)
-    uintptr_t skillcheck_bonus_length   = 0x016C;     // float USkillCheck::BonusZoneLength (+0x16C)
+    uintptr_t player_interaction_handler= 0x0A90;     // UPlayerInteractionHandler* ADBDPlayer::_interactionHandler (+0x0A90)
+    uintptr_t handler_current_inter     = 0x0200;     // UInteractionDefinition* UPlayerInteractionHandler::_currentInteraction (+0x0200)
+    uintptr_t interaction_id_fstr       = 0x0240;     // FString UInteractionDefinition::InteractionID (+0x0240)
+    uintptr_t interaction_atlanta_id    = 0x0258;     // FName UInteractionDefinition::AtlantaInteractionID (+0x0258)
+    uintptr_t interaction_anim          = 0x026D;     // uint8 EInteractionAnimation UInteractionDefinition::InteractionAnimation (+0x026D)
+    uintptr_t skillcheck_component      = 0x0290;     // USkillCheck* UPlayerInteractionHandler::_skillCheck (+0x0290)
+    uintptr_t skillcheck_activated_flag = 0x028C;     // uint8 bool USkillCheck::_activated (+0x028C)
+    uintptr_t skillcheck_displayed_flag = 0x028D;     // uint8 bool USkillCheck::_displayed (+0x028D)
+    uintptr_t skillcheck_current_prog   = 0x0290;     // float USkillCheck::_currentProgress (+0x0290)
+    uintptr_t skillcheck_ui_prog        = 0x0294;     // float USkillCheck::_currentUIProgress (+0x0294)
+    uintptr_t skillcheck_gen_count      = 0x02A0;     // int32 USkillCheck::_skillCheckCount (+0x02A0)
+    uintptr_t skillcheck_owner_pawn     = 0x02B8;     // ADBDPlayer* USkillCheck::_owner (+0x02B8)
+    uintptr_t skillcheck_current_inter  = 0x02C0;     // UChargeableInteractionDefinition* USkillCheck::_currentInteraction (+0x02C0)
+    uintptr_t skillcheck_live_succ_start= 0x02CC;     // float live SuccessZoneStart (+0x02CC)
+    uintptr_t skillcheck_live_succ_end  = 0x02D0;     // float live SuccessZoneEnd (+0x02D0)
+    uintptr_t skillcheck_live_bonus_len = 0x02D4;     // float live BonusZoneLength (+0x02D4)
+    uintptr_t skillcheck_live_bonus_start=0x02D8;     // float live BonusZoneStart (+0x02D8)
+    uintptr_t skillcheck_live_displayed = 0x02F4;     // uint8 live bIsDisplayed (+0x02F4)
+    uintptr_t skillcheck_success_start  = 0x02F8;     // float FSkillCheckDefinition::SuccessZoneStart (+0x2F8 + 0x00)
+    uintptr_t skillcheck_success_length = 0x02FC;     // float FSkillCheckDefinition::SuccessZoneEnd   (+0x2F8 + 0x04)
+    uintptr_t skillcheck_bonus_length   = 0x0300;     // float FSkillCheckDefinition::BonusZoneLength  (+0x2F8 + 0x08)
+    uintptr_t skillcheck_bonus_start    = 0x0304;     // float FSkillCheckDefinition::BonusZoneStart   (+0x2F8 + 0x0C)
+    uintptr_t skillcheck_last_result    = 0x0404;     // int32 ESkillCheckResult USkillCheck::_lastSkillCheckResult (+0x404)
+    uintptr_t rva_skillcheck_activate   = 0x06E18208; // USkillCheck::Local_ActivateSkillCheck
+    uintptr_t rva_skillcheck_input      = 0x06E18CF0; // USkillCheck::OnSkillCheckInput
+    uintptr_t rva_skillcheck_res_branch = 0x06E18F1C; // USkillCheck::OnSkillCheckInputImpl result branch
+    uintptr_t rva_skillcheck_res_gate   = 0x06E1903C; // USkillCheck::OnSkillCheckInputImpl zone decision gate
+    uintptr_t rva_skillcheck_tick_gate  = 0x06E16B80; // USkillCheck::TickComponent auto-resolve gate
+    uintptr_t camper_health_component   = 0x1838;     // UHealthComponent* ACamperPlayer::_healthComponent (+0x1838)
+    uintptr_t health_in_bleedout        = 0x0170;     // uint8 bool UHealthComponent::_inInjuredBleedOut (+0x0170)
+    uintptr_t health_state_count        = 0x01EC;     // int32 UHealthComponent::_currentHealthStateCount (+0x01EC)
+    uintptr_t health_heal_dying_chg     = 0x0248;     // UChargeableComponent* UHealthComponent::_healFromDyingChargeable (+0x0248)
+    uintptr_t health_heal_injured_chg   = 0x0250;     // UChargeableComponent* UHealthComponent::_healFromInjuredChargeable (+0x0250)
+    uintptr_t rva_health_set_count      = 0x06F92394; // UHealthComponent::SetCurrentHealthStateCount
 
     // ADBDGameState, ATotem, APallet, ASearchable, AMeatHook Live Match State (Verified in libUE4.so Build 292949)
     uintptr_t gamestate_activated_gens  = 0x0628;     // int32 ADBDGameState::_activatedGeneratorCount (+0x628)
@@ -166,12 +200,27 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t meathook_is_sacrificed    = 0x04E2;     // uint8 AMeatHook::_isSacrificed (+0x4E2)
     uintptr_t meathook_is_sabotaged     = 0x04E4;     // uint8 AMeatHook::_isSabotaged (+0x4E4)
 
-    // ACamperPlayer / ADBDPlayerState Gameplay State & Role
+    // ACamperPlayer / ADBDPlayerState / AHatch / ABearTrap Gameplay State & Role
+    uintptr_t dbd_player_state_machine  = 0x0A88;     // UStateMachine* ADBDPlayer::_SM (+0x0A88; +0x0AA8 is _playerData)
+    uintptr_t state_machine_immobilize  = 0x01A0;     // uint8 EImmobilizedState (*(_SM + 0x01A0))
+    uintptr_t rva_local_set_immobilized = 0x06F44FC0; // ACamperPlayer::Local_SetImmobilized
     uintptr_t camper_immobilize_state   = 0x1158;     // uint8 EImmobilizeState (+0x1158)
     uintptr_t camper_trap_immunity_flag = 0x115C;     // uint8 Trap Immunity / Hazard Bypass (+0x115C)
+    uintptr_t camper_overlapping_escape = 0x1738;     // AActor* ACamperPlayer::_overlappingEscape (+0x1738)
+    uintptr_t hatch_state               = 0x03A0;     // uint8 EHatchState AHatch::_hatchState (+0x03A0)
+    uintptr_t hatch_is_force_open       = 0x03A3;     // uint8 bool AHatch::_isForceOpen (+0x03A3)
+    uintptr_t rva_hatch_set_state       = 0x06DC9B00; // AHatch::Local_SetHatchState
+    uintptr_t rva_camper_hatch_entered  = 0x06F400D8; // ACamperPlayer::HatchEscapeZoneEntered
+    uintptr_t rva_camper_escape         = 0x06F3FABC; // ACamperPlayer::Escape
     uintptr_t player_name_private       = 0x0310;     // FString (TArray<char16_t>)
     uintptr_t player_state_game_role    = 0x039A;     // uint8 EPlayerRole (+0x39A: 1=Camper, 2=Slasher, 3=Observer)
-    uintptr_t player_state_camper_state = 0x03B0;     // uint8 EGameState (+0x3B0: 2=VE_Escaped)
+    uintptr_t player_state_camper_state = 0x0498;     // uint8 EGameState ADBDPlayerState::PlayerData._playerGameState (+0x0440 + 0x0058 = +0x0498)
+    uintptr_t player_state_escape_hatch = 0x0499;     // uint8 bool ADBDPlayerState::PlayerData._isEscapeHatch (+0x0440 + 0x0059 = +0x0499; +0x049C is _prestigeLevel)
+    uintptr_t rva_process_event         = 0x0A74DF10; // UObject::ProcessEvent
+    uintptr_t rva_ps_set_game_state     = 0x07845CC0; // ADBDPlayerState::SetPlayerGameState
+    uintptr_t beartrap_contains_surv    = 0x02CF;     // uint8 bool ABearTrap::_containsSurvivor (+0x02CF)
+    uintptr_t beartrap_is_trap_set      = 0x02D0;     // uint8 bool ABearTrap::_isTrapSet (+0x02D0)
+    uintptr_t beartrap_was_disarmed     = 0x02D1;     // uint8 bool ABearTrap::_wasJustDisarmed (+0x02D1)
 };
 
 // ============================================================================
@@ -621,77 +670,454 @@ public:
         return mem::write_data<float>(cam_mgr + pov_fov_off, clamped_fov);
     }
 
-    // 3a. Auto Skillcheck: Resolves UPlayerInteractionHandler -> USkillCheck and locks SuccessZoneStart to 0.0f and SuccessZoneLength to 1.0f
-    static bool apply_auto_skillcheck(
+    [[nodiscard]] static uint64_t skillcheck_now_ms() noexcept {
+        struct timespec ts{};
+        ::clock_gettime(CLOCK_MONOTONIC, &ts);
+        return static_cast<uint64_t>(ts.tv_sec) * 1000ULL +
+               static_cast<uint64_t>(ts.tv_nsec / 1000000LL);
+    }
+
+    [[nodiscard]] static bool is_allowed_skillcheck_interaction(
+        uintptr_t inter_ptr,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        const GNamePoolResolver& name_pool
+    ) noexcept {
+        if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
+            return false;
+        }
+
+        std::array<char, 64> inter_id_utf8{};
+        if (const auto fstr = mem::read<TArrayHeader>(inter_ptr + off.interaction_id_fstr);
+            fstr.has_value() && fstr->data_ptr != 0 && fstr->count > 1 && fstr->count <= 64) {
+            std::array<char16_t, 64> u16_buf{};
+            const size_t char_cnt = std::min<size_t>(static_cast<size_t>(fstr->count - 1), u16_buf.size() - 1U);
+            std::span<uint8_t> raw_slice{reinterpret_cast<uint8_t*>(u16_buf.data()), char_cnt * sizeof(char16_t)};
+            if (InProcessMemory::safe_read(fstr->data_ptr, raw_slice) == Status::Ok) {
+                for (size_t i = 0; i < char_cnt; ++i) {
+                    const char16_t ch = u16_buf[i];
+                    inter_id_utf8[i] = (ch >= 0x20U && ch <= 0x7EU) ? static_cast<char>(ch) : '\0';
+                }
+                inter_id_utf8[char_cnt] = '\0';
+            }
+        }
+
+        std::array<char, 96> obj_name{};
+        if (const auto fn_idx = mem::read<uint32_t>(inter_ptr + off.fname_comparison_index);
+            fn_idx.has_value() && *fn_idx != 0U) {
+            (void)name_pool.resolve_name(*fn_idx, obj_name);
+        }
+
+        std::array<char, 96> atlanta_name{};
+        if (const auto atl_idx = mem::read<uint32_t>(inter_ptr + off.interaction_atlanta_id);
+            atl_idx.has_value() && *atl_idx != 0U) {
+            (void)name_pool.resolve_name(*atl_idx, atlanta_name);
+        }
+
+        std::array<char, 96>  cls_leaf{};
+        std::array<char, 224> cls_chain{};
+        resolve_uclass_hierarchy(inter_ptr, name_pool, cls_leaf, cls_chain);
+
+        auto matches_any = [&](const char* needle) noexcept -> bool {
+            return hud::detail::icontains_str(inter_id_utf8.data(), needle) ||
+                   hud::detail::icontains_str(obj_name.data(), needle) ||
+                   hud::detail::icontains_str(atlanta_name.data(), needle) ||
+                   hud::detail::icontains_str(cls_leaf.data(), needle) ||
+                   hud::detail::icontains_str(cls_chain.data(), needle);
+        };
+
+        if (matches_any("Totem") || matches_any("Cleanse") || matches_any("Bless")) {
+            return false;
+        }
+
+        const uint8_t anim = mem::read<uint8_t>(inter_ptr + off.interaction_anim).value_or(0xFFU);
+        switch (anim) {
+            case 1U:  // VE_Generator
+            case 2U:  // VE_PullDownLeft (Pallet)
+            case 3U:  // VE_PullDownRight (Pallet)
+            case 4U:  // VE_Hiding (Locker)
+            case 5U:  // VE_SearchCloset (Locker)
+            case 6U:  // VE_HealingOther
+            case 8U:  // VE_StruggleFree (Unhook)
+            case 9U:  // VE_HealOther
+            case 10U: // VE_HealSelf
+            case 15U: // VE_BeingHooked
+                return true;
+            default:
+                break;
+        }
+
+        if (matches_any("Generator") || matches_any("Repair") ||
+            matches_any("Heal") || matches_any("Medkit") || matches_any("SelfCare") || matches_any("Mend") ||
+            matches_any("Unhook") || matches_any("Struggle") || matches_any("FreeSelf") || matches_any("Hook") ||
+            matches_any("Pallet") || matches_any("PullDown") || matches_any("Vault") ||
+            matches_any("Locker") || matches_any("Closet") || matches_any("Hide")) {
+            return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] static bool is_pallet_or_vault_interaction(
+        uintptr_t inter_ptr,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        const GNamePoolResolver& name_pool
+    ) noexcept {
+        if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
+            return false;
+        }
+        const uint8_t anim = mem::read<uint8_t>(inter_ptr + off.interaction_anim).value_or(0xFFU);
+        if (anim == 2U || anim == 3U) {
+            return true;
+        }
+        std::array<char, 64> inter_id_utf8{};
+        if (const auto fstr = mem::read<TArrayHeader>(inter_ptr + off.interaction_id_fstr);
+            fstr.has_value() && fstr->data_ptr != 0 && fstr->count > 1 && fstr->count <= 64) {
+            std::array<char16_t, 64> u16_buf{};
+            const size_t char_cnt = std::min<size_t>(static_cast<size_t>(fstr->count - 1), u16_buf.size() - 1U);
+            std::span<uint8_t> raw_slice{reinterpret_cast<uint8_t*>(u16_buf.data()), char_cnt * sizeof(char16_t)};
+            if (InProcessMemory::safe_read(fstr->data_ptr, raw_slice) == Status::Ok) {
+                for (size_t i = 0; i < char_cnt; ++i) {
+                    const char16_t ch = u16_buf[i];
+                    inter_id_utf8[i] = (ch >= 0x20U && ch <= 0x7EU) ? static_cast<char>(ch) : '\0';
+                }
+                inter_id_utf8[char_cnt] = '\0';
+            }
+        }
+        std::array<char, 96> obj_name{};
+        if (const auto fn_idx = mem::read<uint32_t>(inter_ptr + off.fname_comparison_index);
+            fn_idx.has_value() && *fn_idx != 0U) {
+            (void)name_pool.resolve_name(*fn_idx, obj_name);
+        }
+        std::array<char, 96> atlanta_name{};
+        if (const auto atl_idx = mem::read<uint32_t>(inter_ptr + off.interaction_atlanta_id);
+            atl_idx.has_value() && *atl_idx != 0U) {
+            (void)name_pool.resolve_name(*atl_idx, atlanta_name);
+        }
+        std::array<char, 96>  cls_leaf{};
+        std::array<char, 224> cls_chain{};
+        resolve_uclass_hierarchy(inter_ptr, name_pool, cls_leaf, cls_chain);
+
+        auto matches_any = [&](const char* needle) noexcept -> bool {
+            return hud::detail::icontains_str(inter_id_utf8.data(), needle) ||
+                   hud::detail::icontains_str(obj_name.data(), needle) ||
+                   hud::detail::icontains_str(atlanta_name.data(), needle) ||
+                   hud::detail::icontains_str(cls_leaf.data(), needle) ||
+                   hud::detail::icontains_str(cls_chain.data(), needle);
+        };
+        return matches_any("Pallet") || matches_any("PullDown") || matches_any("Vault");
+    }
+
+    static void patch_skillcheck_great_branch(
+        uintptr_t ue4_base,
+        const EngineOffsets& off,
+        bool enable_patch
+    ) noexcept {
+        if (ue4_base == 0 || InProcessMemory::effective_pid() != ::getpid()) {
+            return;
+        }
+        static bool s_patched = false;
+        if (enable_patch == s_patched) {
+            return;
+        }
+
+        const uintptr_t addr_branch = ue4_base + off.rva_skillcheck_res_branch;
+        const uintptr_t addr_gate   = ue4_base + off.rva_skillcheck_res_gate;
+        const uintptr_t addr_tick   = ue4_base + off.rva_skillcheck_tick_gate;
+
+        auto make_rw = [](uintptr_t addr, size_t len) noexcept -> bool {
+            const uintptr_t page_sz    = static_cast<uintptr_t>(::sysconf(_SC_PAGESIZE));
+            const uintptr_t page_start = addr & ~(page_sz - 1ULL);
+            const uintptr_t page_end   = (addr + len + page_sz - 1ULL) & ~(page_sz - 1ULL);
+            return ::mprotect(reinterpret_cast<void*>(page_start), page_end - page_start, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+        };
+        auto make_rx = [](uintptr_t addr, size_t len) noexcept {
+            const uintptr_t page_sz    = static_cast<uintptr_t>(::sysconf(_SC_PAGESIZE));
+            const uintptr_t page_start = addr & ~(page_sz - 1ULL);
+            const uintptr_t page_end   = (addr + len + page_sz - 1ULL) & ~(page_sz - 1ULL);
+            (void)::mprotect(reinterpret_cast<void*>(page_start), page_end - page_start, PROT_READ | PROT_EXEC);
+        };
+
+        if (enable_patch) {
+            if (make_rw(addr_branch, 0x130U)) {
+                const uint32_t b_great_from_8f1c = 0x140000CBU;
+                const uint32_t b_great_from_903c = 0x14000083U;
+                std::memcpy(reinterpret_cast<void*>(addr_branch), &b_great_from_8f1c, sizeof(uint32_t));
+                std::memcpy(reinterpret_cast<void*>(addr_gate),   &b_great_from_903c, sizeof(uint32_t));
+                __builtin___clear_cache(reinterpret_cast<char*>(addr_branch), reinterpret_cast<char*>(addr_gate + 4U));
+                make_rx(addr_branch, 0x130U);
+            }
+            if (make_rw(addr_tick, 16U)) {
+                const uint32_t tick_patch[4] = {0xD503201FU, 0x2A1F03E4U, 0xAA1303E0U, 0x52800021U};
+                std::memcpy(reinterpret_cast<void*>(addr_tick), tick_patch, sizeof(tick_patch));
+                __builtin___clear_cache(reinterpret_cast<char*>(addr_tick), reinterpret_cast<char*>(addr_tick + 16U));
+                make_rx(addr_tick, 16U);
+            }
+            s_patched = true;
+        } else {
+            if (make_rw(addr_branch, 0x130U)) {
+                const uint32_t orig_8f1c = 0x394BD288U;
+                const uint32_t orig_903c = 0x52000109U;
+                std::memcpy(reinterpret_cast<void*>(addr_branch), &orig_8f1c, sizeof(uint32_t));
+                std::memcpy(reinterpret_cast<void*>(addr_gate),   &orig_903c, sizeof(uint32_t));
+                __builtin___clear_cache(reinterpret_cast<char*>(addr_branch), reinterpret_cast<char*>(addr_gate + 4U));
+                make_rx(addr_branch, 0x130U);
+            }
+            if (make_rw(addr_tick, 16U)) {
+                const uint32_t orig_tick[4] = {0x34000168U, 0x52800024U, 0xAA1303E0U, 0x2A1F03E1U};
+                std::memcpy(reinterpret_cast<void*>(addr_tick), orig_tick, sizeof(orig_tick));
+                __builtin___clear_cache(reinterpret_cast<char*>(addr_tick), reinterpret_cast<char*>(addr_tick + 16U));
+                make_rx(addr_tick, 16U);
+            }
+            s_patched = false;
+        }
+    }
+
+    static void apply_pallet_vault_heal(
+        uintptr_t camper_pawn,
+        uintptr_t ue4_base,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        bool in_process
+    ) noexcept {
+        if (!validate_canonical_uobject(camper_pawn, 0x1840U, guobjectarray_abs, off)) {
+            return;
+        }
+        const auto hc = mem::read<uintptr_t>(camper_pawn + off.camper_health_component);
+        if (!hc.has_value() || !validate_canonical_uobject(*hc, 0x0328U, guobjectarray_abs, off)) {
+            return;
+        }
+        (void)mem::write_data<uint8_t>(*hc + off.health_in_bleedout, 0U);
+        (void)mem::write_data<int32_t>(*hc + off.health_state_count, 2); // 2 = Healthy
+
+        for (uintptr_t chg_off : {off.health_heal_dying_chg, off.health_heal_injured_chg}) {
+            if (const auto chg = mem::read<uintptr_t>(*hc + chg_off);
+                chg.has_value() && validate_canonical_uobject(*chg, 0x0310U, guobjectarray_abs, off)) {
+                (void)mem::write_data<float>(*chg + off.chargeable_replicated_chg, 16.0f);
+                (void)mem::write_data<float>(*chg + off.chargeable_live_charge,    16.0f);
+            }
+        }
+        if (in_process && ue4_base != 0) {
+            using SetCurrentHealthStateCountFn = void(*)(uintptr_t, int32_t, bool);
+            const auto set_hp_fn = reinterpret_cast<SetCurrentHealthStateCountFn>(ue4_base + off.rva_health_set_count);
+            set_hp_fn(*hc, 2, false);
+        }
+    }
+
+    // 3c. Auto Heal (Aba Física): drives fast skill check path + completes heal on ACamperPlayer::_healthComponent (+0x1838)
+    static void apply_auto_heal(
         uintptr_t local_pawn,
         uintptr_t local_pc,
+        uintptr_t ue4_base,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
+        if (!validate_canonical_uobject(local_pawn, 0x1840U, guobjectarray_abs, off)) {
+            return;
+        }
+        const auto hc = mem::read<uintptr_t>(local_pawn + off.camper_health_component);
+        if (!hc.has_value() || !validate_canonical_uobject(*hc, 0x0328U, guobjectarray_abs, off)) {
+            return;
+        }
+        const int32_t hp_state = mem::read<int32_t>(*hc + off.health_state_count).value_or(2);
+        const uint8_t bleedout = mem::read<uint8_t>(*hc + off.health_in_bleedout).value_or(0U);
+        if (hp_state >= 2 && bleedout == 0U) {
+            return;
+        }
+        const bool in_process = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
+        (void)apply_auto_skillcheck(local_pawn, local_pc, ue4_base, guobjectarray_abs, off, true, 150);
+        apply_pallet_vault_heal(local_pawn, ue4_base, guobjectarray_abs, off, in_process);
+    }
+
+    // 3a. Auto Skillcheck (Chaining + Auto-Great)
+    static bool apply_auto_skillcheck(
+        uintptr_t local_pawn,
+        uintptr_t local_pc,
+        uintptr_t ue4_base,
+        uintptr_t guobjectarray_abs,
+        const EngineOffsets& off,
+        bool auto_skillcheck_enabled = true,
+        int interval_ms = 650
+    ) noexcept {
+        if (!auto_skillcheck_enabled) {
+            patch_skillcheck_great_branch(ue4_base, off, false);
+            return false;
+        }
+        patch_skillcheck_great_branch(ue4_base, off, true);
+
+        const hud::CharacterMovementChain chain = resolve_local_movement_chain(
+            local_pc, local_pawn, guobjectarray_abs, off);
+        const uintptr_t expected_owner = (chain.acknowledged_pawn != 0) ? chain.acknowledged_pawn : local_pawn;
+        if (expected_owner == 0 || !validate_canonical_uobject(expected_owner, 0x0AA0U, guobjectarray_abs, off)) {
+            return false;
+        }
+
+        const auto ih = mem::read<uintptr_t>(expected_owner + off.player_interaction_handler);
+        if (!ih.has_value() || !validate_canonical_uobject(*ih, 0x02A0U, guobjectarray_abs, off)) {
+            return false;
+        }
+
+        const auto sc = mem::read<uintptr_t>(*ih + off.skillcheck_component);
+        if (!sc.has_value() || !validate_canonical_uobject(*sc, 0x0420U, guobjectarray_abs, off)) {
+            return false;
+        }
+
         float zone_start  = 0.0f;
         float zone_length = 1.0f;
         float bonus_len   = 1.0f;
         hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
 
-        const hud::CharacterMovementChain chain = resolve_local_movement_chain(
-            local_pc, local_pawn, guobjectarray_abs, off);
-        const std::array<uintptr_t, 3> owners{chain.acknowledged_pawn, local_pawn, local_pc};
-        static constexpr std::array<uintptr_t, 5> kInteractionHandlerOffsets = {
-            0x08D0U, 0x08C8U, 0x08D8U, 0x08E0U, 0x0910U
-        };
-        static constexpr std::array<uintptr_t, 4> kSkillCheckOffsets = {
-            0x02E8U, 0x02E0U, 0x02F0U, 0x02F8U
+        uint8_t act_flag  = mem::read<uint8_t>(*sc + off.skillcheck_activated_flag).value_or(0U);
+        uint8_t disp_flag = mem::read<uint8_t>(*sc + off.skillcheck_displayed_flag).value_or(0U);
+        uint8_t live_disp = mem::read<uint8_t>(*sc + off.skillcheck_live_displayed).value_or(0U);
+
+        const GNamePoolResolver name_pool{ue4_base != 0 ? (ue4_base + off.gnamepool_rva) : 0ULL};
+        uintptr_t cur_inter = mem::read<uintptr_t>(*ih + off.handler_current_inter).value_or(0ULL);
+        if (!validate_canonical_uobject(cur_inter, 0x0100U, guobjectarray_abs, off)) {
+            cur_inter = mem::read<uintptr_t>(*sc + off.skillcheck_current_inter).value_or(0ULL);
+            if (!validate_canonical_uobject(cur_inter, 0x0100U, guobjectarray_abs, off)) {
+                cur_inter = 0ULL;
+            }
+        }
+        if (cur_inter != 0ULL && !is_allowed_skillcheck_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+            return false;
+        }
+
+        auto is_chargeable_skillcheck_interaction = [&](uintptr_t inter_ptr) noexcept -> bool {
+            if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
+                return false;
+            }
+            const uint8_t anim = mem::read<uint8_t>(inter_ptr + off.interaction_anim).value_or(0xFFU);
+            if (anim == 1U || anim == 6U || anim == 9U || anim == 10U) {
+                return true;
+            }
+            std::array<char, 96>  cls_leaf{};
+            std::array<char, 224> cls_chain{};
+            resolve_uclass_hierarchy(inter_ptr, name_pool, cls_leaf, cls_chain);
+            return hud::detail::icontains_str(cls_chain.data(), "ChargeableInteraction") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Generator") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Repair") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Heal") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Mend") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Sabotage");
         };
 
-        for (uintptr_t owner : owners) {
-            if (!validate_canonical_uobject(owner, 0x920U, guobjectarray_abs, off)) {
-                continue;
+        static uint64_t s_last_spawn_ms = 0ULL;
+        const uint64_t  now_ms          = skillcheck_now_ms();
+        const uint64_t  clamped_int_ms  = static_cast<uint64_t>(std::clamp(interval_ms, 150, 5000));
+        const bool      in_process      = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
+
+        if (cur_inter != 0ULL && is_pallet_or_vault_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+            (void)mem::write_data<uint8_t>(*sc + off.skillcheck_activated_flag, 0U);
+            (void)mem::write_data<uint8_t>(*sc + off.skillcheck_displayed_flag, 0U);
+            (void)mem::write_data<uint8_t>(*sc + off.skillcheck_live_displayed, 0U);
+            (void)mem::write_data<int32_t>(*sc + off.skillcheck_last_result,    1);
+            if ((now_ms - s_last_spawn_ms) >= clamped_int_ms) {
+                s_last_spawn_ms = now_ms;
+                apply_pallet_vault_heal(expected_owner, ue4_base, guobjectarray_abs, off, in_process);
+                return true;
             }
-            for (uintptr_t ih_off : kInteractionHandlerOffsets) {
-                const auto ih = mem::read<uintptr_t>(owner + ih_off);
-                if (!ih.has_value() || !validate_canonical_uobject(*ih, 0x310U, guobjectarray_abs, off)) {
-                    continue;
-                }
-                for (uintptr_t sc_off : kSkillCheckOffsets) {
-                    const auto sc = mem::read<uintptr_t>(*ih + sc_off);
-                    if (!sc.has_value() || !validate_canonical_uobject(*sc, 0x180U, guobjectarray_abs, off)) {
-                        continue;
-                    }
-                    const float prev_start = mem::read<float>(*sc + off.skillcheck_success_start).value_or(zone_start);
-                    const float prev_len   = mem::read<float>(*sc + off.skillcheck_success_length).value_or(zone_length);
-                    const bool  newly_overridden =
-                        (std::abs(prev_start - zone_start) > 1e-3f) ||
-                        (std::abs(prev_len - zone_length) > 1e-3f);
-                    (void)mem::write_data<float>(*sc + off.skillcheck_success_start,  zone_start);
-                    (void)mem::write_data<float>(*sc + off.skillcheck_success_length, zone_length);
-                    (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,   bonus_len);
-                    return newly_overridden;
+            return false;
+        }
+
+        if (act_flag == 0U && disp_flag == 0U && live_disp == 0U &&
+            cur_inter != 0ULL && is_chargeable_skillcheck_interaction(cur_inter) &&
+            (now_ms - s_last_spawn_ms) >= clamped_int_ms) {
+            s_last_spawn_ms = now_ms;
+
+            (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_start,  zone_start);
+            (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_end,    zone_length);
+            (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_len,   bonus_len);
+            (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_start, zone_start);
+            (void)mem::write_data<float>(*sc + off.skillcheck_success_start,    zone_start);
+            (void)mem::write_data<float>(*sc + off.skillcheck_success_length,   zone_length);
+            (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,     bonus_len);
+            (void)mem::write_data<float>(*sc + off.skillcheck_bonus_start,      zone_start);
+
+            if (in_process) {
+                using LocalActivateSkillCheckFn = void(*)(uintptr_t, uintptr_t, float);
+                const auto activate_fn = reinterpret_cast<LocalActivateSkillCheckFn>(ue4_base + off.rva_skillcheck_activate);
+                activate_fn(*sc, cur_inter, 0.0f);
+            } else {
+                const int32_t prev_cnt = mem::read<int32_t>(*sc + off.skillcheck_gen_count).value_or(0);
+                (void)mem::write_data<uintptr_t>(*sc + off.skillcheck_owner_pawn,    expected_owner);
+                (void)mem::write_data<uintptr_t>(*sc + off.skillcheck_current_inter, cur_inter);
+                (void)mem::write_data<int32_t>(*sc + off.skillcheck_gen_count,       prev_cnt + 1);
+                (void)mem::write_data<float>(*sc + off.skillcheck_current_prog,      0.20f);
+                (void)mem::write_data<float>(*sc + off.skillcheck_ui_prog,           0.20f);
+                (void)mem::write_data<uint8_t>(*sc + off.skillcheck_activated_flag,  1U);
+                (void)mem::write_data<uint8_t>(*sc + off.skillcheck_displayed_flag,  1U);
+                (void)mem::write_data<uint8_t>(*sc + off.skillcheck_live_displayed,  1U);
+            }
+
+            act_flag  = mem::read<uint8_t>(*sc + off.skillcheck_activated_flag).value_or(0U);
+            disp_flag = mem::read<uint8_t>(*sc + off.skillcheck_displayed_flag).value_or(0U);
+            live_disp = mem::read<uint8_t>(*sc + off.skillcheck_live_displayed).value_or(0U);
+        }
+
+        const bool is_active_now = (act_flag != 0U) || (disp_flag != 0U) || (live_disp != 0U);
+        if (!is_active_now) {
+            return false;
+        }
+
+        const int32_t gen_count = mem::read<int32_t>(*sc + off.skillcheck_gen_count).value_or(0);
+        static int32_t s_last_triggered_count = -1;
+        const bool should_trigger_now = (gen_count != s_last_triggered_count);
+
+        const float prev_start = mem::read<float>(*sc + off.skillcheck_live_succ_start).value_or(zone_start);
+        const float prev_len   = mem::read<float>(*sc + off.skillcheck_live_bonus_len).value_or(bonus_len);
+        const bool  newly_overridden =
+            should_trigger_now ||
+            (std::abs(prev_start - zone_start) > 1e-3f) ||
+            (std::abs(prev_len - bonus_len) > 1e-3f);
+
+        (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_start,  zone_start);
+        (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_end,    zone_length);
+        (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_len,   bonus_len);
+        (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_start, zone_start);
+        (void)mem::write_data<float>(*sc + off.skillcheck_success_start,    zone_start);
+        (void)mem::write_data<float>(*sc + off.skillcheck_success_length,   zone_length);
+        (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,     bonus_len);
+        (void)mem::write_data<float>(*sc + off.skillcheck_bonus_start,      zone_start);
+        (void)mem::write_data<int32_t>(*sc + off.skillcheck_last_result,    1);
+
+        if (should_trigger_now || newly_overridden) {
+            s_last_triggered_count = gen_count;
+            constexpr float kSweetTarget = 0.50f;
+            (void)mem::write_data<float>(*sc + off.skillcheck_current_prog, kSweetTarget);
+            (void)mem::write_data<float>(*sc + off.skillcheck_ui_prog,      kSweetTarget);
+            if (in_process) {
+                const uintptr_t sc_owner = mem::read<uintptr_t>(*sc + off.skillcheck_owner_pawn).value_or(0ULL);
+                const uintptr_t sc_inter = mem::read<uintptr_t>(*sc + off.skillcheck_current_inter).value_or(0ULL);
+                if (validate_canonical_uobject(sc_owner, 0x0AA0U, guobjectarray_abs, off) &&
+                    validate_canonical_uobject(sc_inter, 0x0100U, guobjectarray_abs, off)) {
+                    using OnSkillCheckInputFn = void(*)(uintptr_t);
+                    const auto input_fn = reinterpret_cast<OnSkillCheckInputFn>(ue4_base + off.rva_skillcheck_input);
+                    input_fn(*sc);
                 }
             }
         }
-        return false;
+        return newly_overridden;
     }
 
-    // 3b. Trap Immunity: Clears Trapped immobilize state on local pawn and disables collision overlap on nearby BearTrap actors
+    // 3b. Trap Immunity: Clears Trapped immobilize state on local pawn's _stateMachine (+0x0AA8 -> +0x01A0)
+    //     and disables collision overlap on nearby BearTrap actors
     static void apply_trap_immunity(
         uintptr_t local_pawn,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
-        if (!validate_canonical_uobject(local_pawn, 0x1170U, guobjectarray_abs, off)) {
+        if (!validate_canonical_uobject(local_pawn, 0x0AC0U, guobjectarray_abs, off)) {
             return;
         }
-        if (const auto imm = mem::read<uint8_t>(local_pawn + off.camper_immobilize_state)) {
-            if (*imm == static_cast<uint8_t>(hud::ImmobilizeState::Trapped)) {
-                (void)mem::write_data<uint8_t>(
-                    local_pawn + off.camper_immobilize_state,
-                    static_cast<uint8_t>(hud::ImmobilizeState::None));
-            }
-        }
-        if (const auto cur_flag = mem::read<uint8_t>(local_pawn + off.camper_trap_immunity_flag)) {
-            const uint8_t updated = static_cast<uint8_t>(*cur_flag | 0x01U);
-            if (updated != *cur_flag) {
-                (void)mem::write_data<uint8_t>(local_pawn + off.camper_trap_immunity_flag, updated);
+        if (const auto sm = mem::read<uintptr_t>(local_pawn + off.dbd_player_state_machine);
+            sm.has_value() && validate_canonical_uobject(*sm, 0x01B0U, guobjectarray_abs, off)) {
+            if (const auto imm = mem::read<uint8_t>(*sm + off.state_machine_immobilize)) {
+                if (*imm == static_cast<uint8_t>(hud::ImmobilizeState::Trapped)) {
+                    (void)mem::write_data<uint8_t>(
+                        *sm + off.state_machine_immobilize,
+                        static_cast<uint8_t>(hud::ImmobilizeState::None));
+                }
             }
         }
     }
@@ -701,8 +1127,17 @@ public:
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
-        if (!validate_canonical_uobject(trap_actor, 0x0070U, guobjectarray_abs, off)) {
+        if (!validate_canonical_uobject(trap_actor, 0x02E0U, guobjectarray_abs, off)) {
             return;
+        }
+        if (const auto is_set = mem::read<uint8_t>(trap_actor + off.beartrap_is_trap_set);
+            is_set.has_value() && *is_set != 0U) {
+            (void)mem::write_data<uint8_t>(trap_actor + off.beartrap_is_trap_set, 0U);
+            (void)mem::write_data<uint8_t>(trap_actor + off.beartrap_was_disarmed, 1U);
+        }
+        if (const auto contains = mem::read<uint8_t>(trap_actor + off.beartrap_contains_surv);
+            contains.has_value() && *contains != 0U) {
+            (void)mem::write_data<uint8_t>(trap_actor + off.beartrap_contains_surv, 0U);
         }
         if (const auto flags = mem::read<uint8_t>(trap_actor + off.actor_collision_flags)) {
             const uint8_t cleared = hud::compute_actor_collision_byte(*flags, false);
@@ -712,15 +1147,15 @@ public:
         }
     }
 
-    // 4a. Fly Cheat: Resolves UPlayerController -> AcknowledgedPawn -> UCharacterMovementComponent
-    //     and overrides MovementMode (+0x174) to MOVE_Flying (5) or restores MOVE_Walking (1)
+    // 4a. Bidirectional Fly Cheat & Safe Mid-Air Disable Sequence
     static Status apply_fly_mode(
         uintptr_t local_pc,
         uintptr_t local_pawn,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off,
         bool fly_enabled,
-        float fly_speed
+        float fly_speed,
+        float fly_vertical_speed = 0.0f
     ) noexcept {
         const hud::CharacterMovementChain chain = resolve_local_movement_chain(
             local_pc, local_pawn, guobjectarray_abs, off);
@@ -730,57 +1165,205 @@ public:
         const uintptr_t pawn_addr = chain.acknowledged_pawn;
         const uintptr_t move_comp = chain.movement_component;
 
-        const uint8_t target_mode = hud::resolve_movement_mode_byte(fly_enabled);
-        if (fly_enabled && std::isfinite(fly_speed) && fly_speed >= 50.0f && fly_speed <= 5000.0f) {
+        static uintptr_t s_held_pawn          = 0;
+        static float     s_held_z             = 0.0f;
+        static bool      s_has_held_z         = false;
+        static uintptr_t s_fly_saved_pawn     = 0;
+        static uint8_t   s_saved_col_flags    = 0;
+        static bool      s_has_saved_col      = false;
+        static uint8_t   s_saved_dirty_flags  = 0;
+        static bool      s_has_saved_dirty    = false;
+        static float     s_saved_gravity      = 1.0f;
+        static float     s_saved_braking_fly  = 0.0f;
+        static float     s_saved_max_fly_spd  = 600.0f;
+
+        if (!fly_enabled) {
+            const FVector zero_vel{0.0f, 0.0f, 0.0f};
+            (void)mem::write_data<FVector>(move_comp + off.movement_velocity, zero_vel);
+            (void)mem::write_data<float>(move_comp + off.gravity_scale, s_has_saved_dirty ? s_saved_gravity : 1.0f);
+            if (s_has_saved_dirty) {
+                (void)mem::write_data<float>(move_comp + off.braking_decel_flying, s_saved_braking_fly);
+                (void)mem::write_data<float>(move_comp + off.max_fly_speed, s_saved_max_fly_spd);
+                (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, s_saved_dirty_flags);
+            } else if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
+                (void)mem::write_data<uint8_t>(
+                    move_comp + off.movement_dirty_flags,
+                    static_cast<uint8_t>(*cur_flags & ~0x04U));
+            }
+            if (s_has_saved_col) {
+                (void)mem::write_data<uint8_t>(pawn_addr + off.actor_collision_flags, s_saved_col_flags);
+            } else if (const auto col_flags = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
+                const uint8_t col_byte = hud::compute_actor_collision_byte(*col_flags, true);
+                (void)mem::write_data<uint8_t>(pawn_addr + off.actor_collision_flags, col_byte);
+            }
+            // Transition to MOVE_Falling (3) so UE4's PhysFalling safely lands and enters MOVE_Walking
+            // without crashing on a missing CurrentFloor or mid-air state.
+            constexpr uint8_t kMoveFalling = 3U;
+            const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, kMoveFalling);
+            s_held_pawn       = 0;
+            s_has_held_z      = false;
+            s_fly_saved_pawn  = 0;
+            s_has_saved_col   = false;
+            s_has_saved_dirty = false;
+            return mode_st;
+        }
+
+        if (s_fly_saved_pawn != pawn_addr) {
+            s_fly_saved_pawn = pawn_addr;
+            if (const auto col = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
+                s_saved_col_flags = *col;
+                s_has_saved_col   = true;
+            }
+            if (const auto dflags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
+                s_saved_dirty_flags = *dflags;
+                s_saved_gravity     = mem::read<float>(move_comp + off.gravity_scale).value_or(1.0f);
+                s_saved_braking_fly = mem::read<float>(move_comp + off.braking_decel_flying).value_or(0.0f);
+                s_saved_max_fly_spd = mem::read<float>(move_comp + off.max_fly_speed).value_or(600.0f);
+                s_has_saved_dirty   = true;
+            }
+        }
+
+        const uint8_t fly_mode = hud::resolve_movement_mode_byte(true);
+        if (std::isfinite(fly_speed) && fly_speed >= 50.0f && fly_speed <= 5000.0f) {
             (void)mem::write_data<float>(move_comp + off.max_fly_speed, fly_speed);
         }
+        (void)mem::write_data<float>(move_comp + off.gravity_scale, 0.0f);
+        (void)mem::write_data<float>(move_comp + off.braking_decel_flying, 4096.0f);
         if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
-            const uint8_t dirty_byte = hud::compute_movement_dirty_flags(*cur_flags, fly_enabled, fly_enabled);
+            const uint8_t dirty_byte = hud::compute_movement_dirty_flags(*cur_flags, true, true);
             (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, dirty_byte);
         }
         if (const auto col_flags = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
-            const uint8_t col_byte = hud::compute_actor_collision_byte(*col_flags, !fly_enabled);
+            const uint8_t col_byte = hud::compute_actor_collision_byte(*col_flags, false);
             if (col_byte != *col_flags) {
                 (void)mem::write_data<uint8_t>(pawn_addr + off.actor_collision_flags, col_byte);
             }
         }
-        return mem::write_data<uint8_t>(move_comp + off.movement_mode, target_mode);
+        const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, fly_mode);
+
+        FVector cur_vel = mem::read<FVector>(move_comp + off.movement_velocity).value_or(FVector{0.0f, 0.0f, 0.0f});
+        const auto rc_opt = mem::read<uintptr_t>(pawn_addr + off.root_component);
+        const bool rc_valid = rc_opt.has_value() && validate_canonical_uobject(*rc_opt, 0x0170U, guobjectarray_abs, off);
+
+        if (std::isfinite(fly_vertical_speed) && std::abs(fly_vertical_speed) > 1.0f) {
+            cur_vel.z = -std::clamp(fly_vertical_speed, -1600.0f, 1600.0f);
+            (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
+            if (rc_valid) {
+                if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
+                    rel_loc.has_value() && std::isfinite(rel_loc->z)) {
+                    FVector updated_loc = *rel_loc;
+                    updated_loc.z += cur_vel.z * 0.016f;
+                    (void)mem::write_data<FVector>(*rc_opt + off.relative_location, updated_loc);
+                    s_held_pawn  = pawn_addr;
+                    s_held_z     = updated_loc.z;
+                    s_has_held_z = true;
+                }
+            }
+        } else {
+            cur_vel.z *= 0.10f;
+            if (std::abs(cur_vel.z) < 2.0f) {
+                cur_vel.z = 0.0f;
+            }
+            (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
+            if (rc_valid) {
+                if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
+                    rel_loc.has_value() && std::isfinite(rel_loc->z)) {
+                    if (!s_has_held_z || s_held_pawn != pawn_addr) {
+                        s_held_pawn  = pawn_addr;
+                        s_held_z     = rel_loc->z;
+                        s_has_held_z = true;
+                    } else {
+                        FVector held_loc = *rel_loc;
+                        held_loc.z       = s_held_z;
+                        (void)mem::write_data<FVector>(*rc_opt + off.relative_location, held_loc);
+                    }
+                }
+            }
+        }
+        return mode_st;
     }
 
-    // 4b. Force Escape: Sets VE_Escaped state on ADBDPlayerState and teleports local pawn to exit gate / hatch bounds
+    // 4b. Instant Hatch Escape (Thread-safe, binary-verified memory writes only)
     static Status apply_force_escape(
         uintptr_t local_pawn,
         uintptr_t local_player_st,
+        uintptr_t hatch_actor_ptr,
         const FVector* escape_portal_pos,
+        uintptr_t /*ue4_base*/,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off
     ) noexcept {
-        if (validate_canonical_uobject(local_player_st, 0x3C0U, guobjectarray_abs, off)) {
-            constexpr uint8_t kGameStateEscaped = 2U; // EGameState::VE_Escaped
-            (void)mem::write_data<uint8_t>(local_player_st + off.player_state_camper_state, kGameStateEscaped);
-        }
-        if (!validate_canonical_uobject(local_pawn, 0x1170U, guobjectarray_abs, off)) {
+        if (!validate_canonical_uobject(local_pawn, 0x1740U, guobjectarray_abs, off)) {
             return Status::InvalidArgument;
         }
-        (void)mem::write_data<uint8_t>(
-            local_pawn + off.camper_immobilize_state,
-            static_cast<uint8_t>(hud::ImmobilizeState::None));
 
-        if (escape_portal_pos != nullptr &&
+        const bool hatch_valid = (hatch_actor_ptr != 0) &&
+            validate_canonical_uobject(hatch_actor_ptr, 0x03E0U, guobjectarray_abs, off);
+        const bool has_dest = (escape_portal_pos != nullptr) &&
             std::isfinite(escape_portal_pos->x) &&
             std::isfinite(escape_portal_pos->y) &&
-            std::isfinite(escape_portal_pos->z)) {
+            std::isfinite(escape_portal_pos->z);
+
+        if (!hatch_valid && !has_dest) {
+            return Status::InvalidArgument;
+        }
+
+        if (const auto col_flags = mem::read<uint8_t>(local_pawn + off.actor_collision_flags)) {
+            const uint8_t col_on = hud::compute_actor_collision_byte(*col_flags, true);
+            (void)mem::write_data<uint8_t>(local_pawn + off.actor_collision_flags, col_on);
+        }
+        if (const auto move_comp = mem::read<uintptr_t>(local_pawn + off.character_movement);
+            move_comp.has_value() && validate_canonical_uobject(*move_comp, 0x0180U, guobjectarray_abs, off)) {
+            (void)mem::write_data<uint8_t>(*move_comp + off.movement_mode, hud::resolve_movement_mode_byte(false));
+        }
+
+        if (hatch_valid) {
+            constexpr uint8_t kHatchStateOpened = 2U; // EHatchState::Opened
+            (void)mem::write_data<uint8_t>(hatch_actor_ptr + off.hatch_state, kHatchStateOpened);
+            (void)mem::write_data<uint8_t>(hatch_actor_ptr + off.hatch_is_force_open, 1U);
+            crashlog::CrashLogger::instance().log_action(
+                "ESCAPE",
+                "apply_force_escape:hatch",
+                off.hatch_state,
+                "hatch_valid=1 wrote state=2 force_open=1");
+        } else {
+            crashlog::CrashLogger::instance().log_action(
+                "ESCAPE",
+                "apply_force_escape:hatch",
+                off.hatch_state,
+                "hatch_valid=0");
+        }
+
+        Status move_st = Status::Ok;
+        if (has_dest) {
             const auto root_comp = mem::read<uintptr_t>(local_pawn + off.root_component);
-            if (root_comp.has_value() && validate_canonical_uobject(*root_comp, 0x150U, guobjectarray_abs, off)) {
+            if (root_comp.has_value() && validate_canonical_uobject(*root_comp, 0x0170U, guobjectarray_abs, off)) {
                 const FVector dest{
                     escape_portal_pos->x,
                     escape_portal_pos->y,
-                    escape_portal_pos->z + 95.0f
+                    escape_portal_pos->z + 65.0f
                 };
-                return mem::write_data<FVector>(*root_comp + off.relative_location, dest);
+                move_st = mem::write_data<FVector>(*root_comp + off.relative_location, dest);
+                char msg[128]{};
+                std::snprintf(msg, sizeof(msg), "teleport rc=0x%llX st=%d pos=(%.1f,%.1f,%.1f)",
+                    static_cast<unsigned long long>(*root_comp),
+                    static_cast<int>(move_st),
+                    static_cast<double>(dest.x),
+                    static_cast<double>(dest.y),
+                    static_cast<double>(dest.z));
+                crashlog::CrashLogger::instance().log_action("ESCAPE", "apply_force_escape:tp", off.relative_location, msg);
+            } else {
+                crashlog::CrashLogger::instance().log_action(
+                    "ESCAPE",
+                    "apply_force_escape:tp",
+                    off.root_component,
+                    "root_component invalid or null");
             }
+        } else {
+            crashlog::CrashLogger::instance().log_action("ESCAPE", "apply_force_escape:tp", 0, "has_dest=0");
         }
-        return Status::Ok;
+        (void)local_player_st;
+        return move_st;
     }
 
     // 5a. Set Immobilize State (none, hooked, trapped, hiding, dead, caged)
@@ -2087,7 +2670,10 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
     pthread_mutex_lock(&hud_data.mutex);
     hud::GameplayManipulationConfig& gp_cfg = hud::get_gameplay_config();
 
-    char line[192]{};
+    bool req_crash_log_active = false;
+    char req_crash_log_path[crashlog::kMaxPathLen]{};
+
+    char line[320]{};
     while (std::fgets(line, sizeof(line), fp)) {
         std::size_t len = std::strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
@@ -2186,6 +2772,11 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
                 hud_data.show_portals       = (cmask & 0x40U) != 0U;
                 hud_data.show_special_props = (cmask & 0x80U) != 0U;
             }
+        } else if (std::strcmp(key, "crash_log_active") == 0) {
+            req_crash_log_active = (val[0] == '1');
+        } else if (std::strcmp(key, "crash_log_path") == 0) {
+            std::strncpy(req_crash_log_path, val, crashlog::kMaxPathLen - 1);
+            req_crash_log_path[crashlog::kMaxPathLen - 1] = '\0';
         }
     }
 
@@ -2205,6 +2796,25 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
 
     pthread_mutex_unlock(&hud_data.mutex);
     std::fclose(fp);
+
+    if (req_crash_log_active && req_crash_log_path[0] != '\0') {
+        if (crashlog::CrashLogger::instance().attach_session_path(req_crash_log_path)) {
+            if (g_state.ue4_module.base_address != 0) {
+                crashlog::CrashLogger::instance().set_module_bases(g_state.ue4_module.base_address, 0);
+                crashlog::CrashLogger::instance().install_signal_handlers();
+                if (memory::InProcessMemory::effective_pid() == ::getpid()) {
+                    crashlog::CrashLogger::instance().install_ue4_crash_hooks(g_state.ue4_module.base_address);
+                }
+            }
+        }
+    } else if (!req_crash_log_active && crashlog::CrashLogger::instance().is_active()) {
+        crashlog::CrashLogger::instance().stop_session();
+    }
+    crashlog::CrashLogger::instance().log_action(
+        "TOGGLE",
+        "poll_external_mod_menu_config",
+        0,
+        "Synced config from APK");
 }
 
 // Helper to probe CameraCachePrivate POV across candidate offsets (+0x1B00, +0x1AF0 + 0x10, +0x1AE0 + 0x10)
@@ -2568,6 +3178,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     uint32_t active_gen_count     = 0;
     uint32_t required_gen_count   = 0;
     uintptr_t local_game_state    = 0;
+    uintptr_t hatch_actor_ptr     = 0;
     if (const auto gs = mem::read<uintptr_t>(*uworld + off.world_game_state);
         gs.has_value() &&
         InProcessMemory::IsValidPtr(*gs, off.gamestate_required_gens + sizeof(int32_t)) &&
@@ -2691,6 +3302,16 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                         }
                     }
                 }
+            }
+
+            // Capture Hatch actor pointer for Instant Hatch Escape (Física tab)
+            if (hatch_actor_ptr == 0 &&
+                (hud::detail::icontains_str(scan_name.data(), "BP_Hatch") ||
+                 hud::detail::icontains_str(cls_name.data(), "Hatch")) &&
+                !hud::detail::icontains_str(cls_name.data(), "Component") &&
+                !hud::detail::icontains_str(cls_name.data(), "Zone") &&
+                !hud::detail::icontains_str(cls_name.data(), "Widget")) {
+                hatch_actor_ptr = *a_ptr;
             }
 
             // Trap Immunity: disable overlap collision on nearby BearTrap / Trap actors when enabled
@@ -2997,6 +3618,65 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
 
     const bool write_safe = (!is_lobby_level && local_pawn != 0) && (s_teardown_write_lock_ticks == 0U);
 
+    // Authority Gate: runtime host detection via AGameStateBase::Role (+0x00FC == 3) & ADBDPlayerState::GameRole (+0x039A)
+    uint8_t gs_local_role = 0U;
+    if (local_game_state != 0) {
+        if (const auto r = mem::read<uint8_t>(local_game_state + off.actor_local_role)) {
+            gs_local_role = *r;
+        }
+    }
+    const bool gs_has_authority = (local_game_state != 0 && gs_local_role == 3U);
+
+    uint8_t ps_game_role = 0U;
+    if (local_player_st != 0) {
+        if (const auto pr = mem::read<uint8_t>(local_player_st + off.player_state_game_role)) {
+            ps_game_role = *pr;
+        }
+    }
+
+    {
+        hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
+        pthread_mutex_lock(&hud_data.mutex);
+        hud_data.has_authority = gs_has_authority;
+        hud_data.gs_local_role = gs_local_role;
+        hud_data.ps_game_role  = ps_game_role;
+        pthread_mutex_unlock(&hud_data.mutex);
+    }
+
+    static uintptr_t s_auth_logged_ulevel = 0;
+    static bool      s_auth_logged_host   = false;
+    static uint8_t   s_auth_logged_role   = 255U;
+    if (final_match_active &&
+        (*ulevel != s_auth_logged_ulevel || gs_has_authority != s_auth_logged_host || ps_game_role != s_auth_logged_role)) {
+        s_auth_logged_ulevel = *ulevel;
+        s_auth_logged_host   = gs_has_authority;
+        s_auth_logged_role   = ps_game_role;
+        DIAG_LOGI(
+            "[AUTH-GATE] MatchStart ULevel=0x%llX | GameState=0x%llX Role=%u (HasAuthority=%d) | PlayerState=0x%llX GameRole=%u",
+            static_cast<unsigned long long>(*ulevel),
+            static_cast<unsigned long long>(local_game_state),
+            static_cast<unsigned>(gs_local_role),
+            gs_has_authority ? 1 : 0,
+            static_cast<unsigned long long>(local_player_st),
+            static_cast<unsigned>(ps_game_role));
+        char auth_msg[192]{};
+        std::snprintf(
+            auth_msg,
+            sizeof(auth_msg),
+            "GameState=0x%llX Role=%u HasAuthority=%d PlayerState=0x%llX GameRole=%u",
+            static_cast<unsigned long long>(local_game_state),
+            static_cast<unsigned>(gs_local_role),
+            gs_has_authority ? 1 : 0,
+            static_cast<unsigned long long>(local_player_st),
+            static_cast<unsigned>(ps_game_role));
+        crashlog::CrashLogger::instance().log_action("AUTH-GATE", "MatchStart", off.actor_local_role, auth_msg);
+    } else if (!final_match_active) {
+        s_auth_logged_ulevel = 0;
+        s_auth_logged_role   = 255U;
+    }
+
+    const bool authoritative_write_safe = write_safe && gs_has_authority;
+
     // Execute Item 3: Player Name Override + Read-back Verification Log
     // Works in both Lobby and Active Match whenever APlayerState is a verified live UObject
     if (should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
@@ -3112,17 +3792,29 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
-    // Execute Advanced Feature 3: Auto Skillcheck & Trap Immunity
+    // Execute Advanced Feature 3: Auto Skillcheck (Chaining + Auto-Great), Auto Heal & Trap Immunity
     if (write_safe && sync_res.auto_skillcheck && (local_pawn != 0 || local_pc != 0)) {
-        if (ue4::SpatialAndKinematicPipeline::apply_auto_skillcheck(local_pawn, local_pc, guobjectarray_abs, off)) {
+        if (ue4::SpatialAndKinematicPipeline::apply_auto_skillcheck(
+                local_pawn,
+                local_pc,
+                base,
+                guobjectarray_abs,
+                off,
+                true,
+                sync_res.skillcheck_interval_ms)) {
             ++s_skillchecks_handled;
         }
+    } else if (!sync_res.auto_skillcheck) {
+        ue4::SpatialAndKinematicPipeline::patch_skillcheck_great_branch(base, off, false);
     }
-    if (write_safe && sync_res.trap_immunity && local_pawn != 0) {
+    if (authoritative_write_safe && sync_res.trap_immunity && local_pawn != 0) {
         ue4::SpatialAndKinematicPipeline::apply_trap_immunity(local_pawn, guobjectarray_abs, off);
     }
+    if (authoritative_write_safe && sync_res.auto_heal && local_pawn != 0) {
+        ue4::SpatialAndKinematicPipeline::apply_auto_heal(local_pawn, local_pc, base, guobjectarray_abs, off);
+    }
 
-    // Execute Advanced Feature 4: Fly Cheat & Force Escape
+    // Execute Advanced Feature 4: Bidirectional Fly Cheat & Instant Hatch Escape
     static bool s_was_flying = false;
     if (write_safe && (local_pc != 0 || local_pawn != 0) && (sync_res.fly_cheat_enabled || s_was_flying)) {
         static uintptr_t s_last_fly_err_pawn = 0;
@@ -3132,7 +3824,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             guobjectarray_abs,
             off,
             sync_res.fly_cheat_enabled,
-            target_walk_speed
+            target_walk_speed,
+            sync_res.fly_vertical_speed
         );
         if (fly_st != Status::Ok && local_pawn != s_last_fly_err_pawn) {
             s_last_fly_err_pawn = local_pawn;
@@ -3148,33 +3841,56 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         s_was_flying = false;
     }
     if (write_safe && sync_res.force_escape && local_pawn != 0) {
-        const ue4::FVector* escape_pos = nullptr;
-        for (size_t i = 0; i < collected_count; ++i) {
-            if (std::strcmp(s_snapshots_pool[i].category_label, "ExitGate") == 0 ||
-                std::strcmp(s_snapshots_pool[i].category_label, "Hatch") == 0) {
-                escape_pos = &s_snapshots_pool[i].world_pos;
-                break;
+        if (!authoritative_write_safe) {
+            DIAG_LOGI(
+                "[AUTH-GATE] Blocked apply_force_escape: GameState HasAuthority=0 (Role=%u, GameRole=%u)",
+                static_cast<unsigned>(gs_local_role),
+                static_cast<unsigned>(ps_game_role));
+            crashlog::CrashLogger::instance().log_action(
+                "AUTH-GATE",
+                "apply_force_escape",
+                off.actor_local_role,
+                "blocked: not host (HasAuthority=0)");
+            hud::set_force_escape(false);
+        } else {
+            const ue4::FVector* escape_pos = nullptr;
+            for (size_t i = 0; i < collected_count; ++i) {
+                if (std::strcmp(s_snapshots_pool[i].category_label, "Hatch") == 0) {
+                    escape_pos = &s_snapshots_pool[i].world_pos;
+                    break;
+                }
             }
+            if (escape_pos == nullptr) {
+                for (size_t i = 0; i < collected_count; ++i) {
+                    if (std::strcmp(s_snapshots_pool[i].category_label, "ExitGate") == 0) {
+                        escape_pos = &s_snapshots_pool[i].world_pos;
+                        break;
+                    }
+                }
+            }
+            const Status esc_st = ue4::SpatialAndKinematicPipeline::apply_force_escape(
+                local_pawn,
+                local_player_st,
+                hatch_actor_ptr,
+                escape_pos,
+                base,
+                guobjectarray_abs,
+                off
+            );
+            if (esc_st != Status::Ok) {
+                DIAG_LOGE(
+                    "[WRITE-ERR] apply_force_escape failed (Status=%d) on Pawn=0x%llX PS=0x%llX Hatch=0x%llX",
+                    static_cast<int>(esc_st),
+                    static_cast<unsigned long long>(local_pawn),
+                    static_cast<unsigned long long>(local_player_st),
+                    static_cast<unsigned long long>(hatch_actor_ptr));
+            }
+            hud::set_force_escape(false);
         }
-        const Status esc_st = ue4::SpatialAndKinematicPipeline::apply_force_escape(
-            local_pawn,
-            local_player_st,
-            escape_pos,
-            guobjectarray_abs,
-            off
-        );
-        if (esc_st != Status::Ok) {
-            DIAG_LOGE(
-                "[WRITE-ERR] apply_force_escape failed (Status=%d) on Pawn=0x%llX PS=0x%llX",
-                static_cast<int>(esc_st),
-                static_cast<unsigned long long>(local_pawn),
-                static_cast<unsigned long long>(local_player_st));
-        }
-        hud::set_force_escape(false);
     }
 
-    // Execute Advanced Feature 5: Immobilize State & Player Role Setters
-    if (write_safe && sync_res.should_apply_immobilize && local_pawn != 0) {
+    // Execute Advanced Feature 5: Immobilize State & Player Role Setters (Authoritative Only)
+    if (authoritative_write_safe && sync_res.should_apply_immobilize && local_pawn != 0) {
         static uintptr_t s_last_imm_err_pawn = 0;
         const Status imm_st = ue4::SpatialAndKinematicPipeline::apply_immobilize_state(
             local_pawn,
@@ -3192,7 +3908,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             s_last_imm_err_pawn = 0;
         }
     }
-    if (write_safe && sync_res.should_apply_role && local_player_st != 0) {
+    if (authoritative_write_safe && sync_res.should_apply_role && local_player_st != 0) {
         static uintptr_t s_last_role_err_ps = 0;
         const Status role_st = ue4::SpatialAndKinematicPipeline::apply_player_role(
             local_player_st,
@@ -3346,6 +4062,11 @@ INSTRUMENT_LOCAL static void* telemetry_worker_entry(void* /*arg*/) noexcept {
             std::array<uint8_t, sizeof(Elf64_Ehdr)> hdr{};
             if (InProcessMemory::safe_read(mod->base_address, hdr) == Status::Ok) {
                 g_state.ue4_module = *mod;
+                crashlog::CrashLogger::instance().set_module_bases(g_state.ue4_module.base_address, 0);
+                crashlog::CrashLogger::instance().install_signal_handlers();
+                if (memory::InProcessMemory::effective_pid() == ::getpid()) {
+                    crashlog::CrashLogger::instance().install_ue4_crash_hooks(g_state.ue4_module.base_address);
+                }
                 log_resolved_engine_anchors();
                 DIAG_LOGI("Headless telemetry backend active on libUE4.so @ 0x%llX (waiting for live match state)",
                           static_cast<unsigned long long>(g_state.ue4_module.base_address));
@@ -3731,7 +4452,9 @@ Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
             "force_escape=%d\n"
             "set_immobilize=%s\n"
             "set_player_role=%s\n"
-            "cat_mask=%02X\n",
+            "cat_mask=%02X\n"
+            "crash_log_active=%d\n"
+            "crash_log_path=%s\n",
             hud_open ? 1 : 0,
             draw_markers ? 1 : 0,
             static_cast<double>(max_dist),
@@ -3752,7 +4475,9 @@ Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
             gp_esc ? 1 : 0,
             imm_str,
             role_str,
-            gp_catmask);
+            gp_catmask,
+            crashlog::CrashLogger::instance().is_active() ? 1 : 0,
+            crashlog::CrashLogger::instance().active_path());
         std::fclose(fp);
         ::chmod(kCfgPath, 0666);
     }
@@ -3776,16 +4501,74 @@ Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus(JNIEnv* env, jclass /*c
         std::snprintf(
             buf,
             sizeof(buf),
-            "IPC: ONLINE | %s | Nodes: %u | Gens: %u/%u | Player: %s",
+            "IPC: ONLINE | %s | Nodes: %u | Gens: %u/%u | Auth=%u | Role=%u | Player: %s",
             snap.match_active ? "IN MATCH (ACTIVE)" : "LOBBY / STANDBY",
             rem_nodes,
             rem_gens,
             req_gens,
+            snap.match_active ? static_cast<unsigned>(snap.has_authority) : 1U,
+            snap.match_active ? static_cast<unsigned>(snap.ps_game_role) : 0U,
             snap.active_player_name[0] != '\0' ? snap.active_player_name : "(In-Game Default)");
     } else {
         std::snprintf(buf, sizeof(buf), "IPC: WAITING FOR GAME (com.netease.dbdena) | Nodes: 0 | Gens: 0/0");
     }
     return env->NewStringUTF(buf);
+}
+
+INSTRUMENT_C_EXPORT jstring JNICALL
+Java_com_dbdm_modmenu_FloatingModService_nativeStartCrashLogger(
+    JNIEnv* env,
+    jclass  /*clazz*/,
+    jstring preferred_dir,
+    jstring fallback_dir) {
+
+    const char* pref_c = preferred_dir ? env->GetStringUTFChars(preferred_dir, nullptr) : "/sdcard/DBDMod/logs";
+    const char* fall_c = fallback_dir  ? env->GetStringUTFChars(fallback_dir, nullptr)  : "";
+
+    crashlog::CrashLogger::instance().install_signal_handlers();
+    char out_path[crashlog::kMaxPathLen]{};
+    const bool ok = crashlog::CrashLogger::instance().start_new_session(
+        pref_c ? pref_c : "/sdcard/DBDMod/logs",
+        fall_c ? fall_c : "",
+        out_path,
+        sizeof(out_path));
+
+    if (preferred_dir && pref_c) env->ReleaseStringUTFChars(preferred_dir, pref_c);
+    if (fallback_dir  && fall_c) env->ReleaseStringUTFChars(fallback_dir, fall_c);
+
+    if (!ok) {
+        return env->NewStringUTF("ERR:Falha ao criar arquivo de log (permissao negada)");
+    }
+    crashlog::CrashLogger::instance().log_action("TOGGLE", "Iniciar logs", 0, out_path);
+    return env->NewStringUTF(out_path);
+}
+
+INSTRUMENT_C_EXPORT void JNICALL
+Java_com_dbdm_modmenu_FloatingModService_nativeStopCrashLogger(
+    JNIEnv* /*env*/,
+    jclass  /*clazz*/) {
+    crashlog::CrashLogger::instance().stop_session();
+}
+
+INSTRUMENT_C_EXPORT void JNICALL
+Java_com_dbdm_modmenu_FloatingModService_nativeLogModAction(
+    JNIEnv* env,
+    jclass  /*clazz*/,
+    jstring tag,
+    jstring func,
+    jlong   offset,
+    jstring detail) {
+    const char* tag_c    = tag    ? env->GetStringUTFChars(tag, nullptr)    : "TOGGLE";
+    const char* func_c   = func   ? env->GetStringUTFChars(func, nullptr)   : "-";
+    const char* detail_c = detail ? env->GetStringUTFChars(detail, nullptr) : "-";
+    crashlog::CrashLogger::instance().log_action(
+        tag_c ? tag_c : "TOGGLE",
+        func_c ? func_c : "-",
+        static_cast<std::uintptr_t>(offset),
+        detail_c ? detail_c : "-");
+    if (tag    && tag_c)    env->ReleaseStringUTFChars(tag, tag_c);
+    if (func   && func_c)   env->ReleaseStringUTFChars(func, func_c);
+    if (detail && detail_c) env->ReleaseStringUTFChars(detail, detail_c);
 }
 
 // Polls the headless Zygisk backend via IPC, projects live 3D entities into 2D screen space,

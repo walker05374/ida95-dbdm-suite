@@ -35,6 +35,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
+import java.io.File;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
@@ -70,15 +72,19 @@ public final class FloatingModService extends Service {
         float[] outPacked
     );
 
-    // Paleta de Cores Wdbd (Obsidiana, Carmesim Neon, Brasa, Aço Escovado)
-    private static final int COL_BG_SURFACE    = Color.argb(235, 13, 14, 19);   // #EB0D0E13
-    private static final int COL_BG_INNER      = Color.argb(215, 21, 23, 31);   // #D715171F
-    private static final int COL_BORDER_ACCENT = Color.argb(185, 199, 69, 66);  // #B9C74542
-    private static final int COL_BORDER_SUBTLE = Color.argb(140, 55, 62, 76);   // #8C373E4C
-    private static final int COL_CRIMSON       = Color.rgb(229, 25, 43);        // #E5192B
-    private static final int COL_EMBER         = Color.rgb(255, 109, 36);       // #FF6D24
-    private static final int COL_TEXT_PRIMARY  = Color.rgb(232, 234, 238);      // #E8EAEE
-    private static final int COL_TEXT_MUTED    = Color.rgb(154, 161, 174);      // #9AA1AE
+    public static native String nativeStartCrashLogger(String preferredDir, String fallbackDir);
+    public static native void nativeStopCrashLogger();
+    public static native void nativeLogModAction(String tag, String func, long offset, String detail);
+
+    // Paleta de Cores Wdbd (Obsidiana Profunda, Carmesim Neon, Âmbar, Aço Escovado)
+    private static final int COL_BG_SURFACE    = Color.argb(242, 11, 13, 20);   // #F20B0D14
+    private static final int COL_BG_INNER      = Color.argb(225, 20, 24, 36);   // #E1141824
+    private static final int COL_BORDER_ACCENT = Color.argb(200, 235, 52, 76);  // #C8EB344C
+    private static final int COL_BORDER_SUBTLE = Color.argb(150, 58, 68, 92);   // #963A445C
+    private static final int COL_CRIMSON       = Color.rgb(238, 42, 72);        // #EE2A48
+    private static final int COL_EMBER         = Color.rgb(255, 132, 48);       // #FF8430
+    private static final int COL_TEXT_PRIMARY  = Color.rgb(240, 243, 250);      // #F0F3FA
+    private static final int COL_TEXT_MUTED    = Color.rgb(148, 160, 182);      // #94A0B6
 
     private WindowManager windowManager;
     private AuraEspOverlayView espOverlayView;
@@ -89,22 +95,33 @@ public final class FloatingModService extends Service {
     private ImageView collapsedBubbleView;
     private TextView statusBannerView;
     private Bitmap logoCircleBitmap;
+    private boolean  crashLogActive = false;
+    private String   crashLogPath   = "";
+    private String   lastLoggedGpPayload = "";
+    private Button   crashLogButton;
+    private TextView crashLogPathNotice;
+    private TextView authGateNoticeView;
+    private CheckBox authAutoHealCb;
+    private CheckBox authTrapImmunityCb;
+    private Button   authEscapeBtn;
+    private Button   authImmobilizeBtn;
+    private Button   authRoleBtn;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private boolean serviceActive = false;
 
     // Estado de Visualização 3D e Categorias (PT-BR, espelhado com SceneTelemetryData)
     private boolean hudOpen          = true;
-    private boolean drawMarkers      = true;
+    private boolean drawMarkers      = false;
     private float   maxDist          = 250.0f;
-    private boolean showAntagonist   = true; // "Mostrar Assassino (Esqueleto 3D)"
-    private boolean showTeammates    = true; // "Mostrar Sobreviventes (Esqueleto 3D)"
-    private boolean showPowerNodes   = true; // "Mostrar Geradores (% + Silhueta 3D)"
-    private boolean showShrines      = true; // "Mostrar Totens"
-    private boolean showContainers   = true; // "Mostrar Baús e Itens"
-    private boolean showBarriers     = true; // "Mostrar Pallets e Janelas (Caixa 3D)"
-    private boolean showPortals      = true; // "Mostrar Alçapão e Portões"
-    private boolean showSpecialProps = true; // "Mostrar Objetos Especiais"
+    private boolean showAntagonist   = false; // Assassino
+    private boolean showTeammates    = false; // Sobrevivente
+    private boolean showPowerNodes   = false; // Gerador
+    private boolean showShrines      = false; // Totem
+    private boolean showContainers   = false; // Baú
+    private boolean showBarriers     = false; // Pallet / Janela
+    private boolean showPortals      = false; // Hatch / Portão
+    private boolean showSpecialProps = false; // Objetos
 
     // Estado de Cinemática em Porcentagem (%) (PT-BR, espelhado com SceneTelemetryData)
     private boolean applyKinematics = false;
@@ -125,8 +142,10 @@ public final class FloatingModService extends Service {
     private boolean applyFov        = false;
     private float   fovValue        = 90.0f;
     private boolean autoSkillcheck  = false;
+    private boolean autoHeal        = false;
     private boolean trapImmunity    = false;
     private boolean flyCheat        = false;
+    private float   flyVertSpeed    = 0.0f;  // -600.0 (desce) .. 0.0 (segura) .. +600.0 (sobe)
     private boolean forceEscape     = false;
     private String  immobilizeState = "off";
     private String  playerRole      = "none";
@@ -342,12 +361,16 @@ public final class FloatingModService extends Service {
                             .replace("LOBBY / STANDBY", "LOBBY / AGUARDANDO")
                             .replace("Nodes:", "Nós:")
                             .replace("Gens:", "Geradores:")
+                            .replace("Auth=1", "Host")
+                            .replace("Auth=0", "Cliente")
                             .replace("Player:", "Jogador:")
                             .replace("(In-Game Default)", "(Padrão do Jogo)")
                             .replace("IPC: WAITING FOR GAME (com.netease.dbdena)", "IPC: AGUARDANDO JOGO (com.netease.dbdena)");
                         statusBannerView.setText(ptStatus);
+                        updateAuthorityGateUi(st);
                     } else {
                         statusBannerView.setText("IPC: DESCONECTADO | Nós: 0 | Geradores: 0/0");
+                        updateAuthorityGateUi(null);
                     }
                 } catch (Throwable ignored) {
                     statusBannerView.setText("IPC: DESCONECTADO | Nós: 0 | Geradores: 0/0");
@@ -524,10 +547,19 @@ public final class FloatingModService extends Service {
 
     private void styleTabButton(Button btn, boolean active) {
         btn.setTextColor(active ? COL_TEXT_PRIMARY : COL_TEXT_MUTED);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(active ? Color.argb(210, 199, 30, 45) : COL_BG_INNER);
-        bg.setCornerRadius(dp(4));
-        bg.setStroke(1, active ? COL_EMBER : COL_BORDER_SUBTLE);
+        GradientDrawable bg;
+        if (active) {
+            bg = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{Color.argb(230, 224, 38, 66), Color.argb(230, 155, 20, 42)}
+            );
+            bg.setStroke(1, COL_EMBER);
+        } else {
+            bg = new GradientDrawable();
+            bg.setColor(COL_BG_INNER);
+            bg.setStroke(1, COL_BORDER_SUBTLE);
+        }
+        bg.setCornerRadius(dp(6));
         btn.setBackground(bg);
     }
 
@@ -569,12 +601,14 @@ public final class FloatingModService extends Service {
         // Compact payload (< 56 bytes) so it never truncates inside ControlPayload::label_filter[64]
         return String.format(
             Locale.US,
-            "@gp:f=%d:%.0f;s=%d;t=%d;y=%d;e=%d;i=%s;r=%s;c=%02X",
+            "@gp:f=%d:%.0f;s=%d;ah=%d;t=%d;y=%d:%.0f;e=%d;i=%s;r=%s;c=%02X",
             applyFov ? 1 : 0,
             clampedFov,
             autoSkillcheck ? 1 : 0,
+            autoHeal ? 1 : 0,
             trapImmunity ? 1 : 0,
             flyCheat ? 1 : 0,
+            flyVertSpeed,
             forceEscape ? 1 : 0,
             immToken,
             roleToken,
@@ -604,7 +638,14 @@ public final class FloatingModService extends Service {
                 jumpPct,
                 timeScale
             );
+            if (crashLogActive && !gpPayload.equals(lastLoggedGpPayload)) {
+                lastLoggedGpPayload = gpPayload;
+                nativeLogModAction("TOGGLE", "MenuUI", 0L, gpPayload);
+            }
         } catch (Throwable ignored) {
+        }
+        if (forceEscape) {
+            forceEscape = false;
         }
     }
 
@@ -671,8 +712,8 @@ public final class FloatingModService extends Service {
         expandedPanel.setPadding(dp(8), dp(6), dp(8), dp(8));
         GradientDrawable cardBg = new GradientDrawable();
         cardBg.setColor(COL_BG_SURFACE);
-        cardBg.setCornerRadius(dp(8));
-        cardBg.setStroke(1, COL_BORDER_ACCENT);
+        cardBg.setCornerRadius(dp(10));
+        cardBg.setStroke(dp(1), COL_BORDER_ACCENT);
         expandedPanel.setBackground(cardBg);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             expandedPanel.setElevation(dp(8));
@@ -694,7 +735,7 @@ public final class FloatingModService extends Service {
         }
 
         TextView titleView = new TextView(this);
-        titleView.setText("Wdbd • Painel 3D");
+        titleView.setText("WDBD");
         titleView.setTextColor(COL_TEXT_PRIMARY);
         titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
@@ -739,24 +780,66 @@ public final class FloatingModService extends Service {
         statusBannerView.setPadding(0, dp(3), 0, dp(3));
         expandedPanel.addView(statusBannerView);
 
-        // Barra de Abas (PT-BR): Visuais 3D | Física (%) | Identidade
+        crashLogPathNotice = new TextView(this);
+        crashLogPathNotice.setTextColor(COL_TEXT_MUTED);
+        crashLogPathNotice.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.0f);
+        crashLogPathNotice.setPadding(dp(2), 0, dp(2), dp(4));
+        crashLogPathNotice.setVisibility(View.GONE);
+        expandedPanel.addView(crashLogPathNotice);
+
+        authGateNoticeView = new TextView(this);
+        authGateNoticeView.setTextColor(COL_EMBER);
+        authGateNoticeView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.0f);
+        authGateNoticeView.setPadding(dp(2), 0, dp(2), dp(4));
+        authGateNoticeView.setVisibility(View.GONE);
+        expandedPanel.addView(authGateNoticeView);
+
+        // Barra de Abas (PT-BR): Visual | Física | Identidade | LOG
         LinearLayout tabBar = new LinearLayout(this);
         tabBar.setOrientation(LinearLayout.HORIZONTAL);
-        tabBar.setPadding(0, dp(1), 0, dp(4));
+        tabBar.setPadding(0, dp(2), 0, dp(5));
 
-        final Button tabVisualsBtn    = buildTabButton("Visuais 3D", true);
-        final Button tabKinematicsBtn = buildTabButton("Física (%)", false);
+        final Button tabVisualsBtn    = buildTabButton("Visual", true);
+        final Button tabKinematicsBtn = buildTabButton("Física", false);
         final Button tabIdentityBtn   = buildTabButton("Identidade", false);
+
+        crashLogButton = new Button(this);
+        crashLogButton.setText("LOG");
+        crashLogButton.setTextColor(COL_TEXT_PRIMARY);
+        crashLogButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.0f);
+        crashLogButton.setTypeface(Typeface.DEFAULT_BOLD);
+        crashLogButton.setAllCaps(false);
+        crashLogButton.setSingleLine(true);
+        crashLogButton.setGravity(Gravity.CENTER);
+        crashLogButton.setMinWidth(0);
+        crashLogButton.setMinimumWidth(0);
+        crashLogButton.setMinHeight(0);
+        crashLogButton.setMinimumHeight(0);
+        GradientDrawable logIdleBg = new GradientDrawable();
+        logIdleBg.setColor(Color.argb(215, 185, 24, 38));
+        logIdleBg.setCornerRadius(dp(5));
+        logIdleBg.setStroke(1, COL_BORDER_ACCENT);
+        crashLogButton.setBackground(logIdleBg);
+        crashLogButton.setPadding(dp(2), dp(2), dp(2), dp(2));
+        crashLogButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                toggleCrashLogging();
+            }
+        });
 
         LinearLayout.LayoutParams tabLp1 = new LinearLayout.LayoutParams(0, dp(24), 1.0f);
         tabLp1.setMarginEnd(dp(3));
         LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(0, dp(24), 1.0f);
         tabLp2.setMarginEnd(dp(3));
         LinearLayout.LayoutParams tabLp3 = new LinearLayout.LayoutParams(0, dp(24), 1.0f);
+        tabLp3.setMarginEnd(dp(3));
+        LinearLayout.LayoutParams logLp = new LinearLayout.LayoutParams(dp(36), dp(24));
 
         tabBar.addView(tabVisualsBtn, tabLp1);
         tabBar.addView(tabKinematicsBtn, tabLp2);
         tabBar.addView(tabIdentityBtn, tabLp3);
+        tabBar.addView(crashLogButton, logLp);
         expandedPanel.addView(tabBar);
 
         final ScrollView scrollView = new ScrollView(this);
@@ -822,10 +905,10 @@ public final class FloatingModService extends Service {
         });
 
         // ====================================================================
-        // ABA 1: VISUAIS 3D (Indicadores, Linhas Guia, FOV Changer e Categorias)
+        // ABA 1: VISUAL (Indicadores, FOV e Categorias)
         // ====================================================================
         CheckBox cbDrawMarkers = new CheckBox(this);
-        styleMinimalCheckBox(cbDrawMarkers, "Ativar Indicadores e Linhas Guia", drawMarkers);
+        styleMinimalCheckBox(cbDrawMarkers, "Ativar Indicadores", drawMarkers);
         cbDrawMarkers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -838,7 +921,7 @@ public final class FloatingModService extends Service {
         });
         sectionVisuals.addView(cbDrawMarkers);
 
-        final TextView tvMaxDist = buildMinimalSliderLabel("Distância Máxima de Renderização: 250 m");
+        final TextView tvMaxDist = buildMinimalSliderLabel("Distância Máxima: 250 m");
         sectionVisuals.addView(tvMaxDist);
 
         SeekBar sbMaxDist = new SeekBar(this);
@@ -849,7 +932,7 @@ public final class FloatingModService extends Service {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 maxDist = 10.0f + progress;
-                tvMaxDist.setText("Distância Máxima de Renderização: " + (int) maxDist + " m");
+                tvMaxDist.setText("Distância Máxima: " + (int) maxDist + " m");
                 pushConfigToNative();
                 if (espOverlayView != null) {
                     espOverlayView.invalidate();
@@ -862,7 +945,7 @@ public final class FloatingModService extends Service {
 
         // FOV Changer (80° a 120°)
         CheckBox cbFov = new CheckBox(this);
-        styleMinimalCheckBox(cbFov, "Ativar Campo de Visão (FOV)", applyFov);
+        styleMinimalCheckBox(cbFov, "Ativar FOV", applyFov);
         cbFov.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -872,7 +955,7 @@ public final class FloatingModService extends Service {
         });
         sectionVisuals.addView(cbFov);
 
-        final TextView tvFov = buildMinimalSliderLabel("Campo de Visão (FOV): 90°");
+        final TextView tvFov = buildMinimalSliderLabel("FOV: 90°");
         sectionVisuals.addView(tvFov);
 
         SeekBar sbFov = new SeekBar(this);
@@ -883,7 +966,7 @@ public final class FloatingModService extends Service {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 fovValue = 80.0f + progress;
-                tvFov.setText("Campo de Visão (FOV): " + (int) fovValue + "°");
+                tvFov.setText("FOV: " + (int) fovValue + "°");
                 pushConfigToNative();
             }
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}
@@ -892,7 +975,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(sbFov);
 
         CheckBox cbAntagonist = new CheckBox(this);
-        styleMinimalCheckBox(cbAntagonist, "Mostrar Assassino (Linha + Esqueleto)", showAntagonist);
+        styleMinimalCheckBox(cbAntagonist, "Assassino", showAntagonist);
         cbAntagonist.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -904,7 +987,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbAntagonist);
 
         CheckBox cbTeammates = new CheckBox(this);
-        styleMinimalCheckBox(cbTeammates, "Mostrar Sobreviventes (Linha + Esqueleto)", showTeammates);
+        styleMinimalCheckBox(cbTeammates, "Sobreviventes", showTeammates);
         cbTeammates.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -916,7 +999,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbTeammates);
 
         CheckBox cbPowerNodes = new CheckBox(this);
-        styleMinimalCheckBox(cbPowerNodes, "Mostrar Geradores (% + Distância)", showPowerNodes);
+        styleMinimalCheckBox(cbPowerNodes, "Geradores", showPowerNodes);
         cbPowerNodes.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -928,7 +1011,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbPowerNodes);
 
         CheckBox cbShrines = new CheckBox(this);
-        styleMinimalCheckBox(cbShrines, "Mostrar Totens", showShrines);
+        styleMinimalCheckBox(cbShrines, "Totens", showShrines);
         cbShrines.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -940,7 +1023,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbShrines);
 
         CheckBox cbContainers = new CheckBox(this);
-        styleMinimalCheckBox(cbContainers, "Mostrar Baús", showContainers);
+        styleMinimalCheckBox(cbContainers, "Baús", showContainers);
         cbContainers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -952,7 +1035,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbContainers);
 
         CheckBox cbBarriers = new CheckBox(this);
-        styleMinimalCheckBox(cbBarriers, "Mostrar Pallets", showBarriers);
+        styleMinimalCheckBox(cbBarriers, "Pallets", showBarriers);
         cbBarriers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -964,7 +1047,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbBarriers);
 
         CheckBox cbPortals = new CheckBox(this);
-        styleMinimalCheckBox(cbPortals, "Mostrar Alçapão e Portões", showPortals);
+        styleMinimalCheckBox(cbPortals, "Alçapão / Portões", showPortals);
         cbPortals.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -976,7 +1059,7 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbPortals);
 
         CheckBox cbSpecialProps = new CheckBox(this);
-        styleMinimalCheckBox(cbSpecialProps, "Mostrar Objetos Especiais", showSpecialProps);
+        styleMinimalCheckBox(cbSpecialProps, "Objetos", showSpecialProps);
         cbSpecialProps.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -988,102 +1071,16 @@ public final class FloatingModService extends Service {
         sectionVisuals.addView(cbSpecialProps);
 
         // ====================================================================
-        // ABA 2: FÍSICA E CINEMÁTICA EM PORCENTAGEM (%) + GAMEPLAY
+        // ABA 2: FÍSICA E CINEMÁTICA
         // ====================================================================
-        CheckBox cbKinematics = new CheckBox(this);
-        styleMinimalCheckBox(cbKinematics, "Ativar Cinemática Personalizada", applyKinematics);
-        cbKinematics.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                applyKinematics = isChecked;
-                pushConfigToNative();
-            }
-        });
-        sectionKinematics.addView(cbKinematics);
+        final TextView hdrAssist = buildMinimalSliderLabel("Assistência");
+        hdrAssist.setTextColor(COL_EMBER);
+        hdrAssist.setTypeface(Typeface.DEFAULT_BOLD);
+        hdrAssist.setPadding(dp(2), dp(2), dp(2), dp(2));
+        sectionKinematics.addView(hdrAssist);
 
-        // 1. Velocidade de Movimento (%): 100% a 250%
-        final TextView tvWalkSpeed = buildMinimalSliderLabel("Velocidade de Movimento (%): 100%");
-        sectionKinematics.addView(tvWalkSpeed);
-
-        SeekBar sbWalkSpeed = new SeekBar(this);
-        sbWalkSpeed.setMax(150); // 100 + [0..150] = 100%..250%
-        sbWalkSpeed.setProgress(0);
-        styleMinimalSeekBar(sbWalkSpeed);
-        sbWalkSpeed.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                walkSpeedPct = 100.0f + progress;
-                tvWalkSpeed.setText("Velocidade de Movimento (%): " + (int) walkSpeedPct + "%");
-                pushConfigToNative();
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-        sectionKinematics.addView(sbWalkSpeed);
-
-        // 2. Aceleração Máxima (%): 100% a 300%
-        final TextView tvMaxAccel = buildMinimalSliderLabel("Aceleração Máxima (%): 100%");
-        sectionKinematics.addView(tvMaxAccel);
-
-        SeekBar sbMaxAccel = new SeekBar(this);
-        sbMaxAccel.setMax(200); // 100 + [0..200] = 100%..300%
-        sbMaxAccel.setProgress(0);
-        styleMinimalSeekBar(sbMaxAccel);
-        sbMaxAccel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                accelPct = 100.0f + progress;
-                tvMaxAccel.setText("Aceleração Máxima (%): " + (int) accelPct + "%");
-                pushConfigToNative();
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-        sectionKinematics.addView(sbMaxAccel);
-
-        // 3. Força do Pulo (%): 100% a 250%
-        final TextView tvJumpVel = buildMinimalSliderLabel("Força do Pulo (%): 100%");
-        sectionKinematics.addView(tvJumpVel);
-
-        SeekBar sbJumpVel = new SeekBar(this);
-        sbJumpVel.setMax(150); // 100 + [0..150] = 100%..250%
-        sbJumpVel.setProgress(0);
-        styleMinimalSeekBar(sbJumpVel);
-        sbJumpVel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                jumpPct = 100.0f + progress;
-                tvJumpVel.setText("Força do Pulo (%): " + (int) jumpPct + "%");
-                pushConfigToNative();
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-        sectionKinematics.addView(sbJumpVel);
-
-        // 4. Escala de Tempo (%): 50% a 200%
-        final TextView tvTimeScale = buildMinimalSliderLabel("Escala de Tempo (%): 100%");
-        sectionKinematics.addView(tvTimeScale);
-
-        SeekBar sbTimeScale = new SeekBar(this);
-        sbTimeScale.setMax(150); // 50 + [0..150] = 50%..200%
-        sbTimeScale.setProgress(50);
-        styleMinimalSeekBar(sbTimeScale);
-        sbTimeScale.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                timeScalePct = 50.0f + progress;
-                tvTimeScale.setText("Escala de Tempo (%): " + (int) timeScalePct + "%");
-                pushConfigToNative();
-            }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
-        });
-        sectionKinematics.addView(sbTimeScale);
-
-        // Recursos Avançados de Gameplay (Skillcheck, Armadilhas, Modo Voo, Fuga)
         CheckBox cbAutoSkillcheck = new CheckBox(this);
-        styleMinimalCheckBox(cbAutoSkillcheck, "Auto Skillcheck (100% Ótimo)", autoSkillcheck);
+        styleMinimalCheckBox(cbAutoSkillcheck, "Auto Skillcheck", autoSkillcheck);
         cbAutoSkillcheck.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -1093,8 +1090,21 @@ public final class FloatingModService extends Service {
         });
         sectionKinematics.addView(cbAutoSkillcheck);
 
+        CheckBox cbAutoHeal = new CheckBox(this);
+        authAutoHealCb = cbAutoHeal;
+        styleMinimalCheckBox(cbAutoHeal, "Auto Heal", autoHeal);
+        cbAutoHeal.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                autoHeal = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbAutoHeal);
+
         CheckBox cbTrapImmunity = new CheckBox(this);
-        styleMinimalCheckBox(cbTrapImmunity, "Imunidade a Armadilhas (BearTrap)", trapImmunity);
+        authTrapImmunityCb = cbTrapImmunity;
+        styleMinimalCheckBox(cbTrapImmunity, "Imunidade a Traps", trapImmunity);
         cbTrapImmunity.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -1105,7 +1115,7 @@ public final class FloatingModService extends Service {
         sectionKinematics.addView(cbTrapImmunity);
 
         CheckBox cbFlyCheat = new CheckBox(this);
-        styleMinimalCheckBox(cbFlyCheat, "Modo Voo (MOVE_Flying)", flyCheat);
+        styleMinimalCheckBox(cbFlyCheat, "Modo Voo (Fly)", flyCheat);
         cbFlyCheat.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -1115,16 +1125,175 @@ public final class FloatingModService extends Service {
         });
         sectionKinematics.addView(cbFlyCheat);
 
-        CheckBox cbForceEscape = new CheckBox(this);
-        styleMinimalCheckBox(cbForceEscape, "Forçar Fuga Imediata (Portão/Alçapão)", forceEscape);
-        cbForceEscape.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+        Button btnEscape = new Button(this);
+        authEscapeBtn = btnEscape;
+        btnEscape.setText("Sair Instantâneo");
+        btnEscape.setTextColor(COL_TEXT_PRIMARY);
+        btnEscape.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
+        btnEscape.setTypeface(Typeface.DEFAULT_BOLD);
+        btnEscape.setAllCaps(false);
+        btnEscape.setMinHeight(0);
+        btnEscape.setMinimumHeight(0);
+        btnEscape.setMinWidth(0);
+        btnEscape.setMinimumWidth(0);
+        GradientDrawable escBg = new GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[]{Color.argb(230, 224, 38, 66), Color.argb(230, 155, 20, 42)}
+        );
+        escBg.setCornerRadius(dp(6));
+        escBg.setStroke(1, COL_EMBER);
+        btnEscape.setBackground(escBg);
+        btnEscape.setPadding(dp(12), dp(4), dp(12), dp(4));
+        btnEscape.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                forceEscape = isChecked;
+            public void onClick(View v) {
+                if (crashLogActive) {
+                    try {
+                        nativeLogModAction("ACTION", "SairInstantaneo", 0L, "clicked");
+                    } catch (Throwable ignored) {
+                    }
+                }
+                forceEscape = true;
                 pushConfigToNative();
             }
         });
-        sectionKinematics.addView(cbForceEscape);
+        LinearLayout.LayoutParams escLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(26));
+        escLp.setMargins(dp(2), dp(4), dp(2), dp(6));
+        sectionKinematics.addView(btnEscape, escLp);
+
+        View physDivider = new View(this);
+        physDivider.setBackgroundColor(COL_BORDER_SUBTLE);
+        sectionKinematics.addView(physDivider, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1));
+
+        final TextView hdrCinematics = buildMinimalSliderLabel("Cinemática");
+        hdrCinematics.setTextColor(COL_EMBER);
+        hdrCinematics.setTypeface(Typeface.DEFAULT_BOLD);
+        hdrCinematics.setPadding(dp(2), dp(4), dp(2), dp(2));
+        sectionKinematics.addView(hdrCinematics);
+
+        final CheckBox cbKinematics = new CheckBox(this);
+        styleMinimalCheckBox(cbKinematics, "Ativar Multiplicadores", applyKinematics);
+        cbKinematics.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                applyKinematics = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionKinematics.addView(cbKinematics);
+
+        // 1. Velocidade (%): 100% a 250%
+        final TextView tvWalkSpeed = buildMinimalSliderLabel(String.format(Locale.US, "Velocidade: %.0f%%", walkSpeedPct));
+        sectionKinematics.addView(tvWalkSpeed);
+
+        SeekBar sbWalkSpeed = new SeekBar(this);
+        sbWalkSpeed.setMax(150); // 100 + [0..150] = 100%..250%
+        sbWalkSpeed.setProgress((int) (walkSpeedPct - 100.0f));
+        styleMinimalSeekBar(sbWalkSpeed);
+        sbWalkSpeed.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                walkSpeedPct = 100.0f + progress;
+                tvWalkSpeed.setText(String.format(Locale.US, "Velocidade: %.0f%%", walkSpeedPct));
+                if (fromUser) {
+                    if (!applyKinematics) {
+                        applyKinematics = true;
+                        cbKinematics.setChecked(true);
+                    }
+                    pushConfigToNative();
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { pushConfigToNative(); }
+        });
+        sectionKinematics.addView(sbWalkSpeed);
+
+        // 2. Aceleração (%): 100% a 300%
+        final TextView tvMaxAccel = buildMinimalSliderLabel(String.format(Locale.US, "Aceleração: %.0f%%", accelPct));
+        sectionKinematics.addView(tvMaxAccel);
+
+        SeekBar sbMaxAccel = new SeekBar(this);
+        sbMaxAccel.setMax(200); // 100 + [0..200] = 100%..300%
+        sbMaxAccel.setProgress((int) (accelPct - 100.0f));
+        styleMinimalSeekBar(sbMaxAccel);
+        sbMaxAccel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                accelPct = 100.0f + progress;
+                tvMaxAccel.setText(String.format(Locale.US, "Aceleração: %.0f%%", accelPct));
+                if (fromUser) {
+                    if (!applyKinematics) {
+                        applyKinematics = true;
+                        cbKinematics.setChecked(true);
+                    }
+                    pushConfigToNative();
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { pushConfigToNative(); }
+        });
+        sectionKinematics.addView(sbMaxAccel);
+
+        // 3. Eixo Vertical com Sinal (Voo / Salto): -100% (Descer) .. 0% (Segurar) .. +100% (Subir)
+        final TextView tvJumpVel = buildMinimalSliderLabel("Voo Vertical: 0% (Segurar)");
+        sectionKinematics.addView(tvJumpVel);
+
+        SeekBar sbJumpVel = new SeekBar(this);
+        sbJumpVel.setMax(200); // 0..-100%, 100..0%, 200..+100%
+        sbJumpVel.setProgress(100);
+        styleMinimalSeekBar(sbJumpVel);
+        sbJumpVel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int signedPct = progress - 100; // -100 .. +100
+                if (Math.abs(signedPct) <= 4) {
+                    signedPct = 0;
+                }
+                flyVertSpeed = signedPct * 6.0f; // -600.0 .. +600.0 cm/s
+                jumpPct = 100.0f + Math.max(0.0f, signedPct * 1.5f);
+                if (signedPct > 0) {
+                    tvJumpVel.setText(String.format(Locale.US, "Voo Vertical: +%d%% (Subir)", signedPct));
+                } else if (signedPct < 0) {
+                    tvJumpVel.setText(String.format(Locale.US, "Voo Vertical: %d%% (Descer)", signedPct));
+                } else {
+                    tvJumpVel.setText("Voo Vertical: 0% (Segurar)");
+                }
+                if (fromUser) {
+                    pushConfigToNative();
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { pushConfigToNative(); }
+        });
+        sectionKinematics.addView(sbJumpVel);
+
+        // 4. Escala de Tempo (%): 50% a 200%
+        final TextView tvTimeScale = buildMinimalSliderLabel(
+            String.format(Locale.US, "Escala de Tempo: %.0f%% (%.2fx)", timeScalePct, timeScalePct / 100.0f));
+        sectionKinematics.addView(tvTimeScale);
+
+        SeekBar sbTimeScale = new SeekBar(this);
+        sbTimeScale.setMax(150); // 50 + [0..150] = 50%..200%
+        sbTimeScale.setProgress((int) timeScalePct - 50);
+        styleMinimalSeekBar(sbTimeScale);
+        sbTimeScale.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                timeScalePct = 50.0f + progress;
+                tvTimeScale.setText(String.format(Locale.US, "Escala de Tempo: %.0f%% (%.2fx)", timeScalePct, timeScalePct / 100.0f));
+                if (fromUser) {
+                    if (!applyKinematics) {
+                        applyKinematics = true;
+                        cbKinematics.setChecked(true);
+                    }
+                    pushConfigToNative();
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { pushConfigToNative(); }
+        });
+        sectionKinematics.addView(sbTimeScale);
 
         // ====================================================================
         // ABA 3: IDENTIDADE DO JOGADOR, PAPEL (ROLE) E ESTADO DE IMOBILIZAÇÃO
@@ -1219,6 +1388,7 @@ public final class FloatingModService extends Service {
             "Imobilização: Jaula (caged)"
         };
         final Button btnImmobilize = new Button(this);
+        authImmobilizeBtn = btnImmobilize;
         btnImmobilize.setText(immLabels[0]);
         btnImmobilize.setTextColor(COL_TEXT_PRIMARY);
         btnImmobilize.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
@@ -1257,6 +1427,7 @@ public final class FloatingModService extends Service {
             "Papel: Espectador (observer)"
         };
         final Button btnRole = new Button(this);
+        authRoleBtn = btnRole;
         btnRole.setText(roleLabels[0]);
         btnRole.setTextColor(COL_TEXT_PRIMARY);
         btnRole.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f);
@@ -1372,6 +1543,117 @@ public final class FloatingModService extends Service {
         rootFloatingView = container;
 
         windowManager.addView(rootFloatingView, windowParams);
+    }
+
+    private void toggleCrashLogging() {
+        if (!crashLogActive) {
+            final String prefDir = "/sdcard/DBDMod/logs";
+            final File extLogs = getExternalFilesDir("logs");
+            final String fallbackDir = (extLogs != null) ? extLogs.getAbsolutePath() : "";
+            String resultPath;
+            try {
+                resultPath = nativeStartCrashLogger(prefDir, fallbackDir);
+            } catch (Throwable t) {
+                resultPath = "ERR:" + t.getMessage();
+            }
+
+            if (resultPath == null || resultPath.startsWith("ERR:") || resultPath.isEmpty()) {
+                final String msg = "Erro ao iniciar logs: " + (resultPath != null ? resultPath : "desconhecido");
+                crashLogPathNotice.setText(msg);
+                crashLogPathNotice.setTextColor(COL_EMBER);
+                crashLogPathNotice.setVisibility(View.VISIBLE);
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                return;
+            }
+
+            crashLogActive = true;
+            crashLogPath = resultPath;
+            lastLoggedGpPayload = "";
+            crashLogButton.setText("REC");
+            GradientDrawable recBg = new GradientDrawable();
+            recBg.setColor(Color.argb(215, 34, 118, 56));
+            recBg.setCornerRadius(dp(5));
+            recBg.setStroke(1, COL_BORDER_SUBTLE);
+            crashLogButton.setBackground(recBg);
+
+            final boolean usedFallback = !resultPath.startsWith(prefDir);
+            final String notice = usedFallback
+                ? ("Gravando (alternativo): " + resultPath)
+                : ("Gravando logs em: " + resultPath);
+            crashLogPathNotice.setText(notice);
+            crashLogPathNotice.setTextColor(Color.rgb(120, 230, 145));
+            crashLogPathNotice.setVisibility(View.VISIBLE);
+            Toast.makeText(this, notice, Toast.LENGTH_LONG).show();
+            pushConfigToNative();
+        } else {
+            crashLogActive = false;
+            lastLoggedGpPayload = "";
+            crashLogButton.setText("LOG");
+            GradientDrawable idleBg = new GradientDrawable();
+            idleBg.setColor(Color.argb(215, 185, 24, 38));
+            idleBg.setCornerRadius(dp(5));
+            idleBg.setStroke(1, COL_BORDER_ACCENT);
+            crashLogButton.setBackground(idleBg);
+
+            final String stoppedMsg = "Logs encerrados: " + crashLogPath;
+            crashLogPathNotice.setText(stoppedMsg);
+            crashLogPathNotice.setTextColor(COL_TEXT_MUTED);
+            crashLogPathNotice.setVisibility(View.VISIBLE);
+            Toast.makeText(this, stoppedMsg, Toast.LENGTH_SHORT).show();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        nativeStopCrashLogger();
+                    } catch (Throwable ignored) {
+                    }
+                    uiHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            pushConfigToNative();
+                        }
+                    });
+                }
+            }).start();
+        }
+    }
+
+    private void updateAuthorityGateUi(String rawStatus) {
+        final boolean inMatch = rawStatus != null && rawStatus.contains("IN MATCH (ACTIVE)");
+        final boolean isClientNoAuth = inMatch && rawStatus.contains("Auth=0");
+        final boolean allowAuth = !isClientNoAuth;
+        final float alpha = allowAuth ? 1.0f : 0.45f;
+
+        if (authAutoHealCb != null) {
+            authAutoHealCb.setEnabled(allowAuth);
+            authAutoHealCb.setAlpha(alpha);
+        }
+        if (authTrapImmunityCb != null) {
+            authTrapImmunityCb.setEnabled(allowAuth);
+            authTrapImmunityCb.setAlpha(alpha);
+        }
+        if (authEscapeBtn != null) {
+            authEscapeBtn.setEnabled(allowAuth);
+            authEscapeBtn.setAlpha(alpha);
+        }
+        if (authImmobilizeBtn != null) {
+            authImmobilizeBtn.setEnabled(allowAuth);
+            authImmobilizeBtn.setAlpha(alpha);
+        }
+        if (authRoleBtn != null) {
+            authRoleBtn.setEnabled(allowAuth);
+            authRoleBtn.setAlpha(alpha);
+        }
+        if (authGateNoticeView != null) {
+            if (isClientNoAuth) {
+                authGateNoticeView.setText(
+                    "Modo Cliente (Auth=0 no GameState): escritas de estado desativadas; apenas predição (Aura/FOV/Velocidade) ativa."
+                );
+                authGateNoticeView.setVisibility(View.VISIBLE);
+            } else {
+                authGateNoticeView.setVisibility(View.GONE);
+            }
+        }
     }
 
     @Override
