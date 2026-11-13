@@ -14,12 +14,14 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from elf_layout import (  # type: ignore
         ElfLayout,
+        apply_rela_in_memory,
         lookup_fde_entry,
         parse_elf_layout,
     )
 else:
     from .elf_layout import (
         ElfLayout,
+        apply_rela_in_memory,
         lookup_fde_entry,
         parse_elf_layout,
     )
@@ -38,6 +40,10 @@ def compute_sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def compute_sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def read_cstr(buf: bytes, va: int, max_len: int = 160) -> str:
@@ -210,15 +216,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"MISSING: target ELF binary not found at {so_path}")
             return 1
 
-        buf = so_path.read_bytes()
+        buf = apply_rela_in_memory(so_path.read_bytes())
         layout = parse_elf_layout(buf)
         drift_found = False
 
         expected_sha = header.get("libue4_sha256")
         actual_sha = compute_sha256(so_path)
         if expected_sha and expected_sha != actual_sha:
-            print(f"CHANGED: binary SHA-256 expected {expected_sha}, got {actual_sha}")
-            drift_found = True
+            patched_sha = compute_sha256_bytes(buf)
+            if expected_sha != patched_sha:
+                print(f"CHANGED: binary SHA-256 expected {expected_sha}, got {actual_sha}")
+                drift_found = True
 
         checked = 0
         changed_count = 0

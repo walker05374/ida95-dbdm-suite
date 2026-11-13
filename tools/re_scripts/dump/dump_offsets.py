@@ -15,6 +15,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from elf_layout import (  # type: ignore
         ElfLayout,
+        apply_rela_in_memory,
         estimate_function_size,
         lookup_fde_function_size,
         parse_elf_layout,
@@ -23,6 +24,7 @@ if __package__ in (None, ""):
 else:
     from .elf_layout import (
         ElfLayout,
+        apply_rela_in_memory,
         estimate_function_size,
         lookup_fde_function_size,
         parse_elf_layout,
@@ -924,7 +926,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     so_path = args.so if args.so is not None else resolve_so_from_i64(args.i64)
     sha256_hex = compute_sha256(so_path)
     domain_specs = parse_domain_arg(args.domains)
-    buf = so_path.read_bytes()
+    buf = apply_rela_in_memory(so_path.read_bytes())
     layout = parse_elf_layout(buf)
 
     header = {

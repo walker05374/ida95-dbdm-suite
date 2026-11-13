@@ -181,11 +181,14 @@ $ServiceSh = @"
 #!/system/bin/sh
 MODDIR=`${0%/*}
 chmod 1777 /data/local/tmp 2>/dev/null
-touch /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin 2>/dev/null
-chmod 0666 /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin 2>/dev/null
-if [ -x /data/local/tmp/dbdm_telemetry_daemon ]; then
-  killall -9 dbdm_telemetry_daemon 2>/dev/null
-  /data/local/tmp/dbdm_telemetry_daemon --daemon
+touch /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin /data/local/tmp/dbdm_telemetry_shm_v2.bin 2>/dev/null
+chmod 0666 /data/local/tmp/dbdm_mod_config.cfg /data/local/tmp/dbdm_telemetry_shm.bin /data/local/tmp/dbdm_telemetry_shm_v2.bin 2>/dev/null
+killall -9 dbdm_telemetry_daemon dbdm_telemetry_ 2>/dev/null
+pkill -9 -f dbdm_telemetry_daemon 2>/dev/null
+if [ -f "`$MODDIR/system/lib64/libinstrument_core.so" ]; then
+  cp -f "`$MODDIR/system/lib64/libinstrument_core.so" /data/local/tmp/libinstrument_core_live.so 2>/dev/null
+  chmod 0755 /data/local/tmp/libinstrument_core_live.so 2>/dev/null
+  chcon u:object_r:system_file:s0 /data/local/tmp/libinstrument_core_live.so 2>/dev/null
 fi
 "@
 [System.IO.File]::WriteAllText("$ZygiskDir\service.sh", ($ServiceSh -replace "`r`n", "`n"), [System.Text.UTF8Encoding]::new($false))
@@ -414,61 +417,4 @@ else {
     throw "Ferramentas de build do APK nao encontradas (Javac=$JavacExe, BuildTools=$BuildTools, AndroidJar=$AndroidJar)"
 }
 
-Write-Host "[6/6] Verificando conexao ADB com o dispositivo 192.168.1.68:10001..." -ForegroundColor Cyan
-$DeploySuccess = $false
-if (Test-Path "$WorkspaceRoot\scripts\deploy_adb.py") {
-    $PrevEap = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    python "$WorkspaceRoot\scripts\deploy_adb.py" 192.168.1.68 10001
-    if ($LASTEXITCODE -eq 0) {
-        $DeploySuccess = $true
-    }
-    $ErrorActionPreference = $PrevEap
-}
-
-if (-not $DeploySuccess) {
-    $PrevEapAdb = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    & $AdbExe connect 192.168.1.68:10001 *> $null
-    $ErrorActionPreference = $PrevEapAdb
-
-    $AdbDevices = (& $AdbExe devices) -join "`n"
-    $TargetSerial = $null
-    if ($AdbDevices -match "192\.168\.1\.68:10001\s+device") {
-        $TargetSerial = "192.168.1.68:10001"
-    } elseif ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
-        $TargetSerial = $Matches[1]
-    }
-
-    if ($TargetSerial) {
-        Write-Host "    -> Executando limpeza/desinstalacao completa no dispositivo $TargetSerial..." -ForegroundColor Cyan
-        & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu 2>/dev/null; su -c 'killall -9 dbdm_telemetry_daemon dbdm_telemetry_ 2>/dev/null; pkill -9 -x dbdm_telemetry_ 2>/dev/null; rm -rf /data/adb/modules/ue4_instrument_core /data/adb/modules_update/ue4_instrument_core /sdcard/Download/ue4_instrument_zygisk.zip /data/local/tmp/ue4_instrument_zygisk.zip /sdcard/Download/wdbd.apk /sdcard/Download/DBDM_FloatingModMenu.apk /data/local/tmp/wdbd.apk /data/local/tmp/DBDM_FloatingModMenu.apk /data/local/tmp/libinstrument_core.so /data/local/tmp/dbdm_telemetry_daemon*'"
-
-        Write-Host "    -> Instalando novo modulo Zygisk e novo APK..." -ForegroundColor Cyan
-        & $AdbExe -s $TargetSerial push $ZipOut /sdcard/Download/ue4_instrument_zygisk.zip
-        & $AdbExe -s $TargetSerial push $ZipOut /data/local/tmp/ue4_instrument_zygisk.zip
-        & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64; cp -f /data/local/tmp/ue4_instrument_zygisk.zip /data/adb/modules/ue4_instrument_core/ 2>/dev/null; magisk --install-module /data/local/tmp/ue4_instrument_zygisk.zip'"
-        & $AdbExe -s $TargetSerial push $CoreSo /data/local/tmp/libinstrument_core.so
-        & $AdbExe -s $TargetSerial push "$StageDir\service.sh" /data/local/tmp/service.sh
-        & $AdbExe -s $TargetSerial push "$StageDir\module.prop" /data/local/tmp/module.prop
-        & $AdbExe -s $TargetSerial shell "su -c 'mkdir -p /data/adb/modules/ue4_instrument_core/zygisk /data/adb/modules/ue4_instrument_core/system/lib64 && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so && cp -f /data/local/tmp/libinstrument_core.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so && cp -f /data/local/tmp/service.sh /data/adb/modules/ue4_instrument_core/service.sh && cp -f /data/local/tmp/module.prop /data/adb/modules/ue4_instrument_core/module.prop && chmod 755 /data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so /data/adb/modules/ue4_instrument_core/system/lib64/libinstrument_core.so /data/adb/modules/ue4_instrument_core/service.sh && chmod 1777 /data/local/tmp && chmod 666 /data/local/tmp/dbdm_* 2>/dev/null; rm -f /data/adb/modules/ue4_instrument_core/update && rm -rf /data/adb/modules_update/ue4_instrument_core'"
-
-        $DaemonBin = Join-Path $BuildDir "dbdm_telemetry_daemon"
-        if (Test-Path $DaemonBin) {
-            & $LlvmStrip --strip-unneeded $DaemonBin
-            & $AdbExe -s $TargetSerial push $DaemonBin /data/local/tmp/dbdm_telemetry_daemon
-            & $AdbExe -s $TargetSerial shell "su -c 'killall -9 dbdm_telemetry_daemon dbdm_telemetry_ >/dev/null 2>&1; pkill -9 -x dbdm_telemetry_ >/dev/null 2>&1; chmod 755 /data/local/tmp/dbdm_telemetry_daemon && /data/local/tmp/dbdm_telemetry_daemon --daemon'"
-        }
-        $TargetApk = if (Test-Path $WdbdApkOut) { $WdbdApkOut } else { $ApkOut }
-        if (Test-Path $TargetApk) {
-            & $AdbExe -s $TargetSerial push $TargetApk /sdcard/Download/wdbd.apk
-            & $AdbExe -s $TargetSerial push $TargetApk /data/local/tmp/wdbd.apk
-            & $AdbExe -s $TargetSerial shell "pm install -r /data/local/tmp/wdbd.apk && appops set com.dbdm.modmenu SYSTEM_ALERT_WINDOW allow && am start -n com.dbdm.modmenu/.MainActivity"
-        }
-        Write-Host "    -> Verificando logs de inicializacao do processo (UE4Diag / FloatingModService)..." -ForegroundColor Cyan
-        & $AdbExe -s $TargetSerial logcat -d -t 40 -s UE4Diag:V FloatingModService:V AndroidRuntime:E
-        Write-Host "[OK] Modulo Zygisk e Floating Mod Menu APK reinstalados com sucesso em $TargetSerial." -ForegroundColor Green
-    } else {
-        Write-Host "[OK] Artefatos gerados em $ZipOut e $WdbdApkOut (nenhum dispositivo ADB online)." -ForegroundColor Yellow
-    }
-}
+Write-Host "[OK] Build local concluido com sucesso! Artefatos gerados em: $ZipOut e $WdbdApkOut (espelhado em $ApkOut)." -ForegroundColor Green
