@@ -128,9 +128,10 @@ def main() -> int:
         run_adb("-s", target, "push", r"build-arm64\dbdm_telemetry_daemon", "/data/local/tmp/dbdm_telemetry_daemon_new")
 
     # 2. Push Wdbd APK
-    run_adb("-s", target, "push", "wdbd.apk", "/sdcard/Download/wdbd.apk")
-    run_adb("-s", target, "push", "wdbd.apk", "/sdcard/Download/DBDM_FloatingModMenu.apk")
-    run_adb("-s", target, "push", "wdbd.apk", "/data/local/tmp/wdbd.apk")
+    apk_local = r"modulos\wdbd.apk" if os.path.exists(r"modulos\wdbd.apk") else "wdbd.apk"
+    run_adb("-s", target, "push", apk_local, "/sdcard/Download/wdbd.apk")
+    run_adb("-s", target, "push", apk_local, "/sdcard/Download/DBDM_FloatingModMenu.apk")
+    run_adb("-s", target, "push", apk_local, "/data/local/tmp/wdbd.apk")
 
     # 3. Install Magisk/Zygisk module & restart daemon (preserving +x on dbdm_telemetry_daemon!)
     su_cmd = (

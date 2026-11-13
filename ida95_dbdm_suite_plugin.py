@@ -2,7 +2,7 @@
 # Runtime: IDA Pro 9.x Plugin Entrypoint (Drop into %APPDATA%/Hex-Rays/IDA Pro/plugins or ~/.idapro/plugins)
 
 import os
-from ui_timing_controller import (
+from ida95_dbdm_suite.ui_timing_controller import (
     ActorContext,
     ComponentLifecycleRegistry,
     ProductionTimingController,

@@ -1,12 +1,17 @@
 # Ignorar pasta pesada de instaladores do IDA Pro
 ida95/
 
-# Ignorar cache temporario de build (CMake/Ninja/Apktool)
+# Ignorar cache temporario de build e Python
 build-arm64/
+app/build/
+app/.gradle/
 switcher_src/build/
 dist/
+__pycache__/
+*.py[cod]
 *.idsig
 modulos/debug.keystore
+_work*/
 
 # Ignorar bancos do IDA Pro e binarios gigantes (>100MB limite do GitHub)
 *.i64
@@ -18,4 +23,3 @@ modulos/debug.keystore
 *.id2
 **/libUE4.so
 **/libUE4_fixed.so
-

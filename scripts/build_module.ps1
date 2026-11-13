@@ -1,9 +1,9 @@
 # ============================================================================
-# Script        : build_module.ps1
+# Script        : scripts/build_module.ps1
 # Target        : com.netease.dbdena (ELF64 AArch64 / arm64-v8a)
 # Layout        : app/ | jni/ (core, telemetry, hud) | zygisk/ | scripts/ | modulos/
 # Artifacts     : modulos\ue4_instrument_zygisk.zip
-#                 modulos\DBDM_FloatingModMenu.apk
+#                 modulos\wdbd.apk (mirrored in modulos\DBDM_FloatingModMenu.apk)
 # ============================================================================
 $ErrorActionPreference = "Stop"
 
@@ -14,7 +14,7 @@ if ((Split-Path -Leaf $WorkspaceRoot) -eq "scripts") {
 }
 Set-Location $WorkspaceRoot
 
-# 1. Configure CMake, Ninja, NDK, JDK 17, Android Build-Tools, and ADB
+# 1. Configure CMake, Ninja, NDK, JDK 17+, Android Build-Tools, and ADB
 if (Test-Path "C:\Program Files\CMake\bin") {
     $env:PATH = "C:\Program Files\CMake\bin;$env:PATH"
 }
@@ -71,34 +71,13 @@ $LlvmBin = Join-Path $env:ANDROID_NDK_HOME "toolchains\llvm\prebuilt\windows-x86
 $LlvmNm = Join-Path $LlvmBin "llvm-nm.exe"
 $LlvmStrip = Join-Path $LlvmBin "llvm-strip.exe"
 
-# Mirror structured jni/ sources into modulos/ue4_instrument_zygisk and app/ into modulos/floating_mod_menu_apk
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
-Copy-Item -Force "CMakeLists.txt" "$StageDir\CMakeLists.txt"
-foreach ($SubDir in @("$JniDir\core", "$JniDir\telemetry", "$JniDir\hud")) {
-    if (Test-Path $SubDir) {
-        Get-ChildItem -Path $SubDir -File | ForEach-Object {
-            Copy-Item -Force $_.FullName (Join-Path $StageDir $_.Name)
-        }
-    }
-}
-if (Test-Path $AppDir) {
-    New-Item -ItemType Directory -Force -Path "$ModDir\floating_mod_menu_apk\src\com\dbdm\modmenu" | Out-Null
-    New-Item -ItemType Directory -Force -Path "$ModDir\floating_mod_menu_apk\res\layout" | Out-Null
-    Copy-Item -Force "$AppDir\AndroidManifest.xml" "$ModDir\floating_mod_menu_apk\AndroidManifest.xml" -ErrorAction SilentlyContinue
-    Copy-Item -Force "$AppDir\src\com\dbdm\modmenu\*.java" "$ModDir\floating_mod_menu_apk\src\com\dbdm\modmenu\" -ErrorAction SilentlyContinue
-    Copy-Item -Force "$AppDir\res\layout\*.xml" "$ModDir\floating_mod_menu_apk\res\layout\" -ErrorAction SilentlyContinue
-}
-if ((Test-Path "$JniDir\third_party\imgui") -and -not (Test-Path "$StageDir\third_party\imgui\imgui.h")) {
-    New-Item -ItemType Directory -Force -Path "$StageDir\third_party\imgui\backends" | Out-Null
-    Copy-Item -Force "$JniDir\third_party\imgui\*" "$StageDir\third_party\imgui\" -ErrorAction SilentlyContinue
-    Copy-Item -Force "$JniDir\third_party\imgui\backends\*" "$StageDir\third_party\imgui\backends\" -ErrorAction SilentlyContinue
-}
 
 Write-Host "[0/6] Executando limpeza profunda de caches de build (build-arm64/ e app/build/)..." -ForegroundColor Cyan
 if (Test-Path $BuildDir) {
     Remove-Item -Recurse -Force $BuildDir
 }
-foreach ($CleanDir in @("$AppDir\build", "$AppDir\.gradle", "$ModDir\floating_mod_menu_apk\build")) {
+foreach ($CleanDir in @("$AppDir\build", "$AppDir\.gradle")) {
     if (Test-Path $CleanDir) {
         Remove-Item -Recurse -Force $CleanDir
     }
@@ -392,7 +371,6 @@ if ((Test-Path $JavacExe) -and (Test-Path $BuildTools) -and (Test-Path $AndroidJ
     & "$BuildTools\apksigner.bat" sign --ks $KeystorePath --ks-pass pass:android --key-pass pass:android `
         --out $WdbdApkOut $AlignedApk
     Copy-Item -Force $WdbdApkOut $ApkOut
-    Copy-Item -Force $WdbdApkOut "$WorkspaceRoot\wdbd.apk"
     Write-Host "    -> WDBD Floating Mod Menu APK: $WdbdApkOut (e espelhado em $ApkOut)" -ForegroundColor Green
 }
 else {
@@ -427,7 +405,7 @@ if (-not $DeploySuccess) {
 
     if ($TargetSerial) {
         Write-Host "    -> Executando limpeza/desinstalacao completa no dispositivo $TargetSerial..." -ForegroundColor Cyan
-        & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu 2>/dev/null; su -c 'killall -9 dbdm_telemetry_daemon 2>/dev/null; rm -rf /data/adb/modules/ue4_instrument_core /data/adb/modules_update/ue4_instrument_core /sdcard/Download/ue4_instrument_zygisk.zip /data/local/tmp/ue4_instrument_zygisk.zip /sdcard/Download/wdbd.apk /sdcard/Download/DBDM_FloatingModMenu.apk /data/local/tmp/wdbd.apk /data/local/tmp/DBDM_FloatingModMenu.apk /data/local/tmp/libinstrument_core.so /data/local/tmp/dbdm_telemetry_daemon*'"
+        & $AdbExe -s $TargetSerial shell "pm uninstall com.dbdm.modmenu 2>/dev/null; su -c 'killall -9 dbdm_telemetry_daemon dbdm_telemetry_ 2>/dev/null; pkill -9 -x dbdm_telemetry_ 2>/dev/null; rm -rf /data/adb/modules/ue4_instrument_core /data/adb/modules_update/ue4_instrument_core /sdcard/Download/ue4_instrument_zygisk.zip /data/local/tmp/ue4_instrument_zygisk.zip /sdcard/Download/wdbd.apk /sdcard/Download/DBDM_FloatingModMenu.apk /data/local/tmp/wdbd.apk /data/local/tmp/DBDM_FloatingModMenu.apk /data/local/tmp/libinstrument_core.so /data/local/tmp/dbdm_telemetry_daemon*'"
 
         Write-Host "    -> Instalando novo modulo Zygisk e novo APK..." -ForegroundColor Cyan
         & $AdbExe -s $TargetSerial push $ZipOut /sdcard/Download/ue4_instrument_zygisk.zip
@@ -442,7 +420,7 @@ if (-not $DeploySuccess) {
         if (Test-Path $DaemonBin) {
             & $LlvmStrip --strip-unneeded $DaemonBin
             & $AdbExe -s $TargetSerial push $DaemonBin /data/local/tmp/dbdm_telemetry_daemon
-            & $AdbExe -s $TargetSerial shell "su -c 'killall -9 dbdm_telemetry_daemon >/dev/null 2>&1; chmod 755 /data/local/tmp/dbdm_telemetry_daemon && /data/local/tmp/dbdm_telemetry_daemon --daemon'"
+            & $AdbExe -s $TargetSerial shell "su -c 'killall -9 dbdm_telemetry_daemon dbdm_telemetry_ >/dev/null 2>&1; pkill -9 -x dbdm_telemetry_ >/dev/null 2>&1; chmod 755 /data/local/tmp/dbdm_telemetry_daemon && /data/local/tmp/dbdm_telemetry_daemon --daemon'"
         }
         $TargetApk = if (Test-Path $WdbdApkOut) { $WdbdApkOut } else { $ApkOut }
         if (Test-Path $TargetApk) {
