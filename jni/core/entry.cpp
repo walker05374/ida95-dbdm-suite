@@ -173,11 +173,13 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t skillcheck_gen_count      = 0x02A0;     // int32 USkillCheck::_skillCheckCount (+0x02A0)
     uintptr_t skillcheck_owner_pawn     = 0x02B8;     // ADBDPlayer* USkillCheck::_owner (+0x02B8)
     uintptr_t skillcheck_current_inter  = 0x02C0;     // UChargeableInteractionDefinition* USkillCheck::_currentInteraction (+0x02C0)
+    uintptr_t skillcheck_custom_type    = 0x02C8;     // uint8 ESkillCheckCustomType USkillCheck::_currentSkillCheckType (+0x02C8)
     uintptr_t skillcheck_live_succ_start= 0x02CC;     // float live SuccessZoneStart (+0x02CC)
     uintptr_t skillcheck_live_succ_end  = 0x02D0;     // float live SuccessZoneEnd (+0x02D0)
     uintptr_t skillcheck_live_bonus_len = 0x02D4;     // float live BonusZoneLength (+0x02D4)
     uintptr_t skillcheck_live_bonus_start=0x02D8;     // float live BonusZoneStart (+0x02D8)
     uintptr_t skillcheck_live_displayed = 0x02F4;     // uint8 live bIsDisplayed (+0x02F4)
+    uintptr_t skillcheck_def_cache      = 0x02F8;     // FSkillCheckDefinition USkillCheck::_currentSkillCheckDefinitionCache (+0x02F8)
     uintptr_t skillcheck_success_start  = 0x02F8;     // float FSkillCheckDefinition::SuccessZoneStart (+0x2F8 + 0x00)
     uintptr_t skillcheck_success_length = 0x02FC;     // float FSkillCheckDefinition::SuccessZoneEnd   (+0x2F8 + 0x04)
     uintptr_t skillcheck_bonus_length   = 0x0300;     // float FSkillCheckDefinition::BonusZoneLength  (+0x2F8 + 0x08)
@@ -189,6 +191,14 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t rva_skillcheck_res_gate   = 0x06E1903C; // USkillCheck::OnSkillCheckInputImpl zone decision gate
     uintptr_t rva_skillcheck_tick_gate  = 0x06E16B80; // USkillCheck::TickComponent auto-resolve gate
     uintptr_t camper_health_component   = 0x1838;     // UHealthComponent* ACamperPlayer::_healthComponent (+0x1838)
+    uintptr_t camper_carry_escape_prog  = 0x1868;     // UChargeableComponent* ACamperPlayer::_carryEscapeProgress (+0x1868)
+    uintptr_t camper_hookable_comp      = 0x1888;     // UHookableComponent* ACamperPlayer::_hookableComponent (+0x1888)
+    uintptr_t camper_struggle_comp      = 0x1898;     // UStruggleComponent* ACamperPlayer::_struggleComponent (+0x1898)
+    uintptr_t camper_is_sacrifice_strug = 0x1B3A;     // uint8 bool ACamperPlayer::_isSacrificeStruggling (+0x1B3A, PropStruct @ 0x0EB45D60)
+    uintptr_t rva_camper_is_carried     = 0x06F35ED0; // ACamperPlayer::IsBeingCarried (@ 0x06F35ED0)
+    uintptr_t rva_camper_is_hooked      = 0x06F2CE98; // ACamperPlayer::IsHooked (@ 0x06F2CE98)
+    uintptr_t rva_camper_input_wiggle   = 0x06F3E1A0; // ACamperPlayer::Input_Wiggle (@ 0x06F3E1A0)
+    uintptr_t rva_camper_input_struggle = 0x06F3E1F4; // ACamperPlayer::Input_Struggle (@ 0x06F3E1F4)
     uintptr_t health_in_bleedout        = 0x0170;     // uint8 bool UHealthComponent::_inInjuredBleedOut (+0x0170)
     uintptr_t health_state_count        = 0x01EC;     // int32 UHealthComponent::_currentHealthStateCount (+0x01EC)
     uintptr_t health_heal_dying_chg     = 0x0248;     // UChargeableComponent* UHealthComponent::_healFromDyingChargeable (+0x0248)
@@ -929,6 +939,7 @@ public:
         if (matches_any("Generator") || matches_any("Repair") ||
             matches_any("Heal") || matches_any("Medkit") || matches_any("SelfCare") || matches_any("Mend") ||
             matches_any("Unhook") || matches_any("Struggle") || matches_any("FreeSelf") || matches_any("Hook") ||
+            matches_any("Wiggle") || matches_any("Carry") || matches_any("Carried") ||
             matches_any("Pallet") || matches_any("PullDown") || matches_any("Vault") ||
             matches_any("Locker") || matches_any("Closet") || matches_any("Hide")) {
             return true;
@@ -1132,9 +1143,10 @@ public:
         (void)nearest_gen_pct;
         return false;
 #else
-        static bool    s_was_auto_skillcheck_enabled = false;
-        static bool    s_fired_for_current_window    = false;
-        static int32_t s_last_triggered_count        = -1;
+        static bool     s_was_auto_skillcheck_enabled = false;
+        static bool     s_fired_for_current_window    = false;
+        static int32_t  s_last_triggered_count        = -1;
+        static uint64_t s_last_continuous_trigger_ms  = 0ULL;
 
         if (!auto_skillcheck_enabled && !s_was_auto_skillcheck_enabled) {
             return false;
@@ -1181,11 +1193,6 @@ public:
             return false;
         }
 
-        float zone_start  = 0.0f;
-        float zone_length = 1.0f;
-        float bonus_len   = 1.0f;
-        hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
-
         const uint8_t act_flag  = mem::read<uint8_t>(sc_addr + off.skillcheck_activated_flag).value_or(0U);
         const uint8_t disp_flag = mem::read<uint8_t>(sc_addr + off.skillcheck_displayed_flag).value_or(0U);
         const uint8_t live_disp = mem::read<uint8_t>(sc_addr + off.skillcheck_live_displayed).value_or(0U);
@@ -1200,49 +1207,63 @@ public:
             }
         }
 
-        // Rely strictly on UPlayerInteractionHandler::_currentInteraction (+0x0200).
-        // Never fall back to _requestedInteraction (+0x01F0) or USkillCheck::_currentInteraction (+0x02C0).
-        const GNamePoolResolver name_pool{ue4_base != 0 ? (ue4_base + off.gnamepool_rva) : 0ULL};
-        const uintptr_t cur_inter = mem::read<uintptr_t>(ih_addr + off.handler_current_inter).value_or(0ULL);
-        if (!validate_canonical_uobject(cur_inter, 0x0100U, guobjectarray_abs, off)) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
-        if (!is_allowed_skillcheck_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
-
+        const bool     in_process     = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
         static uint64_t s_last_spawn_ms = 0ULL;
         const uint64_t  now_ms          = skillcheck_now_ms();
         const uint64_t  clamped_int_ms  = static_cast<uint64_t>(std::clamp(interval_ms, 150, 5000));
-        const bool      in_process      = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
 
-        if (is_pallet_or_vault_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
-            clear_stale_skillcheck_state();
-            (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
-            if ((now_ms - s_last_spawn_ms) >= clamped_int_ms) {
-                s_last_spawn_ms = now_ms;
-                apply_pallet_vault_heal(expected_owner, ue4_base, guobjectarray_abs, off, in_process);
-                return true;
+        // 1. Check Interaction Context & CamperPlayer State (full_resolved_utf8.txt)
+        //    Read SkillCheck (+0x0290 _currentProgress, +0x02A0 _skillCheckCount, +0x02C0 _currentInteraction,
+        //    +0x02C8 _currentSkillCheckType, +0x02F8 _currentSkillCheckDefinitionCache)
+        const float     cur_prog        = mem::read<float>(sc_addr + off.skillcheck_current_prog).value_or(0.0f);
+        const float     ui_prog         = mem::read<float>(sc_addr + off.skillcheck_ui_prog).value_or(0.0f);
+        const int32_t   gen_count       = mem::read<int32_t>(sc_addr + off.skillcheck_gen_count).value_or(0);
+        const uintptr_t sc_inter        = mem::read<uintptr_t>(sc_addr + off.skillcheck_current_inter).value_or(0ULL);
+        const uint8_t   sc_custom_type  = mem::read<uint8_t>(sc_addr + off.skillcheck_custom_type).value_or(0U);
+
+        const uintptr_t def_cache_base  = sc_addr + off.skillcheck_def_cache;
+        const float     def_succ_start  = mem::read<float>(def_cache_base + 0x00U).value_or(0.0f);
+        const float     def_succ_len    = mem::read<float>(def_cache_base + 0x04U).value_or(0.0f);
+        const float     def_bonus_len   = mem::read<float>(def_cache_base + 0x08U).value_or(0.0f);
+        const float     def_bonus_start = mem::read<float>(def_cache_base + 0x0CU).value_or(0.0f);
+
+        const float     live_succ_start = mem::read<float>(sc_addr + off.skillcheck_live_succ_start).value_or(0.0f);
+        const float     live_succ_end   = mem::read<float>(sc_addr + off.skillcheck_live_succ_end).value_or(0.0f);
+        const float     live_bonus_len  = mem::read<float>(sc_addr + off.skillcheck_live_bonus_len).value_or(0.0f);
+        const float     live_bonus_start= mem::read<float>(sc_addr + off.skillcheck_live_bonus_start).value_or(0.0f);
+
+        // Query CamperPlayer state: IsBeingCarried, IsHooked, _isSacrificeStruggling
+        bool is_being_carried        = false;
+        bool is_hooked               = false;
+        bool is_sacrifice_struggling = false;
+        if (validate_canonical_uobject(expected_owner, 0x1B80U, guobjectarray_abs, off)) {
+            const uint8_t imm_state = mem::read<uint8_t>(expected_owner + off.camper_immobilize_state).value_or(0U);
+            if (imm_state == static_cast<uint8_t>(hud::ImmobilizeState::Hooked)) {
+                is_hooked = true;
             }
-            return false;
+            const uint8_t sac_strug = mem::read<uint8_t>(expected_owner + off.camper_is_sacrifice_strug).value_or(0U);
+            if (sac_strug != 0U) {
+                is_sacrifice_struggling = true;
+            }
+            if (in_process) {
+                using CamperBoolQueryFn = bool(*)(uintptr_t);
+                const auto fn_carried = reinterpret_cast<CamperBoolQueryFn>(ue4_base + off.rva_camper_is_carried);
+                const auto fn_hooked  = reinterpret_cast<CamperBoolQueryFn>(ue4_base + off.rva_camper_is_hooked);
+                is_being_carried = is_being_carried || fn_carried(expected_owner);
+                is_hooked        = is_hooked        || fn_hooked(expected_owner);
+            }
         }
 
-        // Verify the survivor is stationary (<= 25 cm/s horizontal speed); moving survivors cannot repair or heal.
-        if (speed_2d > 25.0f) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
+        const GNamePoolResolver name_pool{ue4_base != 0 ? (ue4_base + off.gnamepool_rva) : 0ULL};
+        const uintptr_t ih_cur_inter = mem::read<uintptr_t>(ih_addr + off.handler_current_inter).value_or(0ULL);
+        const bool ih_inter_valid    = validate_canonical_uobject(ih_cur_inter, 0x0100U, guobjectarray_abs, off);
+        const bool sc_inter_valid    = validate_canonical_uobject(sc_inter, 0x0100U, guobjectarray_abs, off);
+        const uintptr_t cur_inter    = ih_inter_valid ? ih_cur_inter : (sc_inter_valid ? sc_inter : 0ULL);
 
-        bool is_generator_repair = false;
-        auto is_chargeable_skillcheck_interaction = [&](uintptr_t inter_ptr) noexcept -> bool {
+        bool is_generator_repair  = false;
+        bool is_wiggle_or_struggle= is_being_carried || is_hooked || is_sacrifice_struggling;
+
+        auto inspect_interaction_context = [&](uintptr_t inter_ptr) noexcept -> bool {
             if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
                 return false;
             }
@@ -1250,9 +1271,28 @@ public:
             std::array<char, 96>  cls_leaf{};
             std::array<char, 224> cls_chain{};
             resolve_uclass_hierarchy(inter_ptr, name_pool, cls_leaf, cls_chain);
+
+            std::array<char, 96> obj_name{};
+            if (const auto fn_idx = mem::read<uint32_t>(inter_ptr + off.fname_comparison_index);
+                fn_idx.has_value() && *fn_idx != 0U) {
+                (void)name_pool.resolve_name(*fn_idx, obj_name);
+            }
+
+            if (anim == 8U || anim == 15U ||
+                hud::detail::icontains_str(cls_leaf.data(), "Struggle") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Wiggle") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Hook") ||
+                hud::detail::icontains_str(obj_name.data(), "Struggle") ||
+                hud::detail::icontains_str(obj_name.data(), "Wiggle") ||
+                hud::detail::icontains_str(obj_name.data(), "Hook")) {
+                is_wiggle_or_struggle = true;
+                return true;
+            }
             if (anim == 1U ||
                 hud::detail::icontains_str(cls_leaf.data(), "Generator") ||
-                hud::detail::icontains_str(cls_leaf.data(), "Repair")) {
+                hud::detail::icontains_str(cls_leaf.data(), "Repair") ||
+                hud::detail::icontains_str(obj_name.data(), "Generator") ||
+                hud::detail::icontains_str(obj_name.data(), "Repair")) {
                 is_generator_repair = true;
             }
             if (anim == 1U || anim == 6U || anim == 9U || anim == 10U) {
@@ -1265,8 +1305,45 @@ public:
                    hud::detail::icontains_str(cls_leaf.data(),  "Sabotage");
         };
 
-        const bool is_valid_chargeable = is_chargeable_skillcheck_interaction(cur_inter);
-        if (!is_valid_chargeable) {
+        if (cur_inter == 0ULL && !is_wiggle_or_struggle) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
+            }
+            return false;
+        }
+
+        if (cur_inter != 0ULL && is_pallet_or_vault_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+            clear_stale_skillcheck_state();
+            (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
+            if ((now_ms - s_last_spawn_ms) >= clamped_int_ms) {
+                s_last_spawn_ms = now_ms;
+                apply_pallet_vault_heal(expected_owner, ue4_base, guobjectarray_abs, off, in_process);
+                return true;
+            }
+            return false;
+        }
+
+        if (cur_inter != 0ULL && !is_wiggle_or_struggle &&
+            !is_allowed_skillcheck_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
+            }
+            return false;
+        }
+
+        const bool is_valid_inter = inspect_interaction_context(cur_inter) ||
+                                    (sc_inter != cur_inter && inspect_interaction_context(sc_inter)) ||
+                                    is_wiggle_or_struggle;
+        if (!is_valid_inter) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
+            }
+            return false;
+        }
+
+        // Standard chargeable interactions (Generator Repair & Survivor Healing) require stationary survivor (<= 25 cm/s).
+        // Continuous / Struggle interactions (Shoulder Wiggle while carried by killer, Hook Struggle) do not.
+        if (!is_wiggle_or_struggle && speed_2d > 25.0f) {
             if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
                 clear_stale_skillcheck_state();
             }
@@ -1275,7 +1352,7 @@ public:
 
         // If repairing a generator, ensure the nearest generator is within interaction distance (<= 4.5m)
         // and is actively being repaired (0.0% <= progress < 99.9%).
-        if (is_generator_repair) {
+        if (is_generator_repair && !is_wiggle_or_struggle) {
             if (!std::isfinite(nearest_gen_dist_sq) || nearest_gen_dist_sq > (4.5f * 4.5f) ||
                 !std::isfinite(nearest_gen_pct) || nearest_gen_pct < 0.0f || nearest_gen_pct >= 99.9f) {
                 if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
@@ -1286,46 +1363,119 @@ public:
         }
 
         // Strictly reactive: only respond when the game naturally opens a skill check window
-        if (live_disp == 0U || act_flag == 0U) {
+        if ((live_disp == 0U && disp_flag == 0U) || act_flag == 0U) {
             s_fired_for_current_window = false;
             return false;
         }
 
-        const int32_t gen_count = mem::read<int32_t>(sc_addr + off.skillcheck_gen_count).value_or(0);
-        if (gen_count != s_last_triggered_count) {
-            s_fired_for_current_window = false;
-        }
+        // Resolve native zone parameters from _currentSkillCheckDefinitionCache (+0x02F8) and live fields (+0x02CC..+0x02D8)
+        const float native_bonus_len =
+            (std::isfinite(def_bonus_len) && def_bonus_len > 0.0f && def_bonus_len <= 1.0f)
+                ? def_bonus_len
+                : ((std::isfinite(live_bonus_len) && live_bonus_len > 0.0f && live_bonus_len <= 1.0f)
+                       ? live_bonus_len
+                       : 0.0f);
+        const float native_bonus_start =
+            (std::isfinite(def_bonus_start) && def_bonus_start >= 0.0f && def_bonus_start < 1.0f)
+                ? def_bonus_start
+                : ((std::isfinite(live_bonus_start) && live_bonus_start >= 0.0f && live_bonus_start < 1.0f)
+                       ? live_bonus_start
+                       : 0.0f);
+        const float native_succ_start =
+            (std::isfinite(def_succ_start) && def_succ_start > 0.0f && def_succ_start < 1.0f)
+                ? def_succ_start
+                : ((std::isfinite(live_succ_start) && live_succ_start > 0.0f && live_succ_start < 1.0f)
+                       ? live_succ_start
+                       : 0.15f);
+        const float native_succ_len =
+            (std::isfinite(def_succ_len) && def_succ_len > 0.01f && def_succ_len <= 1.0f)
+                ? def_succ_len
+                : ((std::isfinite(live_succ_end) && live_succ_end > native_succ_start && live_succ_end <= 1.0f)
+                       ? (live_succ_end - native_succ_start)
+                       : 0.25f);
 
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_start,  zone_start);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_end,    zone_length);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_len,   bonus_len);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_start, zone_start);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_success_start,    zone_start);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_success_length,   zone_length);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_length,     bonus_len);
-        (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_start,      zone_start);
+        const bool is_continuous_struggle_context =
+            is_wiggle_or_struggle || (native_bonus_len <= 0.002f) || (sc_custom_type != 0U && is_wiggle_or_struggle);
 
-        const float cur_prog = mem::read<float>(sc_addr + off.skillcheck_current_prog).value_or(0.0f);
-        const float ui_prog  = mem::read<float>(sc_addr + off.skillcheck_ui_prog).value_or(0.0f);
         const float eff_prog = std::max(cur_prog, ui_prog);
-        const float target_threshold = std::max(0.10f, zone_start + 0.02f);
 
-        if (!s_fired_for_current_window && std::isfinite(eff_prog) && eff_prog >= target_threshold) {
-            s_fired_for_current_window = true;
-            s_last_triggered_count     = gen_count;
-            const float great_mid      = std::clamp(zone_start + (bonus_len * 0.5f), 0.15f, 0.85f);
-            (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, great_mid);
-            (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      great_mid);
-            (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
-            if (in_process) {
-                const uintptr_t sc_owner = mem::read<uintptr_t>(sc_addr + off.skillcheck_owner_pawn).value_or(0ULL);
-                const uintptr_t sc_inter = mem::read<uintptr_t>(sc_addr + off.skillcheck_current_inter).value_or(0ULL);
-                if (validate_canonical_uobject(sc_owner, 0x0AA0U, guobjectarray_abs, off) &&
-                    validate_canonical_uobject(sc_inter, 0x0100U, guobjectarray_abs, off)) {
-                    using OnSkillCheckInputFn = void(*)(uintptr_t);
-                    const auto input_fn = reinterpret_cast<OnSkillCheckInputFn>(ue4_base + off.rva_skillcheck_input);
-                    input_fn(sc_addr);
-                    return true;
+        if (!is_continuous_struggle_context) {
+            // Case A: Standard Chargeable SkillChecks (Generator Repair & Survivor Healing)
+            // Has a valid positive bonus zone (bonus_len > 0.002f). Use 1-shot lock per _skillCheckCount.
+            if (gen_count != s_last_triggered_count) {
+                s_fired_for_current_window = false;
+            }
+
+            float zone_start  = 0.0f;
+            float zone_length = 1.0f;
+            float bonus_len   = 1.0f;
+            hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
+
+            const float active_bonus_start = (native_bonus_start > 0.01f) ? native_bonus_start : zone_start;
+            const float active_bonus_len   = (native_bonus_len > 0.002f)  ? native_bonus_len   : bonus_len;
+            const float target_threshold   = std::max(0.10f, active_bonus_start);
+
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_start,  zone_start);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_end,    zone_length);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_len,   bonus_len);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_start, zone_start);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_success_start,    zone_start);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_success_length,   zone_length);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_length,     bonus_len);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_start,      zone_start);
+
+            if (!s_fired_for_current_window && std::isfinite(eff_prog) && eff_prog >= target_threshold) {
+                s_fired_for_current_window = true;
+                s_last_triggered_count     = gen_count;
+                const float great_mid = std::clamp(active_bonus_start + (active_bonus_len * 0.5f), 0.05f, 0.95f);
+                (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, great_mid);
+                (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      great_mid);
+                (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
+                if (in_process) {
+                    const uintptr_t sc_owner = mem::read<uintptr_t>(sc_addr + off.skillcheck_owner_pawn).value_or(expected_owner);
+                    if (validate_canonical_uobject(sc_owner, 0x0AA0U, guobjectarray_abs, off) &&
+                        (sc_inter_valid || ih_inter_valid)) {
+                        using OnSkillCheckInputFn = void(*)(uintptr_t);
+                        const auto input_fn = reinterpret_cast<OnSkillCheckInputFn>(ue4_base + off.rva_skillcheck_input);
+                        input_fn(sc_addr);
+                        return true;
+                    }
+                }
+            }
+        } else {
+            // Case B: Continuous / Struggle SkillChecks (Shoulder Wiggle & Hook Phase 2 Struggle)
+            // Do NOT block subsequent sweeps with a permanent 1-shot lock; instead, trigger when _currentProgress
+            // enters the valid success window with a 120ms cooldown between triggers so Wiggle and Hook Struggle
+            // execute smoothly every cycle.
+            s_fired_for_current_window = false;
+
+            const float win_start = (native_bonus_len > 0.002f && native_bonus_start > 0.0f)
+                                        ? native_bonus_start
+                                        : native_succ_start;
+            const float win_len   = (native_bonus_len > 0.002f)
+                                        ? native_bonus_len
+                                        : std::max(0.08f, native_succ_len);
+            const float win_end   = std::min(0.98f, win_start + win_len);
+            const float win_mid   = std::clamp(win_start + (win_len * 0.5f), 0.05f, 0.95f);
+
+            const bool in_window = std::isfinite(eff_prog) &&
+                                   (eff_prog >= std::max(0.04f, win_start - 0.02f)) &&
+                                   (eff_prog <= win_end + 0.05f);
+
+            if (in_window && (now_ms - s_last_continuous_trigger_ms) >= 120ULL) {
+                s_last_continuous_trigger_ms = now_ms;
+                s_last_triggered_count       = gen_count;
+                (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, win_mid);
+                (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      win_mid);
+                (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
+                if (in_process) {
+                    const uintptr_t sc_owner = mem::read<uintptr_t>(sc_addr + off.skillcheck_owner_pawn).value_or(expected_owner);
+                    if (validate_canonical_uobject(sc_owner, 0x0AA0U, guobjectarray_abs, off)) {
+                        using OnSkillCheckInputFn = void(*)(uintptr_t);
+                        const auto input_fn = reinterpret_cast<OnSkillCheckInputFn>(ue4_base + off.rva_skillcheck_input);
+                        input_fn(sc_addr);
+                        return true;
+                    }
                 }
             }
         }
