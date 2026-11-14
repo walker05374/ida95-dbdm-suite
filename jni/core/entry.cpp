@@ -732,17 +732,16 @@ public:
         const uintptr_t pawn_addr = chain.acknowledged_pawn;
         const uintptr_t move_comp = chain.movement_component;
 
-        if (std::isfinite(target_time_scale) && target_time_scale >= 0.5f && target_time_scale <= 2.5f) {
-            (void)mem::write_data<float>(pawn_addr + off.custom_time_dilation, target_time_scale);
-        }
+        // Never overwrite Actor::CustomTimeDilation (+0x00AC) in online matches to prevent
+        // USkeletalMeshComponent animation desync from UCapsuleComponent (sideways tilt / half-body sinking).
+        (void)target_time_scale;
         if (std::isfinite(target_walk_speed) && target_walk_speed >= 50.0f && target_walk_speed <= 5000.0f) {
-            const Status st = mem::write_data<float>(move_comp + off.max_walk_speed, target_walk_speed);
+            const float safe_walk_speed = std::clamp(target_walk_speed, 50.0f, 810.0f);
+            const Status st = mem::write_data<float>(move_comp + off.max_walk_speed, safe_walk_speed);
             if (st != Status::Ok) {
                 return st;
             }
-            (void)mem::write_data<float>(move_comp + off.max_walk_speed_crouched, target_walk_speed);
-            (void)mem::write_data<float>(move_comp + off.max_fly_speed, target_walk_speed);
-            (void)mem::write_data<float>(move_comp + off.max_custom_movement_speed, target_walk_speed);
+            (void)mem::write_data<float>(move_comp + off.max_walk_speed_crouched, safe_walk_speed);
         }
         if (std::isfinite(target_accel) && target_accel >= 50.0f && target_accel <= 6144.0f) {
             const Status st = mem::write_data<float>(move_comp + off.max_acceleration, target_accel);
@@ -1117,6 +1116,10 @@ public:
         static bool    s_fired_for_current_window    = false;
         static int32_t s_last_triggered_count        = -1;
 
+        if (!auto_skillcheck_enabled && !s_was_auto_skillcheck_enabled) {
+            return false;
+        }
+
         const hud::CharacterMovementChain chain = resolve_local_movement_chain(
             local_pc, local_pawn, guobjectarray_abs, off);
         const uintptr_t expected_owner = (chain.acknowledged_pawn != 0) ? chain.acknowledged_pawn : local_pawn;
@@ -1290,6 +1293,9 @@ public:
         if (!s_fired_for_current_window && std::isfinite(eff_prog) && eff_prog >= target_threshold) {
             s_fired_for_current_window = true;
             s_last_triggered_count     = gen_count;
+            const float great_mid      = std::clamp(zone_start + (bonus_len * 0.5f), 0.15f, 0.85f);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, great_mid);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      great_mid);
             (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
             if (in_process) {
                 const uintptr_t sc_owner = mem::read<uintptr_t>(sc_addr + off.skillcheck_owner_pawn).value_or(0ULL);
@@ -1430,54 +1436,38 @@ public:
             }
         }
 
-        const uint8_t fly_mode = hud::resolve_movement_mode_byte(true);
-        if (std::isfinite(fly_speed) && fly_speed >= 50.0f && fly_speed <= 5000.0f) {
-            (void)mem::write_data<float>(move_comp + off.max_fly_speed, fly_speed);
-        }
+        (void)fly_speed;
         (void)mem::write_data<float>(move_comp + off.gravity_scale, 0.0f);
-        (void)mem::write_data<float>(move_comp + off.braking_decel_flying, 4096.0f);
-        if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
-            const uint8_t dirty_byte = hud::compute_movement_dirty_flags(*cur_flags, true, true);
-            (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, dirty_byte);
-        }
-        if (const auto col_flags = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
-            const uint8_t col_byte = hud::compute_actor_collision_byte(*col_flags, false);
-            if (col_byte != *col_flags) {
-                (void)mem::write_data<uint8_t>(pawn_addr + off.actor_collision_flags, col_byte);
-            }
-        }
-        const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, fly_mode);
-        // Clear CurrentFloor (bBlockingHit = 0, bWalkableFloor = 0) when MovementMode == 5 (MOVE_Flying)
-        (void)mem::write_data<uint32_t>(move_comp + off.current_floor, 0U);
 
         FVector cur_vel = mem::read<FVector>(move_comp + off.movement_velocity).value_or(FVector{0.0f, 0.0f, 0.0f});
         const auto rc_opt = mem::read<uintptr_t>(pawn_addr + off.root_component);
         const bool rc_valid = rc_opt.has_value() && validate_canonical_uobject(*rc_opt, 0x01D0U, guobjectarray_abs, off);
 
-        auto write_scene_comp_position = [&](uintptr_t rc_addr, const FVector& pos) {
-            (void)mem::write_data<FVector>(rc_addr + off.relative_location, pos);
-            (void)mem::write_data<FVector>(rc_addr + off.component_to_world + 0x0010U, pos);
-        };
-
         if (std::isfinite(fly_vertical_speed) && std::abs(fly_vertical_speed) > 1.0f) {
-            cur_vel.z = std::clamp(fly_vertical_speed, -1600.0f, 1600.0f);
+            // Use MOVE_Falling (3U) rather than MOVE_Flying (5U) while ascending/descending
+            // so survivor root bone and capsule alignment never tilt sideways or sink into the floor.
+            constexpr uint8_t kMoveFalling = 3U;
+            const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, kMoveFalling);
+            cur_vel.z = std::clamp(fly_vertical_speed, -600.0f, 600.0f);
             (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
             if (rc_valid) {
                 if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
                     rel_loc.has_value() && std::isfinite(rel_loc->z)) {
                     FVector updated_loc = *rel_loc;
                     updated_loc.z += cur_vel.z * 0.016f;
-                    write_scene_comp_position(*rc_opt, updated_loc);
+                    (void)mem::write_data<FVector>(*rc_opt + off.relative_location, updated_loc);
                     s_held_pawn  = pawn_addr;
                     s_held_z     = updated_loc.z;
                     s_has_held_z = true;
                 }
             }
+            return mode_st;
         } else {
-            cur_vel.z *= 0.10f;
-            if (std::abs(cur_vel.z) < 2.0f) {
-                cur_vel.z = 0.0f;
-            }
+            // Holding altitude (0% vertical speed): keep MOVE_Walking (1U) with zero vertical velocity
+            // so normal survivor walking animations and capsule alignment stay intact.
+            constexpr uint8_t kMoveWalking = 1U;
+            const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, kMoveWalking);
+            cur_vel.z = 0.0f;
             (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
             if (rc_valid) {
                 if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
@@ -1489,12 +1479,12 @@ public:
                     } else {
                         FVector held_loc = *rel_loc;
                         held_loc.z       = s_held_z;
-                        write_scene_comp_position(*rc_opt, held_loc);
+                        (void)mem::write_data<FVector>(*rc_opt + off.relative_location, held_loc);
                     }
                 }
             }
+            return mode_st;
         }
-        return mode_st;
     }
 
     // 4b. Instant Hatch Escape (Thread-safe, binary-verified memory writes only)
@@ -1902,10 +1892,13 @@ public:
                 return set_prio(3, "Generator");
             }
 
-            // Priority 4: Hatch (AHatch)
-            if (type_contains("->Hatch->") ||
-                type_contains("BP_Hatch")  ||
-                icontains(class_name, "Hatch")) {
+            // Priority 4: Hatch (AHatch) — explicitly exclude Huntress Hatchets (BP_HatchetRack / BP_HatchetProjectile)
+            if (!type_contains("Hatchet") &&
+                !icontains(class_name, "Hatchet") &&
+                !icontains(actor_name, "Hatchet") &&
+                (type_contains("->Hatch->") ||
+                 type_contains("BP_Hatch")  ||
+                 icontains(class_name, "Hatch"))) {
                 return set_prio(4, "Hatch");
             }
 
@@ -1994,9 +1987,10 @@ public:
             return set_prio(3, "Generator");
         }
 
-        if (icontains(actor_name, "BP_Hatch") ||
-            icontains(actor_name, "Hatch01")  ||
-            icontains(actor_name, "Hatch_")) {
+        if (!icontains(actor_name, "Hatchet") &&
+            (icontains(actor_name, "BP_Hatch") ||
+             icontains(actor_name, "Hatch01")  ||
+             icontains(actor_name, "Hatch_"))) {
             return set_prio(4, "Hatch");
         }
 
@@ -2198,7 +2192,8 @@ public:
             final_pct = (native_pct >= 99.9f) ? 100.0f : native_pct;
         }
 
-        if (std::fabs(final_pct - entry.last_logged_pct) >= 1.0f) {
+        if (std::fabs(final_pct - entry.last_logged_pct) >= 5.0f ||
+            (final_pct >= 100.0f && entry.last_logged_pct < 100.0f)) {
             entry.last_logged_pct = final_pct;
             DIAG_LOGI(
                 "[GEN-PROGRESS] Gen=0x%llX Progress=%.1f%% | NativeRatio=%.4f | ChargeComp=0x%llX RawCharge=%.2f/%.1f | IsRepaired=%u Activated=%u",
@@ -3920,8 +3915,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 &matched_name_off
             );
             static char s_last_logged_name[64]{};
-            static uint32_t s_name_log_tick = 0;
-            if (std::strcmp(s_last_logged_name, readback_name.data()) != 0 || (++s_name_log_tick % 120U) == 1U) {
+            if (std::strcmp(s_last_logged_name, readback_name.data()) != 0) {
                 std::strncpy(s_last_logged_name, readback_name.data(), sizeof(s_last_logged_name) - 1);
                 s_last_logged_name[sizeof(s_last_logged_name) - 1] = '\0';
                 DIAG_LOGI(
@@ -3946,7 +3940,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     }
 
     // Execute Item 2: Persistent Character Movement Component Hook (Kinematics Override + Baseline Restore)
-    if (write_safe && should_apply_kinematics && (local_pc != 0 || local_pawn != 0)) {
+    if (write_safe && final_match_active && should_apply_kinematics && local_pawn != 0) {
         if (move_chain.is_valid && move_chain.movement_component != 0 && !sync_res.fly_cheat_enabled) {
             (void)ue4::clamp_kinematic_envelope(
                 move_chain.movement_component,
@@ -3979,7 +3973,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             s_last_kin_err_pawn     = 0;
             s_kinematics_was_active = true;
         }
-    } else if (write_safe && !should_apply_kinematics && s_kinematics_was_active && (local_pc != 0 || local_pawn != 0)) {
+    } else if (write_safe && final_match_active && !should_apply_kinematics && s_kinematics_was_active && local_pawn != 0) {
         const Status restore_st = ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
             local_pc,
             local_pawn,
@@ -3999,7 +3993,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         } else {
             s_kinematics_was_active = false;
         }
-    } else if (!write_safe) {
+    } else if (!write_safe || !final_match_active) {
         s_kinematics_was_active = false;
     }
 
@@ -4027,7 +4021,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     }
 
     // Execute Advanced Feature 3: Auto Skillcheck (Chaining + Auto-Great), Auto Heal & Trap Immunity
-    if (write_safe && (local_pawn != 0 || local_pc != 0)) {
+    if (write_safe && final_match_active && local_pawn != 0) {
         if (ue4::SpatialAndKinematicPipeline::apply_auto_skillcheck(
                 local_pawn,
                 local_pc,
@@ -4040,19 +4034,17 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 nearest_gen_pct)) {
             ++s_skillchecks_handled;
         }
-    } else if (!sync_res.auto_skillcheck) {
-        ue4::SpatialAndKinematicPipeline::patch_skillcheck_great_branch(base, off, false);
     }
-    if (authoritative_write_safe && sync_res.trap_immunity && local_pawn != 0) {
+    if (authoritative_write_safe && final_match_active && sync_res.trap_immunity && local_pawn != 0) {
         ue4::SpatialAndKinematicPipeline::apply_trap_immunity(local_pawn, guobjectarray_abs, off);
     }
-    if (authoritative_write_safe && sync_res.auto_heal && local_pawn != 0) {
+    if (authoritative_write_safe && final_match_active && sync_res.auto_heal && local_pawn != 0) {
         ue4::SpatialAndKinematicPipeline::apply_auto_heal(local_pawn, local_pc, base, guobjectarray_abs, off);
     }
 
     // Execute Advanced Feature 4: Bidirectional Fly Cheat & Instant Hatch Escape
     static bool s_was_flying = false;
-    if (write_safe && (local_pc != 0 || local_pawn != 0) && (sync_res.fly_cheat_enabled || s_was_flying)) {
+    if (write_safe && final_match_active && local_pawn != 0 && (sync_res.fly_cheat_enabled || s_was_flying)) {
         static uintptr_t s_last_fly_err_pawn = 0;
         const Status fly_st = ue4::SpatialAndKinematicPipeline::apply_fly_mode(
             local_pc,
@@ -4073,7 +4065,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             s_last_fly_err_pawn = 0;
         }
         s_was_flying = sync_res.fly_cheat_enabled;
-    } else if (!write_safe) {
+    } else if (!write_safe || !final_match_active) {
         s_was_flying = false;
     }
     if (write_safe && sync_res.force_escape && local_pawn != 0) {

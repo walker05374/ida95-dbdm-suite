@@ -351,9 +351,6 @@ public final class FloatingModService extends Service {
                 espOverlayView.pollAndInvalidate();
             }
             if ((++statusTick & 0x0F) == 0 && statusBannerView != null) {
-                if ((statusTick & 0x1F) == 0) {
-                    pushConfigToNative();
-                }
                 try {
                     String st = nativeGetStatus();
                     if (st != null) {
@@ -1274,7 +1271,41 @@ public final class FloatingModService extends Service {
         sectionKinematics.addView(sbMaxAccel);
 
         // 3. Eixo Vertical com Sinal (Voo / Salto): -100% (Descer) .. 0% (Segurar) .. +100% (Subir)
-        sectionKinematics.addView(tvJumpVel);
+        LinearLayout flyHeaderRow = new LinearLayout(this);
+        flyHeaderRow.setOrientation(LinearLayout.HORIZONTAL);
+        flyHeaderRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams tvFlyLp = new LinearLayout.LayoutParams(
+            0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+        flyHeaderRow.addView(tvJumpVel, tvFlyLp);
+
+        Button btnPauseFly = new Button(this);
+        btnPauseFly.setText("Pausar (0%)");
+        btnPauseFly.setTextColor(COL_TEXT_PRIMARY);
+        btnPauseFly.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f);
+        btnPauseFly.setTypeface(Typeface.DEFAULT_BOLD);
+        btnPauseFly.setAllCaps(false);
+        btnPauseFly.setMinHeight(0);
+        btnPauseFly.setMinimumHeight(0);
+        btnPauseFly.setMinWidth(0);
+        btnPauseFly.setMinimumWidth(0);
+        GradientDrawable pauseFlyBg = new GradientDrawable();
+        pauseFlyBg.setColor(COL_BG_INNER);
+        pauseFlyBg.setCornerRadius(dp(4));
+        pauseFlyBg.setStroke(1, COL_BORDER_SUBTLE);
+        btnPauseFly.setBackground(pauseFlyBg);
+        btnPauseFly.setPadding(dp(6), dp(2), dp(6), dp(2));
+        btnPauseFly.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                flyVertSpeed = 0.0f;
+                jumpPct = 100.0f;
+                sbJumpVel.setProgress(100);
+                tvJumpVel.setText("Voo Vertical: 0% (Segurar)");
+                pushConfigToNative();
+            }
+        });
+        flyHeaderRow.addView(btnPauseFly);
+        sectionKinematics.addView(flyHeaderRow);
         sbJumpVel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
