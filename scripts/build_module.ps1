@@ -417,4 +417,38 @@ else {
     throw "Ferramentas de build do APK nao encontradas (Javac=$JavacExe, BuildTools=$BuildTools, AndroidJar=$AndroidJar)"
 }
 
-Write-Host "[OK] Build local concluido com sucesso! Artefatos gerados em: $ZipOut e $WdbdApkOut (espelhado em $ApkOut)." -ForegroundColor Green
+Write-Host "[6/6] Verificando conexao ADB com o dispositivo para envio direto para /sdcard/Download/..." -ForegroundColor Cyan
+$CandidateTargets = @("192.168.1.68:10001", "192.168.1.8:10001", "192.168.1.191:10001")
+$TargetSerial = $null
+foreach ($CandTarget in $CandidateTargets) {
+    $PrevEapAdb = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $AdbExe connect $CandTarget *> $null
+    $ErrorActionPreference = $PrevEapAdb
+
+    $AdbDevices = (& $AdbExe devices) -join "`n"
+    $EscapedTarget = [regex]::Escape($CandTarget)
+    if ($AdbDevices -match "$EscapedTarget\s+device\b") {
+        $TargetSerial = $CandTarget
+        break
+    }
+}
+if (-not $TargetSerial) {
+    $AdbDevices = (& $AdbExe devices) -join "`n"
+    if ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
+        $TargetSerial = $Matches[1]
+    }
+}
+
+if ($TargetSerial) {
+    Write-Host "    -> Enviando artefatos (.zip e .apk) para /sdcard/Download/ em $TargetSerial (sem instalacao automatica)..." -ForegroundColor Cyan
+    & $AdbExe -s $TargetSerial push $ZipOut /sdcard/Download/ue4_instrument_zygisk.zip
+    $TargetApk = if (Test-Path $WdbdApkOut) { $WdbdApkOut } else { $ApkOut }
+    if (Test-Path $TargetApk) {
+        & $AdbExe -s $TargetSerial push $TargetApk /sdcard/Download/wdbd.apk
+        & $AdbExe -s $TargetSerial push $TargetApk /sdcard/Download/DBDM_FloatingModMenu.apk
+    }
+    Write-Host "[OK] Artefatos enviados para /sdcard/Download/ em $TargetSerial." -ForegroundColor Green
+} else {
+    Write-Host "[OK] Artefatos gerados em $ZipOut e $WdbdApkOut (nenhum dispositivo ADB online)." -ForegroundColor Yellow
+}
