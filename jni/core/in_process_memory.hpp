@@ -30,6 +30,7 @@ namespace memory {
 enum class Status : uint8_t {
     Ok = 0,
     InvalidArgument,
+    InvalidPtr = InvalidArgument,
     UnmappedOrFault,
     PartialTransfer
 };
@@ -177,6 +178,19 @@ template <typename T>
     static_assert(std::is_trivially_copyable_v<T>, "mem::write_data<T> requires a trivially copyable type");
     std::span<const uint8_t> src_bytes{reinterpret_cast<const uint8_t*>(&value), sizeof(T)};
     return memory::InProcessMemory::safe_write(address, src_bytes);
+}
+
+template <typename T>
+[[nodiscard]] INSTRUMENT_LOCAL inline memory::Status write(uintptr_t address, const T& value) noexcept {
+    return write_data<T>(address, value);
+}
+
+[[nodiscard]] INSTRUMENT_LOCAL inline bool is_in_process() noexcept {
+#if defined(DBDM_STANDALONE_DAEMON)
+    return false;
+#else
+    return memory::InProcessMemory::effective_pid() == ::getpid();
+#endif
 }
 
 } // namespace mem

@@ -36,7 +36,9 @@ import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Locale;
@@ -389,6 +391,7 @@ public final class FloatingModService extends Service {
     public void onCreate() {
         super.onCreate();
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        clearStaleConfigOnStartup();
         loadLogoBitmap();
         buildEspOverlayLayer();
         buildFloatingMenuUi();
@@ -396,6 +399,23 @@ public final class FloatingModService extends Service {
         serviceActive = true;
         uiHandler.post(frameLoopRunnable);
         ensureTargetGameLaunched();
+    }
+
+    private void clearStaleConfigOnStartup() {
+        overrideName   = false;
+        playerName     = "";
+        applyKinematics = false;
+        flyCheat       = false;
+        flyVertSpeed   = 0.0f;
+        forceEscape    = false;
+        try {
+            File cfg = new File("/data/local/tmp/dbdm_mod_config.cfg");
+            if (cfg.exists()) {
+                // Remove stale config from previous sessions so toggles never auto-enable on startup
+                cfg.delete();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
@@ -921,12 +941,12 @@ public final class FloatingModService extends Service {
         });
         sectionVisuals.addView(cbDrawMarkers);
 
-        final TextView tvMaxDist = buildMinimalSliderLabel("Distância Máxima: 250 m");
+        final TextView tvMaxDist = buildMinimalSliderLabel("Distância Máxima: " + (int) maxDist + " m");
         sectionVisuals.addView(tvMaxDist);
 
         SeekBar sbMaxDist = new SeekBar(this);
         sbMaxDist.setMax(990);
-        sbMaxDist.setProgress(240);
+        sbMaxDist.setProgress(Math.max(0, Math.min(990, (int) (maxDist - 10.0f))));
         styleMinimalSeekBar(sbMaxDist);
         sbMaxDist.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -955,12 +975,12 @@ public final class FloatingModService extends Service {
         });
         sectionVisuals.addView(cbFov);
 
-        final TextView tvFov = buildMinimalSliderLabel("FOV: 90°");
+        final TextView tvFov = buildMinimalSliderLabel("FOV: " + (int) fovValue + "°");
         sectionVisuals.addView(tvFov);
 
         SeekBar sbFov = new SeekBar(this);
         sbFov.setMax(40); // 80 + [0..40] = 80°..120°
-        sbFov.setProgress(10);
+        sbFov.setProgress(Math.max(0, Math.min(40, (int) (fovValue - 80.0f))));
         styleMinimalSeekBar(sbFov);
         sbFov.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -1114,12 +1134,30 @@ public final class FloatingModService extends Service {
         });
         sectionKinematics.addView(cbTrapImmunity);
 
-        CheckBox cbFlyCheat = new CheckBox(this);
+        final int initSignedFlyPct = Math.max(-100, Math.min(100, Math.round(flyVertSpeed / 6.0f)));
+        final String initFlyLabel = (initSignedFlyPct > 0)
+            ? String.format(Locale.US, "Voo Vertical: +%d%% (Subir)", initSignedFlyPct)
+            : (initSignedFlyPct < 0)
+                ? String.format(Locale.US, "Voo Vertical: %d%% (Descer)", initSignedFlyPct)
+                : "Voo Vertical: 0% (Segurar)";
+        final TextView tvJumpVel = buildMinimalSliderLabel(initFlyLabel);
+        final SeekBar sbJumpVel = new SeekBar(this);
+        sbJumpVel.setMax(200); // 0..-100%, 100..0%, 200..+100%
+        sbJumpVel.setProgress(100 + initSignedFlyPct);
+        styleMinimalSeekBar(sbJumpVel);
+
+        final CheckBox cbFlyCheat = new CheckBox(this);
         styleMinimalCheckBox(cbFlyCheat, "Modo Voo (Fly)", flyCheat);
         cbFlyCheat.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                 flyCheat = isChecked;
+                if (isChecked && Math.abs(flyVertSpeed) < 1.0f) {
+                    flyVertSpeed = 300.0f; // +50% (Subir) default so checking Fly has immediate vertical lift
+                    jumpPct = 175.0f;
+                    sbJumpVel.setProgress(150);
+                    tvJumpVel.setText("Voo Vertical: +50% (Subir)");
+                }
                 pushConfigToNative();
             }
         });
@@ -1236,13 +1274,7 @@ public final class FloatingModService extends Service {
         sectionKinematics.addView(sbMaxAccel);
 
         // 3. Eixo Vertical com Sinal (Voo / Salto): -100% (Descer) .. 0% (Segurar) .. +100% (Subir)
-        final TextView tvJumpVel = buildMinimalSliderLabel("Voo Vertical: 0% (Segurar)");
         sectionKinematics.addView(tvJumpVel);
-
-        SeekBar sbJumpVel = new SeekBar(this);
-        sbJumpVel.setMax(200); // 0..-100%, 100..0%, 200..+100%
-        sbJumpVel.setProgress(100);
-        styleMinimalSeekBar(sbJumpVel);
         sbJumpVel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
@@ -1260,6 +1292,10 @@ public final class FloatingModService extends Service {
                     tvJumpVel.setText("Voo Vertical: 0% (Segurar)");
                 }
                 if (fromUser) {
+                    if (!flyCheat) {
+                        flyCheat = true;
+                        cbFlyCheat.setChecked(true);
+                    }
                     pushConfigToNative();
                 }
             }
@@ -1314,6 +1350,9 @@ public final class FloatingModService extends Service {
 
         final EditText etPlayerName = new EditText(this);
         styleMinimalEditText(etPlayerName, "Digite o nome do jogador...");
+        if (playerName != null && !playerName.isEmpty()) {
+            etPlayerName.setText(playerName);
+        }
         etPlayerName.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {

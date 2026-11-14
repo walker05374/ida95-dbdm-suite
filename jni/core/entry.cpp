@@ -119,6 +119,7 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t relative_rotation         = 0x0140;     // FRotator (12 bytes: Pitch, Yaw, Roll)
     uintptr_t component_velocity        = 0x014C;     // FVector (12 bytes)
     uintptr_t scene_comp_flags          = 0x0164;     // uint16 bitfield (bVisible=0x0040, bHiddenInGame=0x1000)
+    uintptr_t component_to_world        = 0x01A0;     // FTransform USceneComponent::ComponentToWorld (+0x01A0; FTransform::Translation at +0x01B0)
 
     // FUObjectArray / FChunkedFixedUObjectArray (for live lifecycle / PendingKill verification)
     uintptr_t guobject_objects_offset   = 0x0010;     // ObjObjects.Objects (FUObjectItem**)
@@ -137,6 +138,7 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t max_custom_movement_speed = 0x01AC;     // float UCharacterMovementComponent::MaxCustomMovementSpeed
     uintptr_t max_acceleration          = 0x01B0;     // float UCharacterMovementComponent::MaxAcceleration
     uintptr_t braking_decel_flying      = 0x01D0;     // float UCharacterMovementComponent::BrakingDecelerationFlying
+    uintptr_t current_floor             = 0x0300;     // FFindFloorResult UCharacterMovementComponent::CurrentFloor (+0x0300; bitfield bBlockingHit/bWalkableFloor at +0x0300)
     uintptr_t movement_dirty_flags      = 0x039F;     // uint8 UCharacterMovementComponent bitfield (bCheatFlying/bJustTeleported/bNetworkUpdateReceived)
 
     // APlayerCameraManager FOV & AActor Collision / NetRole
@@ -157,6 +159,7 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t chargeable_tunable_count  = 0x0300;     // int32 UChargeableComponent::_tunableValueMap.ArrayNum (+0x300)
     uintptr_t chargeable_tunable_val    = 0x000C;     // float first tunable entry value at Data + 0x0C (MaxCharge ~ 90.0f)
     uintptr_t player_interaction_handler= 0x0A90;     // UPlayerInteractionHandler* ADBDPlayer::_interactionHandler (+0x0A90)
+    uintptr_t handler_requested_inter   = 0x01F0;     // UInteractionDefinition* UPlayerInteractionHandler::_requestedInteraction (+0x01F0)
     uintptr_t handler_current_inter     = 0x0200;     // UInteractionDefinition* UPlayerInteractionHandler::_currentInteraction (+0x0200)
     uintptr_t interaction_id_fstr       = 0x0240;     // FString UInteractionDefinition::InteractionID (+0x0240)
     uintptr_t interaction_atlanta_id    = 0x0258;     // FName UInteractionDefinition::AtlantaInteractionID (+0x0258)
@@ -221,7 +224,164 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t beartrap_contains_surv    = 0x02CF;     // uint8 bool ABearTrap::_containsSurvivor (+0x02CF)
     uintptr_t beartrap_is_trap_set      = 0x02D0;     // uint8 bool ABearTrap::_isTrapSet (+0x02D0)
     uintptr_t beartrap_was_disarmed     = 0x02D1;     // uint8 bool ABearTrap::_wasJustDisarmed (+0x02D1)
+
+    // Client-Proxy State Reconciliation & Resolved UFunction RVAs (docs/offsets/offsets.json)
+    uintptr_t state_tag_offset          = 0x1158;     // uint8 ACamperPlayer::_immobilizeState (+0x1158)
+    uintptr_t velocity                  = 0x00CC;     // FVector UMovementComponent::Velocity (+0x00CC)
+    uintptr_t interaction_handler       = 0x0A90;     // UPlayerInteractionHandler* ADBDPlayer::_interactionHandler (+0x0A90)
+    uintptr_t timing_component          = 0x0290;     // USkillCheck* UPlayerInteractionHandler::_skillCheck (+0x0290)
+    uintptr_t fn_timing_callback        = 0x06E18CF0; // USkillCheck::OnSkillCheckInput (@ 0x06E18CF0, void(*)(uintptr_t))
+    uintptr_t fn_interaction_dispatch   = 0x06F400D8; // ACamperPlayer::HatchEscapeZoneEntered (@ 0x06F400D8)
 };
+
+using Offsets = EngineOffsets;
+using TimingCallbackFn = void(*)(uintptr_t);
+using InteractionDispatchFn = void(*)(uintptr_t, uintptr_t);
+
+INSTRUMENT_LOCAL inline Status sync_proxy_state_frame(
+    uintptr_t actor_ptr,
+    uint8_t desired_tag,
+    const FVector& dir_unit,
+    float dt,
+    const Offsets& off
+) noexcept {
+    if (actor_ptr == 0) {
+        return Status::InvalidPtr;
+    }
+    if (const Status st = mem::write<uint8_t>(actor_ptr + off.state_tag_offset, desired_tag); st != Status::Ok) {
+        return st;
+    }
+    const auto root_ptr = mem::read<uintptr_t>(actor_ptr + off.root_component);
+    if (!root_ptr.has_value() || *root_ptr == 0) {
+        return Status::InvalidPtr;
+    }
+    const auto pos = mem::read<FVector>(*root_ptr + off.relative_location);
+    if (!pos.has_value()) {
+        return Status::InvalidPtr;
+    }
+    const float clamped_dt = std::clamp(dt, 0.001f, 0.050f);
+    const FVector next_pos{
+        pos->x + dir_unit.x * 820.0f * clamped_dt,
+        pos->y + dir_unit.y * 820.0f * clamped_dt,
+        pos->z
+    };
+    return mem::write<FVector>(*root_ptr + off.relative_location, next_pos);
+}
+
+INSTRUMENT_LOCAL inline Status clamp_kinematic_envelope(
+    uintptr_t move_comp,
+    float target_scalar,
+    bool lock_vertical,
+    float z_rate,
+    const Offsets& off
+) noexcept {
+    if (move_comp == 0) {
+        return Status::InvalidPtr;
+    }
+    const auto mode = mem::read<uint8_t>(move_comp + off.movement_mode);
+    if (!mode.has_value()) {
+        return Status::InvalidPtr;
+    }
+    if (*mode == 5U) {
+        if (const Status st = mem::write<uint8_t>(move_comp + off.movement_mode, uint8_t(1)); st != Status::Ok) {
+            return st;
+        }
+    }
+    const float clamped_speed = std::clamp(target_scalar, 226.0f, 845.0f);
+    if (const Status st = mem::write<float>(move_comp + off.max_walk_speed, clamped_speed); st != Status::Ok) {
+        return st;
+    }
+    if (lock_vertical) {
+        auto vel = mem::read<FVector>(move_comp + off.velocity);
+        if (!vel.has_value()) {
+            return Status::InvalidPtr;
+        }
+        vel->z = std::clamp(z_rate, -150.0f, 220.0f);
+        if (const Status st = mem::write<FVector>(move_comp + off.velocity, *vel); st != Status::Ok) {
+            return st;
+        }
+    }
+    return Status::Ok;
+}
+
+INSTRUMENT_LOCAL inline Status evaluate_ui_timing_window(
+    uintptr_t actor_ptr,
+    uintptr_t module_base,
+    const Offsets& off
+) noexcept {
+    if (actor_ptr == 0 || module_base == 0) {
+        return Status::InvalidPtr;
+    }
+    const auto handler = mem::read<uintptr_t>(actor_ptr + off.interaction_handler);
+    if (!handler.has_value() || *handler == 0) {
+        return Status::InvalidPtr;
+    }
+    const auto widget_comp = mem::read<uintptr_t>(*handler + off.timing_component);
+    if (!widget_comp.has_value() || *widget_comp == 0) {
+        return Status::InvalidPtr;
+    }
+    const auto active = mem::read<bool>(*widget_comp + off.skillcheck_activated_flag);
+    if (!active.has_value()) {
+        return Status::InvalidPtr;
+    }
+    if (!*active) {
+        return Status::Ok;
+    }
+    if (const Status st = mem::write<float>(*widget_comp + off.skillcheck_live_succ_start, 0.0f); st != Status::Ok) {
+        return st;
+    }
+    if (const Status st = mem::write<float>(*widget_comp + off.skillcheck_live_succ_end, 1.0f); st != Status::Ok) {
+        return st;
+    }
+    const auto cursor = mem::read<float>(*widget_comp + off.skillcheck_current_prog);
+    if (!cursor.has_value()) {
+        return Status::InvalidPtr;
+    }
+    if (*cursor >= 0.05f) {
+#if !defined(DBDM_STANDALONE_DAEMON)
+        if (mem::is_in_process()) {
+            reinterpret_cast<TimingCallbackFn>(module_base + off.fn_timing_callback)(*widget_comp);
+        }
+#endif
+        if (const Status st = mem::write<bool>(*widget_comp + off.skillcheck_activated_flag, false); st != Status::Ok) {
+            return st;
+        }
+    }
+    return Status::Ok;
+}
+
+INSTRUMENT_LOCAL inline Status align_and_dispatch_interaction(
+    uintptr_t source_actor,
+    uintptr_t target_actor,
+    uintptr_t module_base,
+    const Offsets& off
+) noexcept {
+    if (!source_actor || !target_actor || !module_base) {
+        return Status::InvalidPtr;
+    }
+    const auto src_root = mem::read<uintptr_t>(source_actor + off.root_component);
+    const auto dst_root = mem::read<uintptr_t>(target_actor + off.root_component);
+    if (!src_root.has_value() || *src_root == 0 || !dst_root.has_value() || *dst_root == 0) {
+        return Status::InvalidPtr;
+    }
+    auto dst_pos = mem::read<FVector>(*dst_root + off.relative_location);
+    if (!dst_pos.has_value()) {
+        return Status::InvalidPtr;
+    }
+    dst_pos->z += 15.0f;
+    if (const Status st = mem::write<FVector>(*src_root + off.relative_location, *dst_pos); st != Status::Ok) {
+        return st;
+    }
+    if (const Status st = mem::write<uint8_t>(target_actor + off.hatch_state, uint8_t(2)); st != Status::Ok) {
+        return st;
+    }
+#if !defined(DBDM_STANDALONE_DAEMON)
+    if (mem::is_in_process()) {
+        reinterpret_cast<InteractionDispatchFn>(module_base + off.fn_interaction_dispatch)(target_actor, source_actor);
+    }
+#endif
+    return Status::Ok;
+}
 
 // ============================================================================
 // 2. GNamePool Safe Decoder (UE 4.27 FNamePool Block Architecture - Rev. 7)
@@ -937,28 +1097,64 @@ public:
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off,
         bool auto_skillcheck_enabled = true,
-        int interval_ms = 650
+        int interval_ms = 650,
+        float nearest_gen_dist_sq = 0.0f,
+        float nearest_gen_pct = 50.0f
     ) noexcept {
-        if (!auto_skillcheck_enabled) {
-            patch_skillcheck_great_branch(ue4_base, off, false);
-            return false;
-        }
-        patch_skillcheck_great_branch(ue4_base, off, true);
+#if defined(DBDM_STANDALONE_DAEMON)
+        (void)local_pawn;
+        (void)local_pc;
+        (void)ue4_base;
+        (void)guobjectarray_abs;
+        (void)off;
+        (void)auto_skillcheck_enabled;
+        (void)interval_ms;
+        (void)nearest_gen_dist_sq;
+        (void)nearest_gen_pct;
+        return false;
+#else
+        static bool    s_was_auto_skillcheck_enabled = false;
+        static bool    s_fired_for_current_window    = false;
+        static int32_t s_last_triggered_count        = -1;
 
         const hud::CharacterMovementChain chain = resolve_local_movement_chain(
             local_pc, local_pawn, guobjectarray_abs, off);
         const uintptr_t expected_owner = (chain.acknowledged_pawn != 0) ? chain.acknowledged_pawn : local_pawn;
-        if (expected_owner == 0 || !validate_canonical_uobject(expected_owner, 0x0AA0U, guobjectarray_abs, off)) {
-            return false;
+        uintptr_t ih_addr = 0ULL;
+        uintptr_t sc_addr = 0ULL;
+        if (expected_owner != 0 && validate_canonical_uobject(expected_owner, 0x0AA0U, guobjectarray_abs, off)) {
+            if (const auto ih = mem::read<uintptr_t>(expected_owner + off.player_interaction_handler);
+                ih.has_value() && validate_canonical_uobject(*ih, 0x02A0U, guobjectarray_abs, off)) {
+                ih_addr = *ih;
+                if (const auto sc = mem::read<uintptr_t>(ih_addr + off.skillcheck_component);
+                    sc.has_value() && validate_canonical_uobject(*sc, 0x0420U, guobjectarray_abs, off)) {
+                    sc_addr = *sc;
+                }
+            }
         }
 
-        const auto ih = mem::read<uintptr_t>(expected_owner + off.player_interaction_handler);
-        if (!ih.has_value() || !validate_canonical_uobject(*ih, 0x02A0U, guobjectarray_abs, off)) {
+        auto clear_stale_skillcheck_state = [&]() noexcept {
+            if (sc_addr != 0ULL) {
+                (void)mem::write_data<uint8_t>(sc_addr + off.skillcheck_activated_flag,  0U);
+                (void)mem::write_data<uint8_t>(sc_addr + off.skillcheck_displayed_flag,  0U);
+                (void)mem::write_data<uint8_t>(sc_addr + off.skillcheck_live_displayed,  0U);
+                (void)mem::write_data<uintptr_t>(sc_addr + off.skillcheck_current_inter, 0ULL);
+            }
+            s_fired_for_current_window = false;
+        };
+
+        if (!auto_skillcheck_enabled) {
+            patch_skillcheck_great_branch(ue4_base, off, false);
+            if (s_was_auto_skillcheck_enabled) {
+                clear_stale_skillcheck_state();
+                s_was_auto_skillcheck_enabled = false;
+            }
             return false;
         }
+        s_was_auto_skillcheck_enabled = true;
+        patch_skillcheck_great_branch(ue4_base, off, true);
 
-        const auto sc = mem::read<uintptr_t>(*ih + off.skillcheck_component);
-        if (!sc.has_value() || !validate_canonical_uobject(*sc, 0x0420U, guobjectarray_abs, off)) {
+        if (ih_addr == 0ULL || sc_addr == 0ULL) {
             return false;
         }
 
@@ -967,51 +1163,45 @@ public:
         float bonus_len   = 1.0f;
         hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
 
-        uint8_t act_flag  = mem::read<uint8_t>(*sc + off.skillcheck_activated_flag).value_or(0U);
-        uint8_t disp_flag = mem::read<uint8_t>(*sc + off.skillcheck_displayed_flag).value_or(0U);
-        uint8_t live_disp = mem::read<uint8_t>(*sc + off.skillcheck_live_displayed).value_or(0U);
+        const uint8_t act_flag  = mem::read<uint8_t>(sc_addr + off.skillcheck_activated_flag).value_or(0U);
+        const uint8_t disp_flag = mem::read<uint8_t>(sc_addr + off.skillcheck_displayed_flag).value_or(0U);
+        const uint8_t live_disp = mem::read<uint8_t>(sc_addr + off.skillcheck_live_displayed).value_or(0U);
 
-        const GNamePoolResolver name_pool{ue4_base != 0 ? (ue4_base + off.gnamepool_rva) : 0ULL};
-        uintptr_t cur_inter = mem::read<uintptr_t>(*ih + off.handler_current_inter).value_or(0ULL);
-        if (!validate_canonical_uobject(cur_inter, 0x0100U, guobjectarray_abs, off)) {
-            cur_inter = mem::read<uintptr_t>(*sc + off.skillcheck_current_inter).value_or(0ULL);
-            if (!validate_canonical_uobject(cur_inter, 0x0100U, guobjectarray_abs, off)) {
-                cur_inter = 0ULL;
+        float speed_2d = 0.0f;
+        if (chain.is_valid && chain.movement_component != 0) {
+            if (const auto vel = mem::read<FVector>(chain.movement_component + off.movement_velocity)) {
+                const float speed_sq_2d = (vel->x * vel->x) + (vel->y * vel->y);
+                if (std::isfinite(speed_sq_2d) && speed_sq_2d >= 0.0f) {
+                    speed_2d = std::sqrt(speed_sq_2d);
+                }
             }
         }
-        if (cur_inter != 0ULL && !is_allowed_skillcheck_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+
+        // Rely strictly on UPlayerInteractionHandler::_currentInteraction (+0x0200).
+        // Never fall back to _requestedInteraction (+0x01F0) or USkillCheck::_currentInteraction (+0x02C0).
+        const GNamePoolResolver name_pool{ue4_base != 0 ? (ue4_base + off.gnamepool_rva) : 0ULL};
+        const uintptr_t cur_inter = mem::read<uintptr_t>(ih_addr + off.handler_current_inter).value_or(0ULL);
+        if (!validate_canonical_uobject(cur_inter, 0x0100U, guobjectarray_abs, off)) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
+            }
             return false;
         }
-
-        auto is_chargeable_skillcheck_interaction = [&](uintptr_t inter_ptr) noexcept -> bool {
-            if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
-                return false;
+        if (!is_allowed_skillcheck_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
             }
-            const uint8_t anim = mem::read<uint8_t>(inter_ptr + off.interaction_anim).value_or(0xFFU);
-            if (anim == 1U || anim == 6U || anim == 9U || anim == 10U) {
-                return true;
-            }
-            std::array<char, 96>  cls_leaf{};
-            std::array<char, 224> cls_chain{};
-            resolve_uclass_hierarchy(inter_ptr, name_pool, cls_leaf, cls_chain);
-            return hud::detail::icontains_str(cls_chain.data(), "ChargeableInteraction") ||
-                   hud::detail::icontains_str(cls_leaf.data(),  "Generator") ||
-                   hud::detail::icontains_str(cls_leaf.data(),  "Repair") ||
-                   hud::detail::icontains_str(cls_leaf.data(),  "Heal") ||
-                   hud::detail::icontains_str(cls_leaf.data(),  "Mend") ||
-                   hud::detail::icontains_str(cls_leaf.data(),  "Sabotage");
-        };
+            return false;
+        }
 
         static uint64_t s_last_spawn_ms = 0ULL;
         const uint64_t  now_ms          = skillcheck_now_ms();
         const uint64_t  clamped_int_ms  = static_cast<uint64_t>(std::clamp(interval_ms, 150, 5000));
         const bool      in_process      = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
 
-        if (cur_inter != 0ULL && is_pallet_or_vault_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
-            (void)mem::write_data<uint8_t>(*sc + off.skillcheck_activated_flag, 0U);
-            (void)mem::write_data<uint8_t>(*sc + off.skillcheck_displayed_flag, 0U);
-            (void)mem::write_data<uint8_t>(*sc + off.skillcheck_live_displayed, 0U);
-            (void)mem::write_data<int32_t>(*sc + off.skillcheck_last_result,    1);
+        if (is_pallet_or_vault_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
+            clear_stale_skillcheck_state();
+            (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
             if ((now_ms - s_last_spawn_ms) >= clamped_int_ms) {
                 s_last_spawn_ms = now_ms;
                 apply_pallet_vault_heal(expected_owner, ue4_base, guobjectarray_abs, off, in_process);
@@ -1020,84 +1210,101 @@ public:
             return false;
         }
 
-        if (act_flag == 0U && disp_flag == 0U && live_disp == 0U &&
-            cur_inter != 0ULL && is_chargeable_skillcheck_interaction(cur_inter) &&
-            (now_ms - s_last_spawn_ms) >= clamped_int_ms) {
-            s_last_spawn_ms = now_ms;
-
-            (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_start,  zone_start);
-            (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_end,    zone_length);
-            (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_len,   bonus_len);
-            (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_start, zone_start);
-            (void)mem::write_data<float>(*sc + off.skillcheck_success_start,    zone_start);
-            (void)mem::write_data<float>(*sc + off.skillcheck_success_length,   zone_length);
-            (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,     bonus_len);
-            (void)mem::write_data<float>(*sc + off.skillcheck_bonus_start,      zone_start);
-
-            if (in_process) {
-                using LocalActivateSkillCheckFn = void(*)(uintptr_t, uintptr_t, float);
-                const auto activate_fn = reinterpret_cast<LocalActivateSkillCheckFn>(ue4_base + off.rva_skillcheck_activate);
-                activate_fn(*sc, cur_inter, 0.0f);
-            } else {
-                const int32_t prev_cnt = mem::read<int32_t>(*sc + off.skillcheck_gen_count).value_or(0);
-                (void)mem::write_data<uintptr_t>(*sc + off.skillcheck_owner_pawn,    expected_owner);
-                (void)mem::write_data<uintptr_t>(*sc + off.skillcheck_current_inter, cur_inter);
-                (void)mem::write_data<int32_t>(*sc + off.skillcheck_gen_count,       prev_cnt + 1);
-                (void)mem::write_data<float>(*sc + off.skillcheck_current_prog,      0.20f);
-                (void)mem::write_data<float>(*sc + off.skillcheck_ui_prog,           0.20f);
-                (void)mem::write_data<uint8_t>(*sc + off.skillcheck_activated_flag,  1U);
-                (void)mem::write_data<uint8_t>(*sc + off.skillcheck_displayed_flag,  1U);
-                (void)mem::write_data<uint8_t>(*sc + off.skillcheck_live_displayed,  1U);
+        // Verify the survivor is stationary (<= 25 cm/s horizontal speed); moving survivors cannot repair or heal.
+        if (speed_2d > 25.0f) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
             }
-
-            act_flag  = mem::read<uint8_t>(*sc + off.skillcheck_activated_flag).value_or(0U);
-            disp_flag = mem::read<uint8_t>(*sc + off.skillcheck_displayed_flag).value_or(0U);
-            live_disp = mem::read<uint8_t>(*sc + off.skillcheck_live_displayed).value_or(0U);
-        }
-
-        const bool is_active_now = (act_flag != 0U) || (disp_flag != 0U) || (live_disp != 0U);
-        if (!is_active_now) {
             return false;
         }
 
-        const int32_t gen_count = mem::read<int32_t>(*sc + off.skillcheck_gen_count).value_or(0);
-        static int32_t s_last_triggered_count = -1;
-        const bool should_trigger_now = (gen_count != s_last_triggered_count);
+        bool is_generator_repair = false;
+        auto is_chargeable_skillcheck_interaction = [&](uintptr_t inter_ptr) noexcept -> bool {
+            if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
+                return false;
+            }
+            const uint8_t anim = mem::read<uint8_t>(inter_ptr + off.interaction_anim).value_or(0xFFU);
+            std::array<char, 96>  cls_leaf{};
+            std::array<char, 224> cls_chain{};
+            resolve_uclass_hierarchy(inter_ptr, name_pool, cls_leaf, cls_chain);
+            if (anim == 1U ||
+                hud::detail::icontains_str(cls_leaf.data(), "Generator") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Repair")) {
+                is_generator_repair = true;
+            }
+            if (anim == 1U || anim == 6U || anim == 9U || anim == 10U) {
+                return true;
+            }
+            return hud::detail::icontains_str(cls_chain.data(), "ChargeableInteraction") ||
+                   is_generator_repair ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Heal") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Mend") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Sabotage");
+        };
 
-        const float prev_start = mem::read<float>(*sc + off.skillcheck_live_succ_start).value_or(zone_start);
-        const float prev_len   = mem::read<float>(*sc + off.skillcheck_live_bonus_len).value_or(bonus_len);
-        const bool  newly_overridden =
-            should_trigger_now ||
-            (std::abs(prev_start - zone_start) > 1e-3f) ||
-            (std::abs(prev_len - bonus_len) > 1e-3f);
+        const bool is_valid_chargeable = is_chargeable_skillcheck_interaction(cur_inter);
+        if (!is_valid_chargeable) {
+            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                clear_stale_skillcheck_state();
+            }
+            return false;
+        }
 
-        (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_start,  zone_start);
-        (void)mem::write_data<float>(*sc + off.skillcheck_live_succ_end,    zone_length);
-        (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_len,   bonus_len);
-        (void)mem::write_data<float>(*sc + off.skillcheck_live_bonus_start, zone_start);
-        (void)mem::write_data<float>(*sc + off.skillcheck_success_start,    zone_start);
-        (void)mem::write_data<float>(*sc + off.skillcheck_success_length,   zone_length);
-        (void)mem::write_data<float>(*sc + off.skillcheck_bonus_length,     bonus_len);
-        (void)mem::write_data<float>(*sc + off.skillcheck_bonus_start,      zone_start);
-        (void)mem::write_data<int32_t>(*sc + off.skillcheck_last_result,    1);
+        // If repairing a generator, ensure the nearest generator is within interaction distance (<= 4.5m)
+        // and is actively being repaired (0.0% <= progress < 99.9%).
+        if (is_generator_repair) {
+            if (!std::isfinite(nearest_gen_dist_sq) || nearest_gen_dist_sq > (4.5f * 4.5f) ||
+                !std::isfinite(nearest_gen_pct) || nearest_gen_pct < 0.0f || nearest_gen_pct >= 99.9f) {
+                if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
+                    clear_stale_skillcheck_state();
+                }
+                return false;
+            }
+        }
 
-        if (should_trigger_now || newly_overridden) {
-            s_last_triggered_count = gen_count;
-            constexpr float kSweetTarget = 0.50f;
-            (void)mem::write_data<float>(*sc + off.skillcheck_current_prog, kSweetTarget);
-            (void)mem::write_data<float>(*sc + off.skillcheck_ui_prog,      kSweetTarget);
+        // Strictly reactive: only respond when the game naturally opens a skill check window
+        if (live_disp == 0U || act_flag == 0U) {
+            s_fired_for_current_window = false;
+            return false;
+        }
+
+        const int32_t gen_count = mem::read<int32_t>(sc_addr + off.skillcheck_gen_count).value_or(0);
+        if (gen_count != s_last_triggered_count) {
+            s_fired_for_current_window = false;
+        }
+
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_start,  zone_start);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_end,    zone_length);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_len,   bonus_len);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_start, zone_start);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_success_start,    zone_start);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_success_length,   zone_length);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_length,     bonus_len);
+        (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_start,      zone_start);
+
+        const float cur_prog = mem::read<float>(sc_addr + off.skillcheck_current_prog).value_or(0.0f);
+        const float ui_prog  = mem::read<float>(sc_addr + off.skillcheck_ui_prog).value_or(0.0f);
+        const float eff_prog = std::max(cur_prog, ui_prog);
+        const float target_threshold = std::max(0.10f, zone_start + 0.02f);
+
+        if (!s_fired_for_current_window && std::isfinite(eff_prog) && eff_prog >= target_threshold) {
+            s_fired_for_current_window = true;
+            s_last_triggered_count     = gen_count;
+            (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
             if (in_process) {
-                const uintptr_t sc_owner = mem::read<uintptr_t>(*sc + off.skillcheck_owner_pawn).value_or(0ULL);
-                const uintptr_t sc_inter = mem::read<uintptr_t>(*sc + off.skillcheck_current_inter).value_or(0ULL);
+                const uintptr_t sc_owner = mem::read<uintptr_t>(sc_addr + off.skillcheck_owner_pawn).value_or(0ULL);
+                const uintptr_t sc_inter = mem::read<uintptr_t>(sc_addr + off.skillcheck_current_inter).value_or(0ULL);
                 if (validate_canonical_uobject(sc_owner, 0x0AA0U, guobjectarray_abs, off) &&
                     validate_canonical_uobject(sc_inter, 0x0100U, guobjectarray_abs, off)) {
                     using OnSkillCheckInputFn = void(*)(uintptr_t);
                     const auto input_fn = reinterpret_cast<OnSkillCheckInputFn>(ue4_base + off.rva_skillcheck_input);
-                    input_fn(*sc);
+                    input_fn(sc_addr);
+                    return true;
                 }
             }
         }
-        return newly_overridden;
+        return false;
+#endif
     }
 
     // 3b. Trap Immunity: Clears Trapped immobilize state on local pawn's _stateMachine (+0x0AA8 -> +0x01A0)
@@ -1240,20 +1447,27 @@ public:
             }
         }
         const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, fly_mode);
+        // Clear CurrentFloor (bBlockingHit = 0, bWalkableFloor = 0) when MovementMode == 5 (MOVE_Flying)
+        (void)mem::write_data<uint32_t>(move_comp + off.current_floor, 0U);
 
         FVector cur_vel = mem::read<FVector>(move_comp + off.movement_velocity).value_or(FVector{0.0f, 0.0f, 0.0f});
         const auto rc_opt = mem::read<uintptr_t>(pawn_addr + off.root_component);
-        const bool rc_valid = rc_opt.has_value() && validate_canonical_uobject(*rc_opt, 0x0170U, guobjectarray_abs, off);
+        const bool rc_valid = rc_opt.has_value() && validate_canonical_uobject(*rc_opt, 0x01D0U, guobjectarray_abs, off);
+
+        auto write_scene_comp_position = [&](uintptr_t rc_addr, const FVector& pos) {
+            (void)mem::write_data<FVector>(rc_addr + off.relative_location, pos);
+            (void)mem::write_data<FVector>(rc_addr + off.component_to_world + 0x0010U, pos);
+        };
 
         if (std::isfinite(fly_vertical_speed) && std::abs(fly_vertical_speed) > 1.0f) {
-            cur_vel.z = -std::clamp(fly_vertical_speed, -1600.0f, 1600.0f);
+            cur_vel.z = std::clamp(fly_vertical_speed, -1600.0f, 1600.0f);
             (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
             if (rc_valid) {
                 if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
                     rel_loc.has_value() && std::isfinite(rel_loc->z)) {
                     FVector updated_loc = *rel_loc;
                     updated_loc.z += cur_vel.z * 0.016f;
-                    (void)mem::write_data<FVector>(*rc_opt + off.relative_location, updated_loc);
+                    write_scene_comp_position(*rc_opt, updated_loc);
                     s_held_pawn  = pawn_addr;
                     s_held_z     = updated_loc.z;
                     s_has_held_z = true;
@@ -1275,7 +1489,7 @@ public:
                     } else {
                         FVector held_loc = *rel_loc;
                         held_loc.z       = s_held_z;
-                        (void)mem::write_data<FVector>(*rc_opt + off.relative_location, held_loc);
+                        write_scene_comp_position(*rc_opt, held_loc);
                     }
                 }
             }
@@ -2379,34 +2593,8 @@ public:
         const size_t requested_len     = std::min(new_name.size(), max_staging_chars);
         const size_t avail_in_place    = static_cast<size_t>(fstr.max) - 1U;
 
-        if (requested_len <= avail_in_place) {
-            std::memcpy(staging.data(), new_name.data(), requested_len * sizeof(char16_t));
-            staging[requested_len] = u'\0';
-            const size_t byte_len = (requested_len + 1U) * sizeof(char16_t);
-            std::span<const uint8_t> payload{reinterpret_cast<const uint8_t*>(staging.data()), byte_len};
-            const Status write_st = InProcessMemory::safe_write(fstr.data_ptr, payload);
-            if (write_st != Status::Ok) {
-                return write_st;
-            }
-            const int32_t new_count = static_cast<int32_t>(requested_len + 1U);
-            return mem::write_data<int32_t>(fstring_addr + offsetof(TArrayHeader, count), new_count);
-        }
-
-        // If ArrayMax is smaller than requested_len + 1 and we are executing in-process inside libUE4.so's address space,
-        // use a persistent aligned char16_t buffer so the full string is stored without overflowing ArrayMax.
-        if (InProcessMemory::effective_pid() == ::getpid()) {
-            alignas(16) static char16_t s_persistent_name_buf[64]{};
-            std::memcpy(s_persistent_name_buf, new_name.data(), requested_len * sizeof(char16_t));
-            s_persistent_name_buf[requested_len] = u'\0';
-
-            TArrayHeader updated_hdr{};
-            updated_hdr.data_ptr = reinterpret_cast<uintptr_t>(s_persistent_name_buf);
-            updated_hdr.count    = static_cast<int32_t>(requested_len + 1U);
-            updated_hdr.max      = static_cast<int32_t>(std::size(s_persistent_name_buf));
-            return mem::write_data<TArrayHeader>(fstring_addr, updated_hdr);
-        }
-
-        // Out-of-process fallback: strictly clamp to ArrayMax - 1 in-place
+        // Strictly clamp to ArrayMax - 1 in-place so UE4's FMallocBinned2 heap pointer (fstr.data_ptr)
+        // is never replaced with a static .bss address (prevents checkMalloc SIGABRT on login/reallocation).
         const size_t clamped_len = std::min(requested_len, avail_in_place);
         if (clamped_len == 0) {
             return Status::UnmappedOrFault;
@@ -2432,23 +2620,11 @@ public:
             return Status::InvalidArgument;
         }
 
-        // Track previous/original name on this APlayerState so we can also locate and update
-        // cached UI FString / FText buffers (e.g. OldNamePrivate, NetEase platform name, FText history)
-        static uintptr_t                s_tracked_ps   = 0;
-        static std::array<char16_t, 64> s_orig_u16{};
-        static size_t                   s_orig_u16_len = 0;
-
-        std::array<char16_t, 64> prev_u16{};
-        size_t                   prev_u16_len = 0;
-
         const std::array<uintptr_t, 3> primary_offsets = {
             off.player_name_private,
             0x0308U,
             0x0300U
         };
-
-        Status primary_status = Status::UnmappedOrFault;
-        uintptr_t matched_primary_off = off.player_name_private;
 
         for (uintptr_t cand_off : primary_offsets) {
             const uintptr_t fstring_addr = player_state_addr + cand_off;
@@ -2461,87 +2637,13 @@ public:
             if (!is_valid_utf16_fstring(*fstr, cur_u16, &cur_len)) {
                 continue;
             }
-            if (prev_u16_len == 0) {
-                prev_u16     = cur_u16;
-                prev_u16_len = cur_len;
-                if (s_tracked_ps != player_state_addr || s_orig_u16_len == 0) {
-                    s_tracked_ps   = player_state_addr;
-                    s_orig_u16     = cur_u16;
-                    s_orig_u16_len = cur_len;
-                }
-            }
             const Status st = write_fstring_u16_safe(fstring_addr, *fstr, new_name);
-            if (st == Status::Ok && primary_status != Status::Ok) {
-                primary_status      = Status::Ok;
-                matched_primary_off = cand_off;
+            if (st == Status::Ok) {
+                return Status::Ok;
             }
         }
 
-        if (primary_status != Status::Ok) {
-            return primary_status;
-        }
-
-        const std::u16string_view prev_view{prev_u16.data(), prev_u16_len};
-        const std::u16string_view orig_view{s_orig_u16.data(), s_orig_u16_len};
-
-        auto matches_cached_name = [&](std::u16string_view cand) noexcept -> bool {
-            if (cand.empty()) {
-                return false;
-            }
-            if (!prev_view.empty() && cand == prev_view) {
-                return true;
-            }
-            if (!orig_view.empty() && cand == orig_view) {
-                return true;
-            }
-            return false;
-        };
-
-        // Scan APlayerState (+0x0300 .. +0x0480) for secondary FString fields (e.g. OldNamePrivate at +0x328,
-        // NetEase account/platform nickname FStrings) and cached UI FText instances (ITextData -> FTextHistory)
-        for (uintptr_t scan_off = 0x0300U; scan_off <= 0x0480U; scan_off += sizeof(uintptr_t)) {
-            if (scan_off == matched_primary_off) {
-                continue;
-            }
-            const uintptr_t field_addr = player_state_addr + scan_off;
-            if (const auto cand_fstr = mem::read<TArrayHeader>(field_addr)) {
-                std::array<char16_t, 64> buf{};
-                size_t len = 0;
-                if (is_valid_utf16_fstring(*cand_fstr, BufferSpan(buf), &len)) {
-                    const std::u16string_view view{buf.data(), len};
-                    if (matches_cached_name(view) || scan_off == (matched_primary_off + 0x18U)) {
-                        (void)write_fstring_u16_safe(field_addr, *cand_fstr, new_name);
-                        continue;
-                    }
-                }
-            }
-
-            // Probe UE4 FText layout: { ITextData* Object (+0x00), FSharedReferencer (+0x08), uint32 Flags (+0x10) }
-            const auto text_data_ptr = mem::read<uintptr_t>(field_addr);
-            if (!text_data_ptr.has_value() || !InProcessMemory::IsValidPtr(*text_data_ptr, 0x40U)) {
-                continue;
-            }
-            for (uintptr_t td_off = 0x08U; td_off <= 0x30U; td_off += sizeof(uintptr_t)) {
-                const uintptr_t td_fstr_addr = *text_data_ptr + td_off;
-                if (const auto td_fstr = mem::read<TArrayHeader>(td_fstr_addr)) {
-                    std::array<char16_t, 64> buf{};
-                    size_t len = 0;
-                    if (is_valid_utf16_fstring(*td_fstr, BufferSpan(buf), &len)) {
-                        const std::u16string_view view{buf.data(), len};
-                        if (matches_cached_name(view)) {
-                            (void)write_fstring_u16_safe(td_fstr_addr, *td_fstr, new_name);
-                            // Bump FText Flags/Revision (+0x10) so Slate/UMG invalidates cached glyph runs
-                            if (const auto flags = mem::read<uint32_t>(field_addr + 0x10U)) {
-                                (void)mem::write_data<uint32_t>(field_addr + 0x10U, *flags | 0x1U);
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        return Status::Ok;
+        return Status::UnmappedOrFault;
     }
 
     static Status override_local_name_utf8(
@@ -2642,12 +2744,25 @@ INSTRUMENT_LOCAL static void log_resolved_engine_anchors() noexcept {
 INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
     static std::uint32_t s_tick_counter      = 0;
     static std::int64_t  s_last_cfg_mtime_ns = 0;
+    static bool          s_first_poll_init   = false;
+
+    static constexpr const char* kCfgPath = "/data/local/tmp/dbdm_mod_config.cfg";
+    if (!s_first_poll_init) {
+        s_first_poll_init = true;
+        struct stat init_st{};
+        if (::stat(kCfgPath, &init_st) == 0) {
+            // Ignore any stale config file left over from a previous session on initial game boot
+            s_last_cfg_mtime_ns =
+                static_cast<std::int64_t>(init_st.st_mtim.tv_sec) * 1000000000LL +
+                static_cast<std::int64_t>(init_st.st_mtim.tv_nsec);
+        }
+        return;
+    }
 
     if ((++s_tick_counter & 0x03U) != 0U) {
         return; // Poll every 4 ticks (~60ms)
     }
 
-    static constexpr const char* kCfgPath = "/data/local/tmp/dbdm_mod_config.cfg";
     struct stat st{};
     if (::stat(kCfgPath, &st) != 0) {
         return;
@@ -2781,7 +2896,7 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
     }
 
     DIAG_LOGI(
-        "[IPC-CMD] Config synced from APK -> draw_markers=%d | max_dist=%.1f | filter=\"%s\" | override_name=%d (\"%s\") | apply_kinematics=%d (walk=%.1f%%, accel=%.1f%%, jump=%.1f%%, time=%.2f)",
+        "[IPC-CMD] Config synced from APK -> draw_markers=%d | max_dist=%.1f | filter=\"%s\" | override_name=%d (\"%s\") | apply_kinematics=%d (walk=%.1f%%, accel=%.1f%%, jump=%.1f%%, time=%.2f) | auto_skillcheck=%d | fly_cheat_enabled=%d (fly_vertical_speed=%.1f) | apply_fov_override=%d",
         hud_data.draw_2d_node_markers ? 1 : 0,
         static_cast<double>(hud_data.max_render_distance_m),
         hud_data.label_filter,
@@ -2791,7 +2906,11 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
         static_cast<double>(hud_data.walk_speed_pct),
         static_cast<double>(hud_data.accel_pct),
         static_cast<double>(hud_data.jump_pct),
-        static_cast<double>(hud_data.time_scale)
+        static_cast<double>(hud_data.time_scale),
+        gp_cfg.auto_skillcheck ? 1 : 0,
+        gp_cfg.fly_cheat_enabled ? 1 : 0,
+        static_cast<double>(gp_cfg.fly_vertical_speed),
+        gp_cfg.apply_fov_override ? 1 : 0
     );
 
     pthread_mutex_unlock(&hud_data.mutex);
@@ -2865,8 +2984,105 @@ INSTRUMENT_LOCAL static void publish_shared_snapshot() noexcept {
     ipc::write_snapshot_file(snap);
 }
 
+INSTRUMENT_LOCAL inline uint64_t compute_fnv1a64(std::string_view data) noexcept {
+    uint64_t hash = 14695981039346656037ULL;
+    for (unsigned char c : data) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+INSTRUMENT_LOCAL inline Status normalize_pipe_status_record(const char* file_path) noexcept {
+    if (file_path == nullptr || file_path[0] == '\0') {
+        return Status::InvalidArgument;
+    }
+    std::FILE* fp = std::fopen(file_path, "rb");
+    if (!fp) {
+        return Status::Ok;
+    }
+    char line[512]{};
+    const char* got = std::fgets(line, sizeof(line), fp);
+    std::fclose(fp);
+    if (!got) {
+        return Status::Ok;
+    }
+
+    size_t len = std::strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        line[--len] = '\0';
+    }
+    if (std::strncmp(line, "1|", 2) != 0) {
+        return Status::Ok;
+    }
+
+    std::array<char*, 6> cols{};
+    cols[0] = line;
+    size_t col_idx = 1;
+    for (char* p = line; *p != '\0' && col_idx < cols.size(); ++p) {
+        if (*p == '|') {
+            *p = '\0';
+            cols[col_idx++] = p + 1;
+        }
+    }
+    if (col_idx < 6 || std::strchr(cols[5], '|') != nullptr) {
+        return Status::Ok;
+    }
+    if (std::strcmp(cols[3], "0") == 0) {
+        return Status::Ok;
+    }
+
+    char prefix[384]{};
+    const int prefix_len = std::snprintf(
+        prefix,
+        sizeof(prefix),
+        "%s|%s|%s|0|%s",
+        cols[0],
+        cols[1],
+        cols[2],
+        cols[4]
+    );
+    if (prefix_len <= 0 || static_cast<size_t>(prefix_len) >= sizeof(prefix)) {
+        return Status::InvalidArgument;
+    }
+
+    const char* hash_str = cols[5];
+    char recomputed_hash[24]{};
+    if (hash_str[0] == '\0') {
+        const uint64_t fnv = compute_fnv1a64(std::string_view{prefix, static_cast<size_t>(prefix_len)});
+        std::snprintf(recomputed_hash, sizeof(recomputed_hash), "%016llx", static_cast<unsigned long long>(fnv));
+        hash_str = recomputed_hash;
+    }
+
+    char out_line[512]{};
+    const int out_len = std::snprintf(out_line, sizeof(out_line), "%s|%s\n", prefix, hash_str);
+    if (out_len <= 0 || static_cast<size_t>(out_len) >= sizeof(out_line)) {
+        return Status::InvalidArgument;
+    }
+
+    char tmp_path[320]{};
+    std::snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", file_path);
+    if (std::FILE* out_fp = std::fopen(tmp_path, "wb")) {
+        const size_t written = std::fwrite(out_line, 1, static_cast<size_t>(out_len), out_fp);
+        std::fclose(out_fp);
+        if (written == static_cast<size_t>(out_len) && std::rename(tmp_path, file_path) == 0) {
+            return Status::Ok;
+        }
+        (void)::unlink(tmp_path);
+    }
+
+    if (std::FILE* out_fp = std::fopen(file_path, "wb")) {
+        const size_t written = std::fwrite(out_line, 1, static_cast<size_t>(out_len), out_fp);
+        std::fclose(out_fp);
+        return (written == static_cast<size_t>(out_len)) ? Status::Ok : Status::PartialTransfer;
+    }
+    return Status::UnmappedOrFault;
+}
+
 INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     poll_external_mod_menu_config();
+    static constexpr const char* kLocalDiagStatusPath = "/data/local/tmp/dbdm_diag_status.log";
+    (void)normalize_pipe_status_record(kLocalDiagStatusPath);
 
     hud::GameplayManipulationConfig tick_gp_cfg{};
     {
@@ -3675,11 +3891,20 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         s_auth_logged_role   = 255U;
     }
 
-    const bool authoritative_write_safe = write_safe && gs_has_authority;
+    uint8_t pawn_local_role = 0U;
+    if (local_pawn != 0) {
+        if (const auto r = mem::read<uint8_t>(local_pawn + off.actor_local_role)) {
+            pawn_local_role = *r;
+        }
+    }
+    // Allow state reconciliation on both ROLE_Authority (3) and ROLE_AutonomousProxy (2)
+    const bool authoritative_write_safe =
+        write_safe && (gs_has_authority || pawn_local_role == 2U || pawn_local_role == 3U);
 
     // Execute Item 3: Player Name Override + Read-back Verification Log
-    // Works in both Lobby and Active Match whenever APlayerState is a verified live UObject
-    if (should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0') {
+    // Works in both Lobby and Active Match whenever APlayerState is a verified live UObject (never on pre-login Start screen)
+    if (write_safe && should_apply_player_name && local_player_st != 0 && target_player_name[0] != '\0' &&
+        std::strncmp(current_player_name.data(), "localhost", 9) != 0) {
         if (ue4::SpatialAndKinematicPipeline::validate_canonical_uobject(local_player_st, 0x330U, guobjectarray_abs, off)) {
             const Status name_st = ue4::LocalPlayerNameController::override_local_name_utf8(
                 local_player_st,
@@ -3722,6 +3947,15 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
 
     // Execute Item 2: Persistent Character Movement Component Hook (Kinematics Override + Baseline Restore)
     if (write_safe && should_apply_kinematics && (local_pc != 0 || local_pawn != 0)) {
+        if (move_chain.is_valid && move_chain.movement_component != 0 && !sync_res.fly_cheat_enabled) {
+            (void)ue4::clamp_kinematic_envelope(
+                move_chain.movement_component,
+                target_walk_speed,
+                false,
+                0.0f,
+                off
+            );
+        }
         static uintptr_t s_last_kin_err_pawn = 0;
         const Status kin_st = ue4::SpatialAndKinematicPipeline::apply_kinematic_limits(
             local_pc,
@@ -3793,15 +4027,17 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     }
 
     // Execute Advanced Feature 3: Auto Skillcheck (Chaining + Auto-Great), Auto Heal & Trap Immunity
-    if (write_safe && sync_res.auto_skillcheck && (local_pawn != 0 || local_pc != 0)) {
+    if (write_safe && (local_pawn != 0 || local_pc != 0)) {
         if (ue4::SpatialAndKinematicPipeline::apply_auto_skillcheck(
                 local_pawn,
                 local_pc,
                 base,
                 guobjectarray_abs,
                 off,
-                true,
-                sync_res.skillcheck_interval_ms)) {
+                sync_res.auto_skillcheck,
+                sync_res.skillcheck_interval_ms,
+                nearest_gen_dist_sq,
+                nearest_gen_pct)) {
             ++s_skillchecks_handled;
         }
     } else if (!sync_res.auto_skillcheck) {
@@ -3868,6 +4104,9 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                     }
                 }
             }
+            if (hatch_actor_ptr != 0) {
+                (void)ue4::align_and_dispatch_interaction(local_pawn, hatch_actor_ptr, base, off);
+            }
             const Status esc_st = ue4::SpatialAndKinematicPipeline::apply_force_escape(
                 local_pawn,
                 local_player_st,
@@ -3889,8 +4128,15 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
     }
 
-    // Execute Advanced Feature 5: Immobilize State & Player Role Setters (Authoritative Only)
+    // Execute Advanced Feature 5: Immobilize State & Player Role Setters (Authoritative & AutonomousProxy)
     if (authoritative_write_safe && sync_res.should_apply_immobilize && local_pawn != 0) {
+        (void)ue4::sync_proxy_state_frame(
+            local_pawn,
+            hud::resolve_immobilize_state_byte(sync_res.immobilize_state),
+            ue4::FVector{0.0f, 0.0f, 0.0f},
+            0.016f,
+            off
+        );
         static uintptr_t s_last_imm_err_pawn = 0;
         const Status imm_st = ue4::SpatialAndKinematicPipeline::apply_immobilize_state(
             local_pawn,
@@ -4292,6 +4538,12 @@ private:
 } // namespace runtime
 
 REGISTER_ZYGISK_MODULE(runtime::DbdZygiskModule)
+
+INSTRUMENT_C_EXPORT void dbdm_start_inprocess_worker() {
+    DIAG_LOGI("dbdm_start_inprocess_worker invoked inside com.netease.dbdena (PID=%d); starting headless telemetry worker.",
+              static_cast<int>(::getpid()));
+    (void)runtime::initialize_instrumentation();
+}
 
 INSTRUMENT_C_EXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
     if (!vm) {
@@ -4787,6 +5039,11 @@ INSTRUMENT_LOCAL static pid_t find_game_process_pid() noexcept {
 }
 
 INSTRUMENT_LOCAL static int run_standalone_daemon() noexcept {
+    if (::access("/data/adb/modules/ue4_instrument_core/zygisk/arm64-v8a.so", F_OK) == 0 &&
+        ::access("/data/adb/modules/ue4_instrument_core/disable", F_OK) != 0) {
+        DIAG_LOGI("Zygisk in-process module is active; standalone dbdm_telemetry_daemon exiting to prevent dual-worker conflict.");
+        return 0;
+    }
     DIAG_LOGI("Standalone Headless Telemetry Daemon started (PID=%d); monitoring com.netease.dbdena...",
               static_cast<int>(::getpid()));
 

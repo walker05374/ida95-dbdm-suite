@@ -14,6 +14,40 @@ except ImportError:
 
 PT_LOAD = 1
 PT_GNU_EH_FRAME = 0x6474E550
+SHT_RELA = 4
+R_AARCH64_RELATIVE = 1027
+
+
+def apply_rela_in_memory(buf: bytes) -> bytes:
+    if len(buf) < 64 or buf[:4] != b"\x7fELF" or buf[4] != 2:
+        return buf
+
+    e_shoff = struct.unpack_from("<Q", buf, 40)[0]
+    e_shentsize, e_shnum = struct.unpack_from("<HH", buf, 58)
+    if not e_shoff or not e_shnum or e_shoff + e_shnum * e_shentsize > len(buf):
+        return buf
+
+    mutable_buf: Optional[bytearray] = None
+    buf_len = len(buf)
+
+    for i in range(e_shnum):
+        sh = e_shoff + i * e_shentsize
+        _sh_name, sh_type, _sh_flags, _sh_addr, sh_offset, sh_size = struct.unpack_from(
+            "<IIQQQQ", buf, sh
+        )
+        if sh_type != SHT_RELA:
+            continue
+        sec_end = min(buf_len, int(sh_offset + sh_size))
+        for off in range(int(sh_offset), sec_end - 23, 24):
+            r_offset, r_info, r_addend = struct.unpack_from("<QQq", buf, off)
+            if (r_info & 0xFFFFFFFF) == R_AARCH64_RELATIVE and 0 <= r_offset <= buf_len - 8:
+                if struct.unpack_from("<Q", buf, r_offset)[0] == 0:
+                    if mutable_buf is None:
+                        mutable_buf = bytearray(buf)
+                    struct.pack_into("<Q", mutable_buf, r_offset, r_addend & 0xFFFFFFFFFFFFFFFF)
+
+    return bytes(mutable_buf) if mutable_buf is not None else buf
+
 
 
 @dataclass(frozen=True)

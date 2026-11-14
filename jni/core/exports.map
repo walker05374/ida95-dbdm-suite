@@ -2,6 +2,7 @@
     global:
         JNI_OnLoad;
         zygisk_module_entry;
+        dbdm_start_inprocess_worker;
         Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig;
         Java_com_dbdm_modmenu_FloatingModService_nativeGetStatus;
         Java_com_dbdm_modmenu_FloatingModService_nativePollOverlayMarkers;
