@@ -64,6 +64,9 @@ struct GameplayManipulationConfig {
     ImmobilizeState target_immobilize_state{ImmobilizeState::None};
     bool            apply_player_role{false};
     PlayerRole      target_player_role{PlayerRole::None};
+
+    // 5. Native 3D Outline Component (UDBDOutlineComponent @ 0x077F1C04) Toggle
+    bool            native_aura_enabled{false};
 };
 
 [[nodiscard]] inline GameplayManipulationConfig& get_gameplay_config() noexcept {
@@ -117,6 +120,7 @@ struct KinematicsSyncResult {
     ImmobilizeState immobilize_state{ImmobilizeState::None};
     bool            should_apply_role{false};
     PlayerRole      player_role{PlayerRole::None};
+    bool            native_aura_enabled{false};
 };
 
 namespace detail {
@@ -488,7 +492,9 @@ inline bool parse_gameplay_ipc_string(
         const char* k = kv;
         const char* v = eq + 1;
 
-        if (std::strcmp(k, "f") == 0) {
+        if (std::strcmp(k, "a") == 0 || std::strcmp(k, "aura") == 0) {
+            gp_cfg.native_aura_enabled = (v[0] == '1');
+        } else if (std::strcmp(k, "f") == 0) {
             int   fon = 0;
             float fv  = gp_cfg.target_fov;
             if (std::sscanf(v, "%d:%f", &fon, &fv) == 2 && std::isfinite(fv)) {
@@ -1000,6 +1006,7 @@ inline KinematicsSyncResult sync_telemetry_to_hud(
     result.immobilize_state        = gp_cfg.target_immobilize_state;
     result.should_apply_role       = gp_cfg.apply_player_role && (gp_cfg.target_player_role != PlayerRole::None);
     result.player_role             = gp_cfg.target_player_role;
+    result.native_aura_enabled     = match_ready && gp_cfg.native_aura_enabled;
 
     return result;
 }

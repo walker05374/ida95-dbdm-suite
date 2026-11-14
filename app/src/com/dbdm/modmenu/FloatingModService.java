@@ -115,6 +115,7 @@ public final class FloatingModService extends Service {
     // Estado de Visualização 3D e Categorias (PT-BR, espelhado com SceneTelemetryData)
     private boolean hudOpen          = true;
     private boolean drawMarkers      = false;
+    private boolean nativeAura       = false;
     private float   maxDist          = 250.0f;
     private boolean showAntagonist   = false; // Assassino
     private boolean showTeammates    = false; // Sobrevivente
@@ -615,10 +616,11 @@ public final class FloatingModService extends Service {
         final float clampedFov = Math.max(80.0f, Math.min(120.0f, fovValue));
         final String immToken  = (immobilizeState != null && !immobilizeState.isEmpty()) ? immobilizeState : "off";
         final String roleToken = (playerRole != null && !playerRole.isEmpty()) ? playerRole : "none";
-        // Compact payload (< 56 bytes) so it never truncates inside ControlPayload::label_filter[64]
+        // Compact payload (< 60 bytes) so it never truncates inside ControlPayload::label_filter[64]
         return String.format(
             Locale.US,
-            "@gp:f=%d:%.0f;s=%d;ah=%d;t=%d;y=%d:%.0f;e=%d;i=%s;r=%s;c=%02X",
+            "@gp:a=%d;f=%d:%.0f;s=%d;ah=%d;t=%d;y=%d:%.0f;e=%d;i=%s;r=%s;c=%02X",
+            nativeAura ? 1 : 0,
             applyFov ? 1 : 0,
             clampedFov,
             autoSkillcheck ? 1 : 0,
@@ -922,10 +924,10 @@ public final class FloatingModService extends Service {
         });
 
         // ====================================================================
-        // ABA 1: VISUAL (Indicadores, FOV e Categorias)
+        // ABA 1: VISUAL (ESP Box 2D, Aura Nativa 3D, FOV e Categorias)
         // ====================================================================
         CheckBox cbDrawMarkers = new CheckBox(this);
-        styleMinimalCheckBox(cbDrawMarkers, "Ativar Indicadores", drawMarkers);
+        styleMinimalCheckBox(cbDrawMarkers, "Ativar Indicadores (ESP Box 2D)", drawMarkers);
         cbDrawMarkers.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
@@ -937,6 +939,17 @@ public final class FloatingModService extends Service {
             }
         });
         sectionVisuals.addView(cbDrawMarkers);
+
+        CheckBox cbNativeAura = new CheckBox(this);
+        styleMinimalCheckBox(cbNativeAura, "Ativar Aura Nativa (UDBDOutline 3D)", nativeAura);
+        cbNativeAura.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                nativeAura = isChecked;
+                pushConfigToNative();
+            }
+        });
+        sectionVisuals.addView(cbNativeAura);
 
         final TextView tvMaxDist = buildMinimalSliderLabel("Distância Máxima: " + (int) maxDist + " m");
         sectionVisuals.addView(tvMaxDist);

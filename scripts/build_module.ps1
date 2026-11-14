@@ -420,23 +420,25 @@ else {
 Write-Host "[6/6] Verificando conexao ADB com o dispositivo para envio direto para /sdcard/Download/..." -ForegroundColor Cyan
 $CandidateTargets = @("192.168.1.68:10001", "192.168.1.8:10001", "192.168.1.191:10001")
 $TargetSerial = $null
-foreach ($CandTarget in $CandidateTargets) {
-    $PrevEapAdb = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    & $AdbExe connect $CandTarget *> $null
-    $ErrorActionPreference = $PrevEapAdb
+if ($env:SKIP_ADB -ne "1") {
+    foreach ($CandTarget in $CandidateTargets) {
+        $PrevEapAdb = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & $AdbExe connect $CandTarget *> $null
+        $ErrorActionPreference = $PrevEapAdb
 
-    $AdbDevices = (& $AdbExe devices) -join "`n"
-    $EscapedTarget = [regex]::Escape($CandTarget)
-    if ($AdbDevices -match "$EscapedTarget\s+device\b") {
-        $TargetSerial = $CandTarget
-        break
+        $AdbDevices = (& $AdbExe devices) -join "`n"
+        $EscapedTarget = [regex]::Escape($CandTarget)
+        if ($AdbDevices -match "$EscapedTarget\s+device\b") {
+            $TargetSerial = $CandTarget
+            break
+        }
     }
-}
-if (-not $TargetSerial) {
-    $AdbDevices = (& $AdbExe devices) -join "`n"
-    if ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
-        $TargetSerial = $Matches[1]
+    if (-not $TargetSerial) {
+        $AdbDevices = (& $AdbExe devices) -join "`n"
+        if ($AdbDevices -match "(?m)^(\S+)\s+device\b") {
+            $TargetSerial = $Matches[1]
+        }
     }
 }
 

@@ -100,6 +100,10 @@ inline constexpr std::uintptr_t kOutlineSavedAlpha                  = 0x02F8ULL;
 inline constexpr std::uintptr_t kOutlineInterpolationAlpha          = 0x02FCULL;     // float ColorInterpolationAlpha (1.0f = complete)
 inline constexpr std::uintptr_t kOutlineCurrentTargetColor          = 0x0300ULL;     // FLinearColor CurrentTargetColor (16 bytes RGBA)
 inline constexpr std::uintptr_t kOutlineTargetColor                 = 0x0314ULL;     // FLinearColor TargetColor (16 bytes RGBA)
+inline constexpr std::uintptr_t kOutlineTargetColorR                = 0x0314ULL;     // float TargetColor.R (SetTargetColor @ 0x0748A47C)
+inline constexpr std::uintptr_t kOutlineTargetColorG                = 0x0318ULL;     // float TargetColor.G (SetTargetColor @ 0x0748A47C)
+inline constexpr std::uintptr_t kOutlineTargetColorB                = 0x031CULL;     // float TargetColor.B (SetTargetColor @ 0x0748A47C)
+inline constexpr std::uintptr_t kOutlineTargetColorA                = 0x0320ULL;     // float TargetColor.A (SetTargetColor @ 0x0748A47C)
 inline constexpr std::uintptr_t kOutlineClipIfVisible               = 0x0324ULL;     // uint8 bool bIsClipOutlinesIfVisible
 inline constexpr std::uintptr_t kOutlineFadeIntensity               = 0x0328ULL;     // float FadeIntensity (default 1.0f)
 inline constexpr std::uintptr_t kOutlineRenderStrategySelector      = 0x0330ULL;     // FDBDOutlineRenderStrategySelector
@@ -291,22 +295,22 @@ struct NativeOutlineConfig {
     std::array<CategoryOutlineFilter, static_cast<std::size_t>(OutlineCategory::Count)> categories{{
         // [0] Slasher (ASlasherPlayer) — Red Crimson, 128m default
         CategoryOutlineFilter{true, 128.0f, LinearColor{1.00f, 0.14f, 0.14f, 1.00f}, 252},
-        // [1] Camper (ACamperPlayer) — Cyan/Teal, 96m default
-        CategoryOutlineFilter{true,  96.0f, LinearColor{0.00f, 0.90f, 1.00f, 1.00f}, 250},
-        // [2] Generator (AGenerator) — Dynamic Progress / Emerald, 96m default
-        CategoryOutlineFilter{true,  96.0f, LinearColor{0.18f, 0.80f, 0.44f, 1.00f}, 248},
-        // [3] Pallet (APallet) — Gold/Amber, 48m default
-        CategoryOutlineFilter{true,  48.0f, LinearColor{1.00f, 0.88f, 0.25f, 1.00f}, 244},
-        // [4] Window (AWindow) — Sky Blue / White-Gold, 36m default
-        CategoryOutlineFilter{true,  36.0f, LinearColor{0.35f, 0.78f, 1.00f, 1.00f}, 242},
-        // [5] Totem (ATotem) — Dull Gold (Hex/Boon overridden when distinguish_hex_boon=true), 64m default
-        CategoryOutlineFilter{true,  64.0f, LinearColor{0.95f, 0.77f, 0.06f, 1.00f}, 246},
-        // [6] Hatch (AHatch) — Royal Purple / Magenta, 128m default
-        CategoryOutlineFilter{true, 128.0f, LinearColor{0.88f, 0.25f, 0.98f, 1.00f}, 254},
-        // [7] EscapeDoor (AEscapeDoor) — Violet / Amber, 128m default
-        CategoryOutlineFilter{true, 128.0f, LinearColor{0.75f, 0.35f, 1.00f, 1.00f}, 253},
-        // [8] Searchable / Chest (ASearchable) — Warm Orange, 48m default
-        CategoryOutlineFilter{true,  48.0f, LinearColor{1.00f, 0.60f, 0.05f, 1.00f}, 240},
+        // [1] Camper (ACamperPlayer) — Emerald Green, 96m default
+        CategoryOutlineFilter{true,  96.0f, LinearColor{0.15f, 0.95f, 0.35f, 1.00f}, 250},
+        // [2] Generator (AGenerator) — Cyan / Yellow Dynamic Progress, 96m default
+        CategoryOutlineFilter{true,  96.0f, LinearColor{0.00f, 0.92f, 1.00f, 1.00f}, 248},
+        // [3] Pallet (APallet) — Vivid Orange, 48m default
+        CategoryOutlineFilter{true,  48.0f, LinearColor{1.00f, 0.55f, 0.10f, 1.00f}, 244},
+        // [4] Window (AWindow) — Warm Orange-Amber, 36m default
+        CategoryOutlineFilter{true,  36.0f, LinearColor{1.00f, 0.65f, 0.15f, 1.00f}, 242},
+        // [5] Totem (ATotem) — Royal Purple (Hex/Boon overridden when distinguish_hex_boon=true), 64m default
+        CategoryOutlineFilter{true,  64.0f, LinearColor{0.78f, 0.25f, 1.00f, 1.00f}, 246},
+        // [6] Hatch (AHatch) — Luminous Cyan-Teal, 128m default
+        CategoryOutlineFilter{true, 128.0f, LinearColor{0.10f, 0.96f, 0.88f, 1.00f}, 254},
+        // [7] EscapeDoor (AEscapeDoor) — Bright Gold-Yellow, 128m default
+        CategoryOutlineFilter{true, 128.0f, LinearColor{1.00f, 0.85f, 0.15f, 1.00f}, 253},
+        // [8] Searchable / Chest (ASearchable) — Warm Gold, 48m default
+        CategoryOutlineFilter{true,  48.0f, LinearColor{1.00f, 0.75f, 0.12f, 1.00f}, 240},
         // [9] BearTrap (ABearTrap / ABaseTrap) — Fiery Orange-Red, 64m default
         CategoryOutlineFilter{false, 64.0f, LinearColor{1.00f, 0.32f, 0.08f, 1.00f}, 245}
     }};
@@ -563,6 +567,8 @@ struct OriginalOutlineSnapshot {
     std::uint8_t generator_force_reveal_36d{0};
     LinearColor  gen_unrepaired_color_138{1.0f, 0.1f, 0.1f, 1.0f};
     bool         gen_strategy_captured{false};
+    std::uint8_t vaultable_can_be_revealed_138{0};
+    bool         vaultable_strategy_captured{false};
 };
 
 struct ActorOutlineSlot {
@@ -1389,6 +1395,15 @@ private:
                     base.gen_strategy_captured = true;
                 }
             }
+        } else if ((slot.category == OutlineCategory::Pallet || slot.category == OutlineCategory::Window) &&
+                   slot.strategy_comp_ptr != 0 &&
+                   is_uobject_alive(read_mem, slot.strategy_comp_ptr, guobjectarray_abs)) {
+            std::uint8_t cur_vault_rev = 255U;
+            if (read_mem(slot.strategy_comp_ptr + offsets::kVaultableStrategyCanBeRevealed, cur_vault_rev) &&
+                cur_vault_rev <= 1U) {
+                base.vaultable_can_be_revealed_138 = cur_vault_rev;
+                base.vaultable_strategy_captured   = true;
+            }
         }
 
         for (std::size_t i = 0; i < slot.mesh_count; ++i) {
@@ -1483,11 +1498,38 @@ private:
             }
         }
 
+        // 0c. UVaultableOutlineUpdateStrategy::_canBeRevealedToLocalPlayer (+0x0138) for Pallet / Window
+        if ((slot.category == OutlineCategory::Pallet || slot.category == OutlineCategory::Window) &&
+            slot.strategy_comp_ptr != 0 &&
+            is_uobject_alive(read_mem, slot.strategy_comp_ptr, guobjectarray_abs)) {
+            std::uint8_t cur_vault_rev = 255U;
+            if (read_mem(slot.strategy_comp_ptr + offsets::kVaultableStrategyCanBeRevealed, cur_vault_rev) &&
+                cur_vault_rev <= 1U) {
+                const std::uint8_t desired_rev = want_aura_visibility
+                    ? static_cast<std::uint8_t>(1U)
+                    : slot.baseline.vaultable_can_be_revealed_138;
+                if (cur_vault_rev != desired_rev) {
+                    (void)safe_verified_write(
+                        read_mem,
+                        write_mem,
+                        slot.strategy_comp_ptr,
+                        offsets::kVaultableStrategyCanBeRevealed,
+                        desired_rev,
+                        guobjectarray_abs);
+                }
+                if (want_aura_visibility) {
+                    applied_any = true;
+                }
+            }
+        }
+
         // 1. Primary Path: Verified UDBDOutlineComponent universal offsets
         if (slot.outline_comp_ptr != 0 &&
             is_verified_dbd_outline_component(read_mem, slot.outline_comp_ptr, guobjectarray_abs)) {
             const std::uintptr_t oc = slot.outline_comp_ptr;
 
+            std::uint8_t cur_above_out = 0;
+            std::uint8_t cur_limit_cd  = 1;
             std::uint8_t cur_fade_close = 1;
             std::uint8_t cur_always_vis = 0;
             float        cur_min_dist   = 448.0f;
@@ -1495,14 +1537,24 @@ private:
             LinearColor  cur_shader{};
             LinearColor  cur_target{};
 
-            (void)read_mem(oc + offsets::kOutlineFadeOutAsClosingIn,     cur_fade_close);
-            (void)read_mem(oc + offsets::kOutlineIsAlwaysVisible,        cur_always_vis);
-            (void)read_mem(oc + offsets::kOutlineMinimumOutlineDistance, cur_min_dist);
-            (void)read_mem(oc + offsets::kOutlineForceOutlineFarAway,    cur_force_far);
-            (void)read_mem(oc + offsets::kOutlineCurrentShaderColor,     cur_shader);
-            (void)read_mem(oc + offsets::kOutlineTargetColor,            cur_target);
+            (void)read_mem(oc + offsets::kOutlineShouldBeAboveOutlines,       cur_above_out);
+            (void)read_mem(oc + offsets::kOutlineLimitToCustomDepthObjects,   cur_limit_cd);
+            (void)read_mem(oc + offsets::kOutlineFadeOutAsClosingIn,          cur_fade_close);
+            (void)read_mem(oc + offsets::kOutlineIsAlwaysVisible,             cur_always_vis);
+            (void)read_mem(oc + offsets::kOutlineMinimumOutlineDistance,      cur_min_dist);
+            (void)read_mem(oc + offsets::kOutlineForceOutlineFarAway,         cur_force_far);
+            (void)read_mem(oc + offsets::kOutlineCurrentShaderColor,          cur_shader);
+            (void)read_mem(oc + offsets::kOutlineTargetColor,                 cur_target);
 
             if (want_aura_visibility) {
+                if (cur_above_out != 1U) {
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineShouldBeAboveOutlines, static_cast<std::uint8_t>(1U), guobjectarray_abs);
+                }
+                if (cur_limit_cd != 0U) {
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineLimitToCustomDepthObjects, static_cast<std::uint8_t>(0U), guobjectarray_abs);
+                }
                 if (cur_fade_close != 0U) {
                     (void)safe_verified_write(
                         read_mem, write_mem, oc, offsets::kOutlineFadeOutAsClosingIn, static_cast<std::uint8_t>(0U), guobjectarray_abs);
@@ -1520,6 +1572,14 @@ private:
                         read_mem, write_mem, oc, offsets::kOutlineForceOutlineFarAway, static_cast<std::uint8_t>(1U), guobjectarray_abs);
                 }
             } else if (slot.baseline.captured) {
+                if (cur_above_out != slot.baseline.should_be_above_2b4) {
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineShouldBeAboveOutlines, slot.baseline.should_be_above_2b4, guobjectarray_abs);
+                }
+                if (cur_limit_cd != slot.baseline.limit_custom_depth_2b5) {
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineLimitToCustomDepthObjects, slot.baseline.limit_custom_depth_2b5, guobjectarray_abs);
+                }
                 if (cur_always_vis != slot.baseline.is_always_visible_2b7) {
                     (void)safe_verified_write(
                         read_mem, write_mem, oc, offsets::kOutlineIsAlwaysVisible, slot.baseline.is_always_visible_2b7, guobjectarray_abs);
@@ -1540,8 +1600,15 @@ private:
                         read_mem, write_mem, oc, offsets::kOutlineInterpolationAlpha, 0.5f, guobjectarray_abs);
                     (void)safe_verified_write(
                         read_mem, write_mem, oc, offsets::kOutlineCurrentTargetColor, target_color, guobjectarray_abs);
+                    // TargetColor RGBA floats (+0x0314 R, +0x0318 G, +0x031C B, +0x0320 A — SetTargetColor @ 0x0748A47C)
                     (void)safe_verified_write(
-                        read_mem, write_mem, oc, offsets::kOutlineTargetColor, target_color, guobjectarray_abs);
+                        read_mem, write_mem, oc, offsets::kOutlineTargetColorR, target_color.r, guobjectarray_abs);
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineTargetColorG, target_color.g, guobjectarray_abs);
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineTargetColorB, target_color.b, guobjectarray_abs);
+                    (void)safe_verified_write(
+                        read_mem, write_mem, oc, offsets::kOutlineTargetColorA, target_color.a, guobjectarray_abs);
                     (void)safe_verified_write(
                         read_mem, write_mem, oc, offsets::kOutlineFadeIntensity, 1.0f, guobjectarray_abs);
                 }
@@ -1608,10 +1675,28 @@ private:
             }
         }
 
+        // 0c. Restore UVaultableOutlineUpdateStrategy::_canBeRevealedToLocalPlayer (+0x0138)
+        if ((slot.category == OutlineCategory::Pallet || slot.category == OutlineCategory::Window) &&
+            base.vaultable_strategy_captured &&
+            slot.strategy_comp_ptr != 0 &&
+            is_uobject_alive(read_mem, slot.strategy_comp_ptr, guobjectarray_abs)) {
+            (void)safe_verified_write(
+                read_mem,
+                write_mem,
+                slot.strategy_comp_ptr,
+                offsets::kVaultableStrategyCanBeRevealed,
+                base.vaultable_can_be_revealed_138,
+                guobjectarray_abs);
+        }
+
         // 1. Restore verified UDBDOutlineComponent universal fields
         if (slot.outline_comp_ptr != 0 &&
             is_verified_dbd_outline_component(read_mem, slot.outline_comp_ptr, guobjectarray_abs)) {
             const std::uintptr_t oc = slot.outline_comp_ptr;
+            (void)safe_verified_write(
+                read_mem, write_mem, oc, offsets::kOutlineShouldBeAboveOutlines, base.should_be_above_2b4, guobjectarray_abs);
+            (void)safe_verified_write(
+                read_mem, write_mem, oc, offsets::kOutlineLimitToCustomDepthObjects, base.limit_custom_depth_2b5, guobjectarray_abs);
             (void)safe_verified_write(
                 read_mem, write_mem, oc, offsets::kOutlineFadeOutAsClosingIn, base.fade_out_closing_in_2b6, guobjectarray_abs);
             (void)safe_verified_write(

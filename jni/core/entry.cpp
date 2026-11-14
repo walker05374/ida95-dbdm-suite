@@ -11,6 +11,7 @@
 #include "ipc_shared_state.hpp"
 #include "scene_collector_helpers.hpp"
 #include "telemetry_adapter.hpp"
+#include "native_outline_controller.hpp"
 #include "diagnostic_tick_bridge.hpp"
 #include "crash_logger.hpp"
 #include <dirent.h>
@@ -232,6 +233,25 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t timing_component          = 0x0290;     // USkillCheck* UPlayerInteractionHandler::_skillCheck (+0x0290)
     uintptr_t fn_timing_callback        = 0x06E18CF0; // USkillCheck::OnSkillCheckInput (@ 0x06E18CF0, void(*)(uintptr_t))
     uintptr_t fn_interaction_dispatch   = 0x06F400D8; // ACamperPlayer::HatchEscapeZoneEntered (@ 0x06F400D8)
+
+    // UDBDOutlineComponent (StaticClass @ 0x077F1C04, SetTargetColor @ 0x0748A47C) & UOutlineUpdateStrategy Offsets
+    uintptr_t rva_dbd_outline_static_cls= 0x077F1C04; // UDBDOutlineComponent::StaticClass()
+    uintptr_t rva_outline_set_target_col= 0x0748A47C; // UDBDOutlineComponent::SetTargetColor(FLinearColor)
+    uintptr_t actor_instance_components = 0x0200;     // TArray<UActorComponent*> AActor::InstanceComponents (+0x0200)
+    uintptr_t actor_bp_created_comps    = 0x0210;     // TArray<UActorComponent*> AActor::BlueprintCreatedComponents (+0x0210)
+    uintptr_t strategy_outline_comp_ptr = 0x00B8;     // UDBDOutlineComponent* UOutlineUpdateStrategy::_outlineComponent (+0x00B8)
+    uintptr_t vaultable_can_be_revealed = 0x0138;     // uint8 bool UVaultableOutlineUpdateStrategy::_canBeRevealedToLocalPlayer (+0x0138)
+    uintptr_t generator_force_reveal    = 0x036D;     // uint8 bool AGenerator::ForceRevealToLocalPlayer (+0x036D)
+    uintptr_t outline_should_be_above   = 0x02B4;     // uint8 bool UDBDOutlineComponent::ShouldBeAboveOutlines (+0x02B4)
+    uintptr_t outline_limit_custom_depth= 0x02B5;     // uint8 bool UDBDOutlineComponent::LimitToCustomDepthObjects (+0x02B5)
+    uintptr_t outline_fade_closing_in   = 0x02B6;     // uint8 bool UDBDOutlineComponent::FadeOutAsClosingIn (+0x02B6)
+    uintptr_t outline_is_always_visible = 0x02B7;     // uint8 bool UDBDOutlineComponent::IsAlwaysVisible (+0x02B7)
+    uintptr_t outline_min_distance      = 0x02B8;     // float UDBDOutlineComponent::MinimumOutlineDistance (+0x02B8)
+    uintptr_t outline_force_far_away    = 0x02BD;     // uint8 bool UDBDOutlineComponent::ForceOutlineFarAway (+0x02BD)
+    uintptr_t outline_target_color_r    = 0x0314;     // float UDBDOutlineComponent::TargetColor.R (+0x0314)
+    uintptr_t outline_target_color_g    = 0x0318;     // float UDBDOutlineComponent::TargetColor.G (+0x0318)
+    uintptr_t outline_target_color_b    = 0x031C;     // float UDBDOutlineComponent::TargetColor.B (+0x031C)
+    uintptr_t outline_target_color_a    = 0x0320;     // float UDBDOutlineComponent::TargetColor.A (+0x0320)
 };
 
 using Offsets = EngineOffsets;
@@ -2274,6 +2294,21 @@ public:
         static std::array<uint32_t, 64> s_logged_unresolved_fnames{};
         static size_t s_logged_unresolved_count = 0;
 
+        static uint64_t s_outline_tick = 0ULL;
+        ++s_outline_tick;
+        hud::outline::NativeOutlineController& outline_ctrl = hud::outline::get_native_outline_controller();
+        const hud::outline::NativeOutlineConfig& outline_cfg = hud::outline::get_native_outline_config();
+        auto outline_read_fn = [](uintptr_t addr, auto& out_val) noexcept -> bool {
+            if (const auto v = mem::read<std::decay_t<decltype(out_val)>>(addr)) {
+                out_val = *v;
+                return true;
+            }
+            return false;
+        };
+        auto outline_write_fn = [](uintptr_t addr, const auto& val) noexcept -> bool {
+            return mem::write_data<std::decay_t<decltype(val)>>(addr, val) == Status::Ok;
+        };
+
         for (uintptr_t ulevel_addr : ulevels) {
             if (!InProcessMemory::IsValidPtr(ulevel_addr, 0xB0U)) {
                 continue;
@@ -2308,6 +2343,11 @@ public:
 
                 resolve_uclass_hierarchy(*actor_ptr, name_resolver, class_buf, super_chain_buf);
 
+                const hud::outline::OutlineCategory outline_cat = hud::outline::classify_outline_category(
+                    name_buf.data(),
+                    class_buf.data(),
+                    super_chain_buf.data());
+
                 int32_t prio = 99;
                 bool is_unresolved = false;
                 const char* cat_label = classify_actor_category(
@@ -2317,6 +2357,26 @@ public:
                     &prio,
                     &is_unresolved);
                 if (cat_label == nullptr) {
+                    if (outline_cat != hud::outline::OutlineCategory::None) {
+                        if (const auto w_pos = read_actor_location(*actor_ptr, guobjectarray_abs, off);
+                            w_pos.has_value() && hud::adapter::is_valid_world_coordinate(w_pos->x, w_pos->y, w_pos->z)) {
+                            const float w_dsq = origin.dist_squared(*w_pos);
+                            if (std::isfinite(w_dsq) && w_dsq <= max_dist_sq) {
+                                const float w_dist_m = std::sqrt(w_dsq) * 0.01f;
+                                outline_ctrl.evaluate_actor(
+                                    outline_read_fn,
+                                    outline_write_fn,
+                                    *actor_ptr,
+                                    outline_cat,
+                                    w_dist_m,
+                                    0.0f,
+                                    s_outline_tick,
+                                    guobjectarray_abs,
+                                    outline_cfg,
+                                    ignore_actor);
+                            }
+                        }
+                    }
                     if (is_unresolved && class_buf[0] != '\0') {
                         bool already_logged = false;
                         for (size_t u = 0; u < s_logged_unresolved_count; ++u) {
@@ -2432,6 +2492,20 @@ public:
                     gen_pct = 0.0f;
                 }
 
+                if (outline_cat != hud::outline::OutlineCategory::None) {
+                    outline_ctrl.evaluate_actor(
+                        outline_read_fn,
+                        outline_write_fn,
+                        *actor_ptr,
+                        outline_cat,
+                        dist_m,
+                        gen_pct,
+                        s_outline_tick,
+                        guobjectarray_abs,
+                        outline_cfg,
+                        ignore_actor);
+                }
+
                 EntitySnapshot snap{};
                 snap.actor_address   = *actor_ptr;
                 snap.fname_id        = fname_idx;
@@ -2466,6 +2540,13 @@ public:
                 }
             }
         }
+
+        outline_ctrl.prune_and_restore_stale(
+            outline_read_fn,
+            outline_write_fn,
+            s_outline_tick,
+            guobjectarray_abs,
+            ulevels.front());
 
         // Sort collected entities by priority_rank ascending, then distance_meters ascending
         std::sort(
@@ -2801,6 +2882,8 @@ INSTRUMENT_LOCAL static void poll_external_mod_menu_config() noexcept {
             hud_data.hud_open = (val[0] == '1');
         } else if (std::strcmp(key, "draw_markers") == 0) {
             hud_data.draw_2d_node_markers = (val[0] == '1');
+        } else if (std::strcmp(key, "native_aura") == 0) {
+            gp_cfg.native_aura_enabled = (val[0] == '1');
         } else if (std::strcmp(key, "max_dist") == 0) {
             float v = 0.0f;
             if (std::sscanf(val, "%f", &v) == 1 && v >= 1.0f && v <= 1000.0f) {
@@ -3080,6 +3163,14 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     (void)normalize_pipe_status_record(kLocalDiagStatusPath);
 
     hud::GameplayManipulationConfig tick_gp_cfg{};
+    float tick_max_dist_m          = 250.0f;
+    bool  tick_show_antagonist     = true;
+    bool  tick_show_teammates      = true;
+    bool  tick_show_power_nodes    = true;
+    bool  tick_show_shrines        = true;
+    bool  tick_show_containers     = true;
+    bool  tick_show_barriers       = true;
+    bool  tick_show_portals        = true;
     {
         hud::SceneTelemetryData& hud_data = hud::get_telemetry_data();
         pthread_mutex_lock(&hud_data.mutex);
@@ -3087,7 +3178,15 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         if (std::strncmp(hud_data.label_filter, "@gp:", 4) == 0) {
             (void)hud::parse_gameplay_ipc_string(hud_data.label_filter, hud_data, gp_cfg);
         }
-        tick_gp_cfg = gp_cfg;
+        tick_gp_cfg           = gp_cfg;
+        tick_max_dist_m       = hud_data.max_render_distance_m;
+        tick_show_antagonist  = hud_data.show_antagonist;
+        tick_show_teammates   = hud_data.show_teammates;
+        tick_show_power_nodes = hud_data.show_power_nodes;
+        tick_show_shrines     = hud_data.show_shrines;
+        tick_show_containers  = hud_data.show_containers;
+        tick_show_barriers    = hud_data.show_barriers;
+        tick_show_portals     = hud_data.show_portals;
         pthread_mutex_unlock(&hud_data.mutex);
     }
 
@@ -3605,6 +3704,37 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     hud::adapter::DiagnosticTickStaticPool& tick_pool = hud::adapter::get_diagnostic_tick_pool();
     tick_pool.reset();
     size_t collected_count = 0;
+
+    {
+        hud::outline::NativeOutlineConfig& outline_cfg = hud::outline::get_native_outline_config();
+        const bool outline_write_ready =
+            (!is_lobby_level && local_pawn != 0 && s_teardown_write_lock_ticks == 0U);
+        outline_cfg.master_enabled = outline_write_ready && tick_gp_cfg.native_aura_enabled;
+        const float clamped_dist_m = std::clamp(tick_max_dist_m, 10.0f, 1000.0f);
+
+        outline_cfg.filter(hud::outline::OutlineCategory::Slasher).enabled        = tick_show_antagonist;
+        outline_cfg.filter(hud::outline::OutlineCategory::Slasher).max_distance_m = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Camper).enabled         = tick_show_teammates;
+        outline_cfg.filter(hud::outline::OutlineCategory::Camper).max_distance_m  = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Generator).enabled      = tick_show_power_nodes;
+        outline_cfg.filter(hud::outline::OutlineCategory::Generator).max_distance_m = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Pallet).enabled         = tick_show_barriers;
+        outline_cfg.filter(hud::outline::OutlineCategory::Pallet).max_distance_m  = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Window).enabled         = tick_show_barriers;
+        outline_cfg.filter(hud::outline::OutlineCategory::Window).max_distance_m  = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Totem).enabled          = tick_show_shrines;
+        outline_cfg.filter(hud::outline::OutlineCategory::Totem).max_distance_m   = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Hatch).enabled          = tick_show_portals;
+        outline_cfg.filter(hud::outline::OutlineCategory::Hatch).max_distance_m   = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::EscapeDoor).enabled     = tick_show_portals;
+        outline_cfg.filter(hud::outline::OutlineCategory::EscapeDoor).max_distance_m = clamped_dist_m;
+        outline_cfg.filter(hud::outline::OutlineCategory::Searchable).enabled     = tick_show_containers;
+        outline_cfg.filter(hud::outline::OutlineCategory::Searchable).max_distance_m = clamped_dist_m;
+
+        if (is_lobby_level || s_teardown_write_lock_ticks > 0U) {
+            hud::outline::get_native_outline_controller().reset_cache_without_writes();
+        }
+    }
 
     if (!is_lobby_level && num_ulevels > 0 && has_valid_camera) {
         collected_count = ue4::SpatialAndKinematicPipeline::collect_nearby_entities_multi_level(
@@ -4606,6 +4736,7 @@ Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
     // 1. Update local state + send over Abstract UNIX Domain Socket IPC to com.netease.dbdena
     ipc::apply_control_to_telemetry(ctrl);
 
+    bool          gp_native_aura = false;
     bool          gp_fov_on  = false;
     float         gp_fov     = 90.0f;
     bool          gp_skill   = false;
@@ -4626,7 +4757,8 @@ Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
         if (is_gp_filter) {
             (void)hud::parse_gameplay_ipc_string(filter_cstr, local_cfg, gp_cfg);
         }
-        gp_fov_on    = gp_cfg.apply_fov_override;
+        gp_native_aura = gp_cfg.native_aura_enabled;
+        gp_fov_on      = gp_cfg.apply_fov_override;
         gp_fov       = gp_cfg.target_fov;
         gp_skill     = gp_cfg.auto_skillcheck;
         gp_trap      = gp_cfg.trap_immunity;
@@ -4678,6 +4810,7 @@ Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
             fp,
             "hud_open=%d\n"
             "draw_markers=%d\n"
+            "native_aura=%d\n"
             "max_dist=%.1f\n"
             "label_filter=%s\n"
             "gp_payload=%s\n"
@@ -4701,6 +4834,7 @@ Java_com_dbdm_modmenu_FloatingModService_nativeSyncConfig(
             "crash_log_path=%s\n",
             hud_open ? 1 : 0,
             draw_markers ? 1 : 0,
+            gp_native_aura ? 1 : 0,
             static_cast<double>(max_dist),
             (!is_gp_filter && filter_cstr) ? filter_cstr : "",
             (is_gp_filter && filter_cstr) ? filter_cstr : "",
