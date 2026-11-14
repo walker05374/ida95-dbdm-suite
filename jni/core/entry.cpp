@@ -156,10 +156,16 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t generator_charge_comp     = 0x0520;     // UChargeableComponent* AGenerator::_generatorCharge (+0x520)
     uintptr_t chargeable_replicated_chg = 0x01B8;     // float UChargeableComponent::_currentCharge._replicatedValue (+0x1A0 + 0x18)
     uintptr_t chargeable_live_charge    = 0x01BC;     // float UChargeableComponent::_currentCharge live interpolated value (+0x1A0 + 0x1C)
+    uintptr_t chargeable_replicated_spd = 0x01C0;     // float UChargeableComponent::_currentCharge._replicatedSpeed (+0x1A0 + 0x20)
+    uintptr_t chargeable_live_speed     = 0x01C4;     // float UChargeableComponent::_currentCharge current charging speed (+0x1A0 + 0x24)
+    uintptr_t chargeable_max_charge_val = 0x01D0;     // float UChargeableComponent::_currentCharge max charge (+0x1A0 + 0x30)
     uintptr_t chargeable_tunable_data   = 0x02F8;     // TMap<FName, float> UChargeableComponent::_tunableValueMap.Data (+0x2F8)
     uintptr_t chargeable_tunable_count  = 0x0300;     // int32 UChargeableComponent::_tunableValueMap.ArrayNum (+0x300)
     uintptr_t chargeable_tunable_val    = 0x000C;     // float first tunable entry value at Data + 0x0C (MaxCharge ~ 90.0f)
+    uintptr_t chargeable_enable_add_chg = 0x0368;     // uint8 bool UChargeableComponent::_enableAddCharge (+0x368)
+    uintptr_t dbd_player_is_interacting = 0x0A18;     // uint8 bool ADBDPlayer::IsInteracting (+0x0A18, read @ 0x06FF0920)
     uintptr_t player_interaction_handler= 0x0A90;     // UPlayerInteractionHandler* ADBDPlayer::_interactionHandler (+0x0A90)
+    uintptr_t dbd_player_inter_anim     = 0x0F30;     // uint8 EInteractionAnimation ADBDPlayer::_interactionAnimation (+0x0F30)
     uintptr_t handler_requested_inter   = 0x01F0;     // UInteractionDefinition* UPlayerInteractionHandler::_requestedInteraction (+0x01F0)
     uintptr_t handler_current_inter     = 0x0200;     // UInteractionDefinition* UPlayerInteractionHandler::_currentInteraction (+0x0200)
     uintptr_t interaction_id_fstr       = 0x0240;     // FString UInteractionDefinition::InteractionID (+0x0240)
@@ -194,15 +200,18 @@ struct INSTRUMENT_LOCAL EngineOffsets {
     uintptr_t camper_carry_escape_prog  = 0x1868;     // UChargeableComponent* ACamperPlayer::_carryEscapeProgress (+0x1868)
     uintptr_t camper_hookable_comp      = 0x1888;     // UHookableComponent* ACamperPlayer::_hookableComponent (+0x1888)
     uintptr_t camper_struggle_comp      = 0x1898;     // UStruggleComponent* ACamperPlayer::_struggleComponent (+0x1898)
-    uintptr_t camper_is_sacrifice_strug = 0x1B3A;     // uint8 bool ACamperPlayer::_isSacrificeStruggling (+0x1B3A, PropStruct @ 0x0EB45D60)
+    uintptr_t camper_is_being_sacrificed= 0x1A72;     // uint8 bool ACamperPlayer::_isBeingSacrificed (+0x1A72, SetBitFunc @ 0x0762222C)
+    uintptr_t camper_is_sacrifice_strug = 0x1B52;     // uint8 bool ACamperPlayer::_isSacrificeStruggling (+0x1B52, SetBitFunc @ 0x0762226C)
     uintptr_t rva_camper_is_carried     = 0x06F35ED0; // ACamperPlayer::IsBeingCarried (@ 0x06F35ED0)
     uintptr_t rva_camper_is_hooked      = 0x06F2CE98; // ACamperPlayer::IsHooked (@ 0x06F2CE98)
     uintptr_t rva_camper_input_wiggle   = 0x06F3E1A0; // ACamperPlayer::Input_Wiggle (@ 0x06F3E1A0)
     uintptr_t rva_camper_input_struggle = 0x06F3E1F4; // ACamperPlayer::Input_Struggle (@ 0x06F3E1F4)
     uintptr_t health_in_bleedout        = 0x0170;     // uint8 bool UHealthComponent::_inInjuredBleedOut (+0x0170)
-    uintptr_t health_state_count        = 0x01EC;     // int32 UHealthComponent::_currentHealthStateCount (+0x01EC)
+    uintptr_t health_state_count        = 0x01EC;     // int32 UHealthComponent::_currentHealthStateCount (+0x01EC; +0x01F8 is _dyingTimer vftable!)
+    uintptr_t health_is_dead            = 0x01F1;     // uint8 bool UHealthComponent::_isDead (+0x01F1, SetBitFunc @ 0x0760A2F0)
     uintptr_t health_heal_dying_chg     = 0x0248;     // UChargeableComponent* UHealthComponent::_healFromDyingChargeable (+0x0248)
     uintptr_t health_heal_injured_chg   = 0x0250;     // UChargeableComponent* UHealthComponent::_healFromInjuredChargeable (+0x0250)
+    uintptr_t health_mend_chg           = 0x0258;     // UChargeableComponent* UHealthComponent::_mendChargeable (+0x0258)
     uintptr_t rva_health_set_count      = 0x06F92394; // UHealthComponent::SetCurrentHealthStateCount
 
     // ADBDGameState, ATotem, APallet, ASearchable, AMeatHook Live Match State (Verified in libUE4.so Build 292949)
@@ -927,6 +936,7 @@ public:
             case 4U:  // VE_Hiding (Locker)
             case 5U:  // VE_SearchCloset (Locker)
             case 6U:  // VE_HealingOther
+            case 7U:  // VE_Recover / CrawlRecovery
             case 8U:  // VE_StruggleFree (Unhook)
             case 9U:  // VE_HealOther
             case 10U: // VE_HealSelf
@@ -938,6 +948,7 @@ public:
 
         if (matches_any("Generator") || matches_any("Repair") ||
             matches_any("Heal") || matches_any("Medkit") || matches_any("SelfCare") || matches_any("Mend") ||
+            matches_any("Recover") || matches_any("Dying") || matches_any("Sabotage") || matches_any("Chargeable") ||
             matches_any("Unhook") || matches_any("Struggle") || matches_any("FreeSelf") || matches_any("Hook") ||
             matches_any("Wiggle") || matches_any("Carry") || matches_any("Carried") ||
             matches_any("Pallet") || matches_any("PullDown") || matches_any("Vault") ||
@@ -1013,7 +1024,6 @@ public:
 
         const uintptr_t addr_branch = ue4_base + off.rva_skillcheck_res_branch;
         const uintptr_t addr_gate   = ue4_base + off.rva_skillcheck_res_gate;
-        const uintptr_t addr_tick   = ue4_base + off.rva_skillcheck_tick_gate;
 
         auto make_rw = [](uintptr_t addr, size_t len) noexcept -> bool {
             const uintptr_t page_sz    = static_cast<uintptr_t>(::sysconf(_SC_PAGESIZE));
@@ -1030,18 +1040,16 @@ public:
 
         if (enable_patch) {
             if (make_rw(addr_branch, 0x130U)) {
-                const uint32_t b_great_from_8f1c = 0x140000CBU;
-                const uint32_t b_great_from_903c = 0x14000083U;
+                // Verified in libUE4_fixed.so:
+                // 0x06E19260 is the Great/Bonus zone target (MOV W21, #1; ... BL 0x06E16E2C Local_OnSkillCheckSuccessTrigger).
+                // (0x06E19260 - 0x06E18F1C) / 4 = 0xD1 -> 0x140000D1
+                // (0x06E19260 - 0x06E1903C) / 4 = 0x89 -> 0x14000089
+                const uint32_t b_great_from_8f1c = 0x140000D1U;
+                const uint32_t b_great_from_903c = 0x14000089U;
                 std::memcpy(reinterpret_cast<void*>(addr_branch), &b_great_from_8f1c, sizeof(uint32_t));
                 std::memcpy(reinterpret_cast<void*>(addr_gate),   &b_great_from_903c, sizeof(uint32_t));
                 __builtin___clear_cache(reinterpret_cast<char*>(addr_branch), reinterpret_cast<char*>(addr_gate + 4U));
                 make_rx(addr_branch, 0x130U);
-            }
-            if (make_rw(addr_tick, 16U)) {
-                const uint32_t tick_patch[4] = {0xD503201FU, 0x2A1F03E4U, 0xAA1303E0U, 0x52800021U};
-                std::memcpy(reinterpret_cast<void*>(addr_tick), tick_patch, sizeof(tick_patch));
-                __builtin___clear_cache(reinterpret_cast<char*>(addr_tick), reinterpret_cast<char*>(addr_tick + 16U));
-                make_rx(addr_tick, 16U);
             }
             s_patched = true;
         } else {
@@ -1053,12 +1061,6 @@ public:
                 __builtin___clear_cache(reinterpret_cast<char*>(addr_branch), reinterpret_cast<char*>(addr_gate + 4U));
                 make_rx(addr_branch, 0x130U);
             }
-            if (make_rw(addr_tick, 16U)) {
-                const uint32_t orig_tick[4] = {0x34000168U, 0x52800024U, 0xAA1303E0U, 0x2A1F03E1U};
-                std::memcpy(reinterpret_cast<void*>(addr_tick), orig_tick, sizeof(orig_tick));
-                __builtin___clear_cache(reinterpret_cast<char*>(addr_tick), reinterpret_cast<char*>(addr_tick + 16U));
-                make_rx(addr_tick, 16U);
-            }
             s_patched = false;
         }
     }
@@ -1068,8 +1070,12 @@ public:
         uintptr_t ue4_base,
         uintptr_t guobjectarray_abs,
         const EngineOffsets& off,
-        bool in_process
+        bool in_process,
+        int32_t target_health_state = 2,
+        bool has_authority = false
     ) noexcept {
+        (void)ue4_base;
+        (void)in_process;
         if (!validate_canonical_uobject(camper_pawn, 0x1840U, guobjectarray_abs, off)) {
             return;
         }
@@ -1077,20 +1083,36 @@ public:
         if (!hc.has_value() || !validate_canonical_uobject(*hc, 0x0328U, guobjectarray_abs, off)) {
             return;
         }
-        (void)mem::write_data<uint8_t>(*hc + off.health_in_bleedout, 0U);
-        (void)mem::write_data<int32_t>(*hc + off.health_state_count, 2); // 2 = Healthy
 
-        for (uintptr_t chg_off : {off.health_heal_dying_chg, off.health_heal_injured_chg}) {
+        // Enable _enableAddCharge (+0x0368) on health chargeable components so SkillCheck bonus progression applies cleanly.
+        for (uintptr_t chg_off : {off.health_heal_dying_chg, off.health_heal_injured_chg, off.health_mend_chg}) {
             if (const auto chg = mem::read<uintptr_t>(*hc + chg_off);
-                chg.has_value() && validate_canonical_uobject(*chg, 0x0310U, guobjectarray_abs, off)) {
-                (void)mem::write_data<float>(*chg + off.chargeable_replicated_chg, 16.0f);
-                (void)mem::write_data<float>(*chg + off.chargeable_live_charge,    16.0f);
+                chg.has_value() && validate_canonical_uobject(*chg, 0x0370U, guobjectarray_abs, off)) {
+                (void)mem::write_data<uint8_t>(*chg + off.chargeable_enable_add_chg, 1U);
             }
         }
-        if (in_process && ue4_base != 0) {
-            using SetCurrentHealthStateCountFn = void(*)(uintptr_t, int32_t, bool);
-            const auto set_hp_fn = reinterpret_cast<SetCurrentHealthStateCountFn>(ue4_base + off.rva_health_set_count);
-            set_hp_fn(*hc, 2, false);
+
+        // CRITICAL: Never overwrite _currentHealthStateCount (+0x01EC) or _inInjuredBleedOut (+0x0170)
+        // on a client without server authority! Overwriting +0x01EC locally causes a fake-healed visual bug
+        // after taking a hit and leaves the survivor appearing standing/floating when downed (VE_KO) or carried.
+        if (!has_authority) {
+            return;
+        }
+
+        const int32_t clamped_hp = std::clamp(target_health_state, 1, 2);
+        (void)mem::write_data<uint8_t>(*hc + off.health_in_bleedout, 0U);
+        (void)mem::write_data<int32_t>(*hc + off.health_state_count, clamped_hp);
+
+        for (uintptr_t chg_off : {off.health_heal_dying_chg, off.health_heal_injured_chg, off.health_mend_chg}) {
+            if (const auto chg = mem::read<uintptr_t>(*hc + chg_off);
+                chg.has_value() && validate_canonical_uobject(*chg, 0x0370U, guobjectarray_abs, off)) {
+                const float max_chg = std::clamp(
+                    mem::read<float>(*chg + off.chargeable_max_charge_val).value_or(16.0f),
+                    1.0f,
+                    200.0f);
+                (void)mem::write_data<float>(*chg + off.chargeable_replicated_chg, max_chg);
+                (void)mem::write_data<float>(*chg + off.chargeable_live_charge,    max_chg);
+            }
         }
     }
 
@@ -1100,7 +1122,8 @@ public:
         uintptr_t local_pc,
         uintptr_t ue4_base,
         uintptr_t guobjectarray_abs,
-        const EngineOffsets& off
+        const EngineOffsets& off,
+        bool has_authority = false
     ) noexcept {
         if (!validate_canonical_uobject(local_pawn, 0x1840U, guobjectarray_abs, off)) {
             return;
@@ -1116,7 +1139,7 @@ public:
         }
         const bool in_process = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
         (void)apply_auto_skillcheck(local_pawn, local_pc, ue4_base, guobjectarray_abs, off, true, 150);
-        apply_pallet_vault_heal(local_pawn, ue4_base, guobjectarray_abs, off, in_process);
+        apply_pallet_vault_heal(local_pawn, ue4_base, guobjectarray_abs, off, in_process, 2, has_authority);
     }
 
     // 3a. Auto Skillcheck (Chaining + Auto-Great)
@@ -1129,7 +1152,8 @@ public:
         bool auto_skillcheck_enabled = true,
         int interval_ms = 650,
         float nearest_gen_dist_sq = 0.0f,
-        float nearest_gen_pct = 50.0f
+        float nearest_gen_pct = 50.0f,
+        uintptr_t nearest_gen_actor = 0ULL
     ) noexcept {
 #if defined(DBDM_STANDALONE_DAEMON)
         (void)local_pawn;
@@ -1141,10 +1165,16 @@ public:
         (void)interval_ms;
         (void)nearest_gen_dist_sq;
         (void)nearest_gen_pct;
+        (void)nearest_gen_actor;
         return false;
 #else
+        (void)nearest_gen_dist_sq;
+        (void)nearest_gen_pct;
+        (void)nearest_gen_actor;
+
         static bool     s_was_auto_skillcheck_enabled = false;
         static bool     s_fired_for_current_window    = false;
+        static bool     s_prev_displayed              = false;
         static int32_t  s_last_triggered_count        = -1;
         static uint64_t s_last_continuous_trigger_ms  = 0ULL;
 
@@ -1157,7 +1187,7 @@ public:
         const uintptr_t expected_owner = (chain.acknowledged_pawn != 0) ? chain.acknowledged_pawn : local_pawn;
         uintptr_t ih_addr = 0ULL;
         uintptr_t sc_addr = 0ULL;
-        if (expected_owner != 0 && validate_canonical_uobject(expected_owner, 0x0AA0U, guobjectarray_abs, off)) {
+        if (expected_owner != 0 && validate_canonical_uobject(expected_owner, 0x0F40U, guobjectarray_abs, off)) {
             if (const auto ih = mem::read<uintptr_t>(expected_owner + off.player_interaction_handler);
                 ih.has_value() && validate_canonical_uobject(*ih, 0x02A0U, guobjectarray_abs, off)) {
                 ih_addr = *ih;
@@ -1193,78 +1223,87 @@ public:
             return false;
         }
 
-        const uint8_t act_flag  = mem::read<uint8_t>(sc_addr + off.skillcheck_activated_flag).value_or(0U);
-        const uint8_t disp_flag = mem::read<uint8_t>(sc_addr + off.skillcheck_displayed_flag).value_or(0U);
-        const uint8_t live_disp = mem::read<uint8_t>(sc_addr + off.skillcheck_live_displayed).value_or(0U);
-
-        float speed_2d = 0.0f;
-        if (chain.is_valid && chain.movement_component != 0) {
-            if (const auto vel = mem::read<FVector>(chain.movement_component + off.movement_velocity)) {
-                const float speed_sq_2d = (vel->x * vel->x) + (vel->y * vel->y);
-                if (std::isfinite(speed_sq_2d) && speed_sq_2d >= 0.0f) {
-                    speed_2d = std::sqrt(speed_sq_2d);
-                }
-            }
-        }
-
-        const bool     in_process     = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
+        const bool      in_process     = (InProcessMemory::effective_pid() == ::getpid()) && (ue4_base != 0);
         static uint64_t s_last_spawn_ms = 0ULL;
         const uint64_t  now_ms          = skillcheck_now_ms();
         const uint64_t  clamped_int_ms  = static_cast<uint64_t>(std::clamp(interval_ms, 150, 5000));
 
-        // 1. Check Interaction Context & CamperPlayer State (full_resolved_utf8.txt)
-        //    Read SkillCheck (+0x0290 _currentProgress, +0x02A0 _skillCheckCount, +0x02C0 _currentInteraction,
-        //    +0x02C8 _currentSkillCheckType, +0x02F8 _currentSkillCheckDefinitionCache)
-        const float     cur_prog        = mem::read<float>(sc_addr + off.skillcheck_current_prog).value_or(0.0f);
-        const float     ui_prog         = mem::read<float>(sc_addr + off.skillcheck_ui_prog).value_or(0.0f);
-        const int32_t   gen_count       = mem::read<int32_t>(sc_addr + off.skillcheck_gen_count).value_or(0);
-        const uintptr_t sc_inter        = mem::read<uintptr_t>(sc_addr + off.skillcheck_current_inter).value_or(0ULL);
-        const uint8_t   sc_custom_type  = mem::read<uint8_t>(sc_addr + off.skillcheck_custom_type).value_or(0U);
+        float zone_start  = 0.0f;
+        float zone_length = 1.0f;
+        float bonus_len   = 1.0f;
+        hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
 
-        const uintptr_t def_cache_base  = sc_addr + off.skillcheck_def_cache;
-        const float     def_succ_start  = mem::read<float>(def_cache_base + 0x00U).value_or(0.0f);
-        const float     def_succ_len    = mem::read<float>(def_cache_base + 0x04U).value_or(0.0f);
-        const float     def_bonus_len   = mem::read<float>(def_cache_base + 0x08U).value_or(0.0f);
-        const float     def_bonus_start = mem::read<float>(def_cache_base + 0x0CU).value_or(0.0f);
+        uint8_t act_flag  = mem::read<uint8_t>(sc_addr + off.skillcheck_activated_flag).value_or(0U);
+        uint8_t disp_flag = mem::read<uint8_t>(sc_addr + off.skillcheck_displayed_flag).value_or(0U);
+        uint8_t live_disp = mem::read<uint8_t>(sc_addr + off.skillcheck_live_displayed).value_or(0U);
 
-        const float     live_succ_start = mem::read<float>(sc_addr + off.skillcheck_live_succ_start).value_or(0.0f);
-        const float     live_succ_end   = mem::read<float>(sc_addr + off.skillcheck_live_succ_end).value_or(0.0f);
-        const float     live_bonus_len  = mem::read<float>(sc_addr + off.skillcheck_live_bonus_len).value_or(0.0f);
-        const float     live_bonus_start= mem::read<float>(sc_addr + off.skillcheck_live_bonus_start).value_or(0.0f);
+        // Read ADBDPlayer::IsInteracting (+0x0A18) and _interactionAnimation (+0x0F30)
+        const uint8_t pawn_is_interacting =
+            mem::read<uint8_t>(expected_owner + off.dbd_player_is_interacting).value_or(0U);
+        const uint8_t pawn_inter_anim =
+            mem::read<uint8_t>(expected_owner + off.dbd_player_inter_anim).value_or(0xFFU);
 
-        // Query CamperPlayer state: IsBeingCarried, IsHooked, _isSacrificeStruggling
+        // Query CamperPlayer state strictly via safe memory reads (no background-thread engine function calls!)
         bool is_being_carried        = false;
         bool is_hooked               = false;
+        bool is_being_sacrificed     = false;
         bool is_sacrifice_struggling = false;
+        bool is_dying_ko_on_ground   = false;
         if (validate_canonical_uobject(expected_owner, 0x1B80U, guobjectarray_abs, off)) {
             const uint8_t imm_state = mem::read<uint8_t>(expected_owner + off.camper_immobilize_state).value_or(0U);
             if (imm_state == static_cast<uint8_t>(hud::ImmobilizeState::Hooked)) {
                 is_hooked = true;
             }
+            if (const auto sm = mem::read<uintptr_t>(expected_owner + off.dbd_player_state_machine);
+                sm.has_value() && validate_canonical_uobject(*sm, 0x01B0U, guobjectarray_abs, off)) {
+                const uint8_t sm_imm = mem::read<uint8_t>(*sm + off.state_machine_immobilize).value_or(0U);
+                if (sm_imm == static_cast<uint8_t>(hud::ImmobilizeState::Hooked)) {
+                    is_hooked = true;
+                }
+            }
+            const uint8_t being_sac = mem::read<uint8_t>(expected_owner + off.camper_is_being_sacrificed).value_or(0U);
+            if (being_sac != 0U) {
+                is_being_sacrificed = true;
+            }
             const uint8_t sac_strug = mem::read<uint8_t>(expected_owner + off.camper_is_sacrifice_strug).value_or(0U);
             if (sac_strug != 0U) {
                 is_sacrifice_struggling = true;
             }
-            if (in_process) {
-                using CamperBoolQueryFn = bool(*)(uintptr_t);
-                const auto fn_carried = reinterpret_cast<CamperBoolQueryFn>(ue4_base + off.rva_camper_is_carried);
-                const auto fn_hooked  = reinterpret_cast<CamperBoolQueryFn>(ue4_base + off.rva_camper_is_hooked);
-                is_being_carried = is_being_carried || fn_carried(expected_owner);
-                is_hooked        = is_hooked        || fn_hooked(expected_owner);
+            if (const auto hc = mem::read<uintptr_t>(expected_owner + off.camper_health_component);
+                hc.has_value() && validate_canonical_uobject(*hc, 0x0328U, guobjectarray_abs, off)) {
+                const uint8_t is_dead  = mem::read<uint8_t>(*hc + off.health_is_dead).value_or(0U);
+                const int32_t hp_count = mem::read<int32_t>(*hc + off.health_state_count).value_or(2);
+                if (is_dead == 0U && hp_count <= 0 &&
+                    !is_being_carried && !is_hooked && !is_being_sacrificed && !is_sacrifice_struggling) {
+                    is_dying_ko_on_ground = true;
+                    // Enable _enableAddCharge (+0x0368) on _healFromDyingChargeable (+0x0248) so Recover SkillChecks can lift the survivor
+                    if (const auto dying_chg = mem::read<uintptr_t>(*hc + off.health_heal_dying_chg);
+                        dying_chg.has_value() && validate_canonical_uobject(*dying_chg, 0x0370U, guobjectarray_abs, off)) {
+                        (void)mem::write_data<uint8_t>(*dying_chg + off.chargeable_enable_add_chg, 1U);
+                    }
+                }
             }
         }
 
+        // 1. Check Interaction Context & CamperPlayer State
+        const int32_t   gen_count      = mem::read<int32_t>(sc_addr + off.skillcheck_gen_count).value_or(0);
+        const uintptr_t sc_inter       = mem::read<uintptr_t>(sc_addr + off.skillcheck_current_inter).value_or(0ULL);
+        const uint8_t   sc_custom_type = mem::read<uint8_t>(sc_addr + off.skillcheck_custom_type).value_or(0U);
+
         const GNamePoolResolver name_pool{ue4_base != 0 ? (ue4_base + off.gnamepool_rva) : 0ULL};
         const uintptr_t ih_cur_inter = mem::read<uintptr_t>(ih_addr + off.handler_current_inter).value_or(0ULL);
+        const uintptr_t ih_req_inter = mem::read<uintptr_t>(ih_addr + off.handler_requested_inter).value_or(0ULL);
         const bool ih_inter_valid    = validate_canonical_uobject(ih_cur_inter, 0x0100U, guobjectarray_abs, off);
+        const bool req_inter_valid   = validate_canonical_uobject(ih_req_inter, 0x0100U, guobjectarray_abs, off);
         const bool sc_inter_valid    = validate_canonical_uobject(sc_inter, 0x0100U, guobjectarray_abs, off);
-        const uintptr_t cur_inter    = ih_inter_valid ? ih_cur_inter : (sc_inter_valid ? sc_inter : 0ULL);
+        const uintptr_t cur_inter    = ih_inter_valid ? ih_cur_inter : (sc_inter_valid ? sc_inter : (req_inter_valid ? ih_req_inter : 0ULL));
 
-        bool is_generator_repair  = false;
-        bool is_wiggle_or_struggle= is_being_carried || is_hooked || is_sacrifice_struggling;
+        bool is_generator_repair   = (pawn_inter_anim == 1U);
+        bool is_wiggle_or_struggle = is_being_carried || is_hooked || is_being_sacrificed || is_sacrifice_struggling ||
+                                     (pawn_inter_anim == 8U || pawn_inter_anim == 15U);
 
-        auto inspect_interaction_context = [&](uintptr_t inter_ptr) noexcept -> bool {
-            if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0330U, guobjectarray_abs, off)) {
+        auto is_chargeable_skillcheck_interaction = [&](uintptr_t inter_ptr) noexcept -> bool {
+            if (inter_ptr == 0ULL || !validate_canonical_uobject(inter_ptr, 0x0280U, guobjectarray_abs, off)) {
                 return false;
             }
             const uint8_t anim = mem::read<uint8_t>(inter_ptr + off.interaction_anim).value_or(0xFFU);
@@ -1281,12 +1320,24 @@ public:
             if (anim == 8U || anim == 15U ||
                 hud::detail::icontains_str(cls_leaf.data(), "Struggle") ||
                 hud::detail::icontains_str(cls_leaf.data(), "Wiggle") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Carry") ||
                 hud::detail::icontains_str(cls_leaf.data(), "Hook") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Sacrifice") ||
                 hud::detail::icontains_str(obj_name.data(), "Struggle") ||
                 hud::detail::icontains_str(obj_name.data(), "Wiggle") ||
-                hud::detail::icontains_str(obj_name.data(), "Hook")) {
+                hud::detail::icontains_str(obj_name.data(), "Carry") ||
+                hud::detail::icontains_str(obj_name.data(), "Hook") ||
+                hud::detail::icontains_str(obj_name.data(), "Sacrifice")) {
                 is_wiggle_or_struggle = true;
-                return true;
+                return false;
+            }
+            if (hud::detail::icontains_str(cls_leaf.data(), "Totem") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Cleanse") ||
+                hud::detail::icontains_str(cls_leaf.data(), "Bless") ||
+                hud::detail::icontains_str(obj_name.data(), "Totem") ||
+                hud::detail::icontains_str(obj_name.data(), "Cleanse") ||
+                hud::detail::icontains_str(obj_name.data(), "Bless")) {
+                return false;
             }
             if (anim == 1U ||
                 hud::detail::icontains_str(cls_leaf.data(), "Generator") ||
@@ -1294,126 +1345,34 @@ public:
                 hud::detail::icontains_str(obj_name.data(), "Generator") ||
                 hud::detail::icontains_str(obj_name.data(), "Repair")) {
                 is_generator_repair = true;
-            }
-            if (anim == 1U || anim == 6U || anim == 9U || anim == 10U) {
                 return true;
             }
-            return hud::detail::icontains_str(cls_chain.data(), "ChargeableInteraction") ||
-                   is_generator_repair ||
+            if (anim == 6U || anim == 7U || anim == 9U || anim == 10U ||
+                (is_dying_ko_on_ground && pawn_is_interacting != 0U)) {
+                return true;
+            }
+            return is_dying_ko_on_ground ||
+                   hud::detail::icontains_str(cls_chain.data(), "ChargeableInteraction") ||
                    hud::detail::icontains_str(cls_leaf.data(),  "Heal") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Medkit") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "SelfCare") ||
                    hud::detail::icontains_str(cls_leaf.data(),  "Mend") ||
-                   hud::detail::icontains_str(cls_leaf.data(),  "Sabotage");
+                   hud::detail::icontains_str(cls_leaf.data(),  "Recover") ||
+                   hud::detail::icontains_str(cls_leaf.data(),  "Sabotage") ||
+                   hud::detail::icontains_str(obj_name.data(),  "Heal") ||
+                   hud::detail::icontains_str(obj_name.data(),  "Recover") ||
+                   hud::detail::icontains_str(obj_name.data(),  "Mend");
         };
 
-        if (cur_inter == 0ULL && !is_wiggle_or_struggle) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
+        const bool is_chargeable_inter = is_chargeable_skillcheck_interaction(cur_inter);
 
-        if (cur_inter != 0ULL && is_pallet_or_vault_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
-            clear_stale_skillcheck_state();
-            (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
-            if ((now_ms - s_last_spawn_ms) >= clamped_int_ms) {
-                s_last_spawn_ms = now_ms;
-                apply_pallet_vault_heal(expected_owner, ue4_base, guobjectarray_abs, off, in_process);
-                return true;
-            }
-            return false;
-        }
-
-        if (cur_inter != 0ULL && !is_wiggle_or_struggle &&
-            !is_allowed_skillcheck_interaction(cur_inter, guobjectarray_abs, off, name_pool)) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
-
-        const bool is_valid_inter = inspect_interaction_context(cur_inter) ||
-                                    (sc_inter != cur_inter && inspect_interaction_context(sc_inter)) ||
-                                    is_wiggle_or_struggle;
-        if (!is_valid_inter) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
-
-        // Standard chargeable interactions (Generator Repair & Survivor Healing) require stationary survivor (<= 25 cm/s).
-        // Continuous / Struggle interactions (Shoulder Wiggle while carried by killer, Hook Struggle) do not.
-        if (!is_wiggle_or_struggle && speed_2d > 25.0f) {
-            if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                clear_stale_skillcheck_state();
-            }
-            return false;
-        }
-
-        // If repairing a generator, ensure the nearest generator is within interaction distance (<= 4.5m)
-        // and is actively being repaired (0.0% <= progress < 99.9%).
-        if (is_generator_repair && !is_wiggle_or_struggle) {
-            if (!std::isfinite(nearest_gen_dist_sq) || nearest_gen_dist_sq > (4.5f * 4.5f) ||
-                !std::isfinite(nearest_gen_pct) || nearest_gen_pct < 0.0f || nearest_gen_pct >= 99.9f) {
-                if (act_flag != 0U || disp_flag != 0U || live_disp != 0U) {
-                    clear_stale_skillcheck_state();
-                }
-                return false;
-            }
-        }
-
-        // Strictly reactive: only respond when the game naturally opens a skill check window
-        if ((live_disp == 0U && disp_flag == 0U) || act_flag == 0U) {
-            s_fired_for_current_window = false;
-            return false;
-        }
-
-        // Resolve native zone parameters from _currentSkillCheckDefinitionCache (+0x02F8) and live fields (+0x02CC..+0x02D8)
-        const float native_bonus_len =
-            (std::isfinite(def_bonus_len) && def_bonus_len > 0.0f && def_bonus_len <= 1.0f)
-                ? def_bonus_len
-                : ((std::isfinite(live_bonus_len) && live_bonus_len > 0.0f && live_bonus_len <= 1.0f)
-                       ? live_bonus_len
-                       : 0.0f);
-        const float native_bonus_start =
-            (std::isfinite(def_bonus_start) && def_bonus_start >= 0.0f && def_bonus_start < 1.0f)
-                ? def_bonus_start
-                : ((std::isfinite(live_bonus_start) && live_bonus_start >= 0.0f && live_bonus_start < 1.0f)
-                       ? live_bonus_start
-                       : 0.0f);
-        const float native_succ_start =
-            (std::isfinite(def_succ_start) && def_succ_start > 0.0f && def_succ_start < 1.0f)
-                ? def_succ_start
-                : ((std::isfinite(live_succ_start) && live_succ_start > 0.0f && live_succ_start < 1.0f)
-                       ? live_succ_start
-                       : 0.15f);
-        const float native_succ_len =
-            (std::isfinite(def_succ_len) && def_succ_len > 0.01f && def_succ_len <= 1.0f)
-                ? def_succ_len
-                : ((std::isfinite(live_succ_end) && live_succ_end > native_succ_start && live_succ_end <= 1.0f)
-                       ? (live_succ_end - native_succ_start)
-                       : 0.25f);
-
-        const bool is_continuous_struggle_context =
-            is_wiggle_or_struggle || (native_bonus_len <= 0.002f) || (sc_custom_type != 0U && is_wiggle_or_struggle);
-
-        const float eff_prog = std::max(cur_prog, ui_prog);
-
-        if (!is_continuous_struggle_context) {
-            // Case A: Standard Chargeable SkillChecks (Generator Repair & Survivor Healing)
-            // Has a valid positive bonus zone (bonus_len > 0.002f). Use 1-shot lock per _skillCheckCount.
-            if (gen_count != s_last_triggered_count) {
-                s_fired_for_current_window = false;
-            }
-
-            float zone_start  = 0.0f;
-            float zone_length = 1.0f;
-            float bonus_len   = 1.0f;
-            hud::compute_skillcheck_zone_override(zone_start, zone_length, bonus_len);
-
-            const float active_bonus_start = (native_bonus_start > 0.01f) ? native_bonus_start : zone_start;
-            const float active_bonus_len   = (native_bonus_len > 0.002f)  ? native_bonus_len   : bonus_len;
-            const float target_threshold   = std::max(0.10f, active_bonus_start);
+        // Automatically activate SkillCheck every clamped_int_ms during Generator Repair, Healing, and Ground Recovery (VE_KO),
+        // while strictly skipping Wiggle/Struggle/Hook states so hooking never crashes.
+        if (!is_wiggle_or_struggle &&
+            act_flag == 0U && disp_flag == 0U && live_disp == 0U &&
+            cur_inter != 0ULL && is_chargeable_inter &&
+            (now_ms - s_last_spawn_ms) >= clamped_int_ms) {
+            s_last_spawn_ms = now_ms;
 
             (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_start,  zone_start);
             (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_end,    zone_length);
@@ -1424,17 +1383,107 @@ public:
             (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_length,     bonus_len);
             (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_start,      zone_start);
 
-            if (!s_fired_for_current_window && std::isfinite(eff_prog) && eff_prog >= target_threshold) {
+            if (in_process) {
+                using LocalActivateSkillCheckFn = void(*)(uintptr_t, uintptr_t, float);
+                const auto activate_fn = reinterpret_cast<LocalActivateSkillCheckFn>(ue4_base + off.rva_skillcheck_activate);
+                activate_fn(sc_addr, cur_inter, 0.0f);
+            }
+
+            act_flag  = mem::read<uint8_t>(sc_addr + off.skillcheck_activated_flag).value_or(0U);
+            disp_flag = mem::read<uint8_t>(sc_addr + off.skillcheck_displayed_flag).value_or(0U);
+            live_disp = mem::read<uint8_t>(sc_addr + off.skillcheck_live_displayed).value_or(0U);
+        }
+
+        const bool has_skillcheck_signal = (act_flag != 0U) || (disp_flag != 0U) || (live_disp != 0U);
+        if (!has_skillcheck_signal) {
+            s_fired_for_current_window = false;
+            s_prev_displayed           = false;
+            return false;
+        }
+
+        // Reset per-check guard when _skillCheckCount (+0x02A0) advances or when a new _displayed (+0x028D) transition occurs
+        const int32_t live_gen_count = mem::read<int32_t>(sc_addr + off.skillcheck_gen_count).value_or(gen_count);
+        if (live_gen_count != s_last_triggered_count || (disp_flag != 0U && !s_prev_displayed)) {
+            s_fired_for_current_window = false;
+        }
+        s_prev_displayed = (disp_flag != 0U);
+
+        // Wait until the game thread has displayed the skill check before sending OnSkillCheckInput
+        if ((live_disp == 0U && disp_flag == 0U) || act_flag == 0U) {
+            return false;
+        }
+
+        const float cur_prog        = mem::read<float>(sc_addr + off.skillcheck_current_prog).value_or(0.0f);
+        const float ui_prog         = mem::read<float>(sc_addr + off.skillcheck_ui_prog).value_or(0.0f);
+
+        const uintptr_t def_cache_base  = sc_addr + off.skillcheck_def_cache;
+        const float     def_succ_start  = mem::read<float>(def_cache_base + 0x00U).value_or(0.0f);
+        const float     def_succ_end    = mem::read<float>(def_cache_base + 0x04U).value_or(0.0f);
+        const float     def_bonus_len   = mem::read<float>(def_cache_base + 0x08U).value_or(0.0f);
+        const float     def_bonus_start = mem::read<float>(def_cache_base + 0x0CU).value_or(0.0f);
+
+        const float     live_succ_start = mem::read<float>(sc_addr + off.skillcheck_live_succ_start).value_or(0.0f);
+        const float     live_succ_end   = mem::read<float>(sc_addr + off.skillcheck_live_succ_end).value_or(0.0f);
+        const float     live_bonus_len  = mem::read<float>(sc_addr + off.skillcheck_live_bonus_len).value_or(0.0f);
+        const float     live_bonus_start= mem::read<float>(sc_addr + off.skillcheck_live_bonus_start).value_or(0.0f);
+
+        // Resolve native zone parameters from active _currentSkillCheckDefinition (+0x02CC..+0x02D8)
+        // with fallback to _currentSkillCheckDefinitionCache (+0x02F8..+0x0304).
+        const float native_bonus_len =
+            (std::isfinite(live_bonus_len) && live_bonus_len > 0.0f && live_bonus_len <= 1.0f)
+                ? live_bonus_len
+                : ((std::isfinite(def_bonus_len) && def_bonus_len > 0.0f && def_bonus_len <= 1.0f)
+                       ? def_bonus_len
+                       : 0.0f);
+        const float native_bonus_start =
+            (std::isfinite(live_bonus_start) && live_bonus_start >= 0.0f && live_bonus_start < 1.0f)
+                ? live_bonus_start
+                : ((std::isfinite(def_bonus_start) && def_bonus_start >= 0.0f && def_bonus_start < 1.0f)
+                       ? def_bonus_start
+                       : 0.0f);
+        const float native_succ_start =
+            (std::isfinite(live_succ_start) && live_succ_start > 0.0f && live_succ_start < 1.0f)
+                ? live_succ_start
+                : ((std::isfinite(def_succ_start) && def_succ_start > 0.0f && def_succ_start < 1.0f)
+                       ? def_succ_start
+                       : 0.15f);
+        const float native_succ_end =
+            (std::isfinite(live_succ_end) && live_succ_end > native_succ_start && live_succ_end <= 1.0f)
+                ? live_succ_end
+                : ((std::isfinite(def_succ_end) && def_succ_end > native_succ_start && def_succ_end <= 1.0f)
+                       ? def_succ_end
+                       : std::min(0.95f, native_succ_start + 0.25f));
+        const float native_succ_len = std::max(0.08f, native_succ_end - native_succ_start);
+
+        const bool is_continuous_struggle_context =
+            is_wiggle_or_struggle || (!is_chargeable_inter && (native_bonus_len <= 0.002f || sc_custom_type != 0U));
+
+        const float eff_prog = std::max(cur_prog, ui_prog);
+
+        if (!is_continuous_struggle_context) {
+            // Case A: Standard Chargeable SkillChecks (Generator Repair, Survivor Healing, Ground Recovery VE_KO)
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_start,  zone_start);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_succ_end,    zone_length);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_len,   bonus_len);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_live_bonus_start, zone_start);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_success_start,    zone_start);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_success_length,   zone_length);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_length,     bonus_len);
+            (void)mem::write_data<float>(sc_addr + off.skillcheck_bonus_start,      zone_start);
+
+            if (!s_fired_for_current_window && disp_flag != 0U && act_flag != 0U &&
+                std::isfinite(eff_prog) && eff_prog >= 0.08f) {
                 s_fired_for_current_window = true;
-                s_last_triggered_count     = gen_count;
-                const float great_mid = std::clamp(active_bonus_start + (active_bonus_len * 0.5f), 0.05f, 0.95f);
-                (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, great_mid);
-                (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      great_mid);
+                s_last_triggered_count     = live_gen_count;
+                constexpr float kSweetTarget = 0.50f;
+                (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, kSweetTarget);
+                (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      kSweetTarget);
                 (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
                 if (in_process) {
                     const uintptr_t sc_owner = mem::read<uintptr_t>(sc_addr + off.skillcheck_owner_pawn).value_or(expected_owner);
+                    const uintptr_t active_sc_inter = mem::read<uintptr_t>(sc_addr + off.skillcheck_current_inter).value_or(cur_inter);
                     if (validate_canonical_uobject(sc_owner, 0x0AA0U, guobjectarray_abs, off) &&
-                        (sc_inter_valid || ih_inter_valid)) {
+                        validate_canonical_uobject(active_sc_inter, 0x0100U, guobjectarray_abs, off)) {
                         using OnSkillCheckInputFn = void(*)(uintptr_t);
                         const auto input_fn = reinterpret_cast<OnSkillCheckInputFn>(ue4_base + off.rva_skillcheck_input);
                         input_fn(sc_addr);
@@ -1444,9 +1493,6 @@ public:
             }
         } else {
             // Case B: Continuous / Struggle SkillChecks (Shoulder Wiggle & Hook Phase 2 Struggle)
-            // Do NOT block subsequent sweeps with a permanent 1-shot lock; instead, trigger when _currentProgress
-            // enters the valid success window with a 120ms cooldown between triggers so Wiggle and Hook Struggle
-            // execute smoothly every cycle.
             s_fired_for_current_window = false;
 
             const float win_start = (native_bonus_len > 0.002f && native_bonus_start > 0.0f)
@@ -1458,13 +1504,14 @@ public:
             const float win_end   = std::min(0.98f, win_start + win_len);
             const float win_mid   = std::clamp(win_start + (win_len * 0.5f), 0.05f, 0.95f);
 
-            const bool in_window = std::isfinite(eff_prog) &&
+            const bool in_window = (disp_flag != 0U) &&
+                                   std::isfinite(eff_prog) &&
                                    (eff_prog >= std::max(0.04f, win_start - 0.02f)) &&
                                    (eff_prog <= win_end + 0.05f);
 
-            if (in_window && (now_ms - s_last_continuous_trigger_ms) >= 120ULL) {
+            if (in_window && (now_ms - s_last_continuous_trigger_ms) >= 150ULL) {
                 s_last_continuous_trigger_ms = now_ms;
-                s_last_triggered_count       = gen_count;
+                s_last_triggered_count       = live_gen_count;
                 (void)mem::write_data<float>(sc_addr + off.skillcheck_current_prog, win_mid);
                 (void)mem::write_data<float>(sc_addr + off.skillcheck_ui_prog,      win_mid);
                 (void)mem::write_data<int32_t>(sc_addr + off.skillcheck_last_result, 1);
@@ -1530,6 +1577,49 @@ public:
         }
     }
 
+    // Suppresses ACharacter::ClientAdjustPosition_Implementation (0x0BFD9CF4),
+    // ACharacter::ClientVeryShortAdjustPosition_Implementation (0x0BFD9D10), and
+    // ACharacter::ClientAdjustRootMotionPosition_Implementation (0x0BFD9D2C) while Fly is active
+    // so server position corrections do not rubberband the player back to the ground.
+    static void patch_fly_client_adjust(
+        uintptr_t ue4_base,
+        bool enable_patch
+    ) noexcept {
+#if defined(DBDM_STANDALONE_DAEMON)
+        (void)ue4_base;
+        (void)enable_patch;
+#else
+        if (ue4_base == 0 || InProcessMemory::effective_pid() != ::getpid()) {
+            return;
+        }
+        static bool s_fly_patched = false;
+        if (enable_patch == s_fly_patched) {
+            return;
+        }
+
+        constexpr uintptr_t kRvaAdjustPos      = 0x0BFD9CF4ULL;
+        constexpr uintptr_t kRvaShortAdjustPos = 0x0BFD9D10ULL;
+        constexpr uintptr_t kRvaRootMotionPos  = 0x0BFD9D2CULL;
+
+        const uintptr_t addr_base = ue4_base + kRvaAdjustPos;
+        const uintptr_t page_sz   = static_cast<uintptr_t>(::sysconf(_SC_PAGESIZE));
+        const uintptr_t page_start= addr_base & ~(page_sz - 1ULL);
+        const uintptr_t page_end  = (addr_base + 0x40ULL + page_sz - 1ULL) & ~(page_sz - 1ULL);
+
+        if (::mprotect(reinterpret_cast<void*>(page_start), page_end - page_start, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
+            const uint32_t insn = enable_patch ? 0xD65F03C0U : 0xF9414C00U; // RET vs LDR X0, [X0, #0x298]
+            std::memcpy(reinterpret_cast<void*>(ue4_base + kRvaAdjustPos),      &insn, sizeof(uint32_t));
+            std::memcpy(reinterpret_cast<void*>(ue4_base + kRvaShortAdjustPos), &insn, sizeof(uint32_t));
+            std::memcpy(reinterpret_cast<void*>(ue4_base + kRvaRootMotionPos),  &insn, sizeof(uint32_t));
+            __builtin___clear_cache(
+                reinterpret_cast<char*>(ue4_base + kRvaAdjustPos),
+                reinterpret_cast<char*>(ue4_base + kRvaRootMotionPos + 4ULL));
+            (void)::mprotect(reinterpret_cast<void*>(page_start), page_end - page_start, PROT_READ | PROT_EXEC);
+            s_fly_patched = enable_patch;
+        }
+#endif
+    }
+
     // 4a. Bidirectional Fly Cheat & Safe Mid-Air Disable Sequence
     static Status apply_fly_mode(
         uintptr_t local_pc,
@@ -1538,8 +1628,13 @@ public:
         const EngineOffsets& off,
         bool fly_enabled,
         float fly_speed,
-        float fly_vertical_speed = 0.0f
+        float fly_vertical_speed = 0.0f,
+        uintptr_t ue4_base = 0ULL
     ) noexcept {
+        if (!fly_enabled) {
+            patch_fly_client_adjust(ue4_base, false);
+        }
+
         const hud::CharacterMovementChain chain = resolve_local_movement_chain(
             local_pc, local_pawn, guobjectarray_abs, off);
         if (!chain.is_valid || chain.acknowledged_pawn == 0 || chain.movement_component == 0) {
@@ -1555,6 +1650,7 @@ public:
         static uint8_t   s_saved_col_flags    = 0;
         static bool      s_has_saved_col      = false;
         static uint8_t   s_saved_dirty_flags  = 0;
+        static uint8_t   s_saved_net_flags    = 0;
         static bool      s_has_saved_dirty    = false;
         static float     s_saved_gravity      = 1.0f;
         static float     s_saved_braking_fly  = 0.0f;
@@ -1568,6 +1664,7 @@ public:
                 (void)mem::write_data<float>(move_comp + off.braking_decel_flying, s_saved_braking_fly);
                 (void)mem::write_data<float>(move_comp + off.max_fly_speed, s_saved_max_fly_spd);
                 (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, s_saved_dirty_flags);
+                (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags + 1U, s_saved_net_flags);
             } else if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
                 (void)mem::write_data<uint8_t>(
                     move_comp + off.movement_dirty_flags,
@@ -1591,6 +1688,8 @@ public:
             return mode_st;
         }
 
+        patch_fly_client_adjust(ue4_base, true);
+
         if (s_fly_saved_pawn != pawn_addr) {
             s_fly_saved_pawn = pawn_addr;
             if (const auto col = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
@@ -1599,6 +1698,7 @@ public:
             }
             if (const auto dflags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
                 s_saved_dirty_flags = *dflags;
+                s_saved_net_flags   = mem::read<uint8_t>(move_comp + off.movement_dirty_flags + 1U).value_or(0U);
                 s_saved_gravity     = mem::read<float>(move_comp + off.gravity_scale).value_or(1.0f);
                 s_saved_braking_fly = mem::read<float>(move_comp + off.braking_decel_flying).value_or(0.0f);
                 s_saved_max_fly_spd = mem::read<float>(move_comp + off.max_fly_speed).value_or(600.0f);
@@ -1606,55 +1706,66 @@ public:
             }
         }
 
-        (void)fly_speed;
+        const uint8_t fly_mode = hud::resolve_movement_mode_byte(true); // 5U = MOVE_Flying
+        const float target_fly_spd = (std::isfinite(fly_speed) && fly_speed >= 50.0f)
+            ? std::clamp(fly_speed, 300.0f, 2500.0f)
+            : 800.0f;
+        (void)mem::write_data<float>(move_comp + off.max_fly_speed, target_fly_spd);
         (void)mem::write_data<float>(move_comp + off.gravity_scale, 0.0f);
+        (void)mem::write_data<float>(move_comp + off.braking_decel_flying, 4096.0f);
 
-        FVector cur_vel = mem::read<FVector>(move_comp + off.movement_velocity).value_or(FVector{0.0f, 0.0f, 0.0f});
+        if (const auto cur_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags)) {
+            const uint8_t dirty_byte = hud::compute_movement_dirty_flags(*cur_flags, true, true);
+            (void)mem::write_data<uint8_t>(move_comp + off.movement_dirty_flags, dirty_byte);
+        }
+        if (const auto net_flags = mem::read<uint8_t>(move_comp + off.movement_dirty_flags + 1U)) {
+            // Set bIgnoreClientMovementErrorChecksAndCorrection (0x01) | bServerAcceptClientAuthoritativePosition (0x02)
+            (void)mem::write_data<uint8_t>(
+                move_comp + off.movement_dirty_flags + 1U,
+                static_cast<uint8_t>(*net_flags | 0x03U));
+        }
+        if (const auto col_flags = mem::read<uint8_t>(pawn_addr + off.actor_collision_flags)) {
+            const uint8_t col_byte = hud::compute_actor_collision_byte(*col_flags, false);
+            if (col_byte != *col_flags) {
+                (void)mem::write_data<uint8_t>(pawn_addr + off.actor_collision_flags, col_byte);
+            }
+        }
+
+        const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, fly_mode);
+        (void)mem::write_data<uint32_t>(move_comp + off.current_floor, 0U);
+
         const auto rc_opt = mem::read<uintptr_t>(pawn_addr + off.root_component);
         const bool rc_valid = rc_opt.has_value() && validate_canonical_uobject(*rc_opt, 0x01D0U, guobjectarray_abs, off);
+        const uintptr_t z_addr = rc_valid ? (*rc_opt + off.relative_location + 0x08U) : 0ULL;
+        const uintptr_t vel_z_addr = move_comp + off.movement_velocity + 0x08U;
 
-        if (std::isfinite(fly_vertical_speed) && std::abs(fly_vertical_speed) > 1.0f) {
-            // Use MOVE_Falling (3U) rather than MOVE_Flying (5U) while ascending/descending
-            // so survivor root bone and capsule alignment never tilt sideways or sink into the floor.
-            constexpr uint8_t kMoveFalling = 3U;
-            const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, kMoveFalling);
-            cur_vel.z = std::clamp(fly_vertical_speed, -600.0f, 600.0f);
-            (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
-            if (rc_valid) {
-                if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
-                    rel_loc.has_value() && std::isfinite(rel_loc->z)) {
-                    FVector updated_loc = *rel_loc;
-                    updated_loc.z += cur_vel.z * 0.016f;
-                    (void)mem::write_data<FVector>(*rc_opt + off.relative_location, updated_loc);
+        if (rc_valid) {
+            if (const auto cur_z = mem::read<float>(z_addr);
+                cur_z.has_value() && std::isfinite(*cur_z)) {
+                if (!s_has_held_z || s_held_pawn != pawn_addr) {
                     s_held_pawn  = pawn_addr;
-                    s_held_z     = updated_loc.z;
+                    s_held_z     = *cur_z + 60.0f;
                     s_has_held_z = true;
+                    (void)mem::write_data<float>(z_addr, s_held_z);
                 }
             }
-            return mode_st;
-        } else {
-            // Holding altitude (0% vertical speed): keep MOVE_Walking (1U) with zero vertical velocity
-            // so normal survivor walking animations and capsule alignment stay intact.
-            constexpr uint8_t kMoveWalking = 1U;
-            const Status mode_st = mem::write_data<uint8_t>(move_comp + off.movement_mode, kMoveWalking);
-            cur_vel.z = 0.0f;
-            (void)mem::write_data<FVector>(move_comp + off.movement_velocity, cur_vel);
-            if (rc_valid) {
-                if (const auto rel_loc = mem::read<FVector>(*rc_opt + off.relative_location);
-                    rel_loc.has_value() && std::isfinite(rel_loc->z)) {
-                    if (!s_has_held_z || s_held_pawn != pawn_addr) {
-                        s_held_pawn  = pawn_addr;
-                        s_held_z     = rel_loc->z;
-                        s_has_held_z = true;
-                    } else {
-                        FVector held_loc = *rel_loc;
-                        held_loc.z       = s_held_z;
-                        (void)mem::write_data<FVector>(*rc_opt + off.relative_location, held_loc);
-                    }
-                }
-            }
-            return mode_st;
         }
+
+        // IMPORTANT: Only write the 4-byte Z component (never overwrite X or Y on the background thread!)
+        if (std::isfinite(fly_vertical_speed) && std::abs(fly_vertical_speed) > 1.0f) {
+            const float vz = std::clamp(fly_vertical_speed, -1200.0f, 1200.0f);
+            (void)mem::write_data<float>(vel_z_addr, vz);
+            if (rc_valid && s_has_held_z) {
+                s_held_z += vz * 0.020f;
+                (void)mem::write_data<float>(z_addr, s_held_z);
+            }
+        } else {
+            (void)mem::write_data<float>(vel_z_addr, 0.0f);
+            if (rc_valid && s_has_held_z) {
+                (void)mem::write_data<float>(z_addr, s_held_z);
+            }
+        }
+        return mode_st;
     }
 
     // 4b. Instant Hatch Escape (Thread-safe, binary-verified memory writes only)
@@ -3646,8 +3757,9 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
     {
         local_game_state = *gs;
     }
-    float    nearest_gen_pct      = 0.0f;
-    float    nearest_gen_dist_sq  = 1e18f;
+    float     nearest_gen_pct      = 0.0f;
+    float     nearest_gen_dist_sq  = 1e18f;
+    uintptr_t nearest_gen_actor    = 0ULL;
     static uint32_t s_skillchecks_handled = 0;
     size_t   logged_actors        = 0;
     bool     is_lobby_level       = false;
@@ -3908,6 +4020,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 if (dsq < nearest_gen_dist_sq) {
                     nearest_gen_dist_sq = dsq;
                     nearest_gen_pct     = s_snapshots_pool[i].progress_pct;
+                    nearest_gen_actor   = s_snapshots_pool[i].actor_address;
                 }
             }
             (void)hud::adapter::push_static_entity_sample(
@@ -4311,7 +4424,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
                 sync_res.auto_skillcheck,
                 sync_res.skillcheck_interval_ms,
                 nearest_gen_dist_sq,
-                nearest_gen_pct)) {
+                nearest_gen_pct,
+                nearest_gen_actor)) {
             ++s_skillchecks_handled;
         }
     }
@@ -4319,7 +4433,7 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         ue4::SpatialAndKinematicPipeline::apply_trap_immunity(local_pawn, guobjectarray_abs, off);
     }
     if (authoritative_write_safe && final_match_active && sync_res.auto_heal && local_pawn != 0) {
-        ue4::SpatialAndKinematicPipeline::apply_auto_heal(local_pawn, local_pc, base, guobjectarray_abs, off);
+        ue4::SpatialAndKinematicPipeline::apply_auto_heal(local_pawn, local_pc, base, guobjectarray_abs, off, gs_has_authority);
     }
 
     // Execute Advanced Feature 4: Bidirectional Fly Cheat & Instant Hatch Escape
@@ -4333,7 +4447,8 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
             off,
             sync_res.fly_cheat_enabled,
             target_walk_speed,
-            sync_res.fly_vertical_speed
+            sync_res.fly_vertical_speed,
+            base
         );
         if (fly_st != Status::Ok && local_pawn != s_last_fly_err_pawn) {
             s_last_fly_err_pawn = local_pawn;
@@ -4346,6 +4461,9 @@ INSTRUMENT_LOCAL static void execute_diagnostic_tick() noexcept {
         }
         s_was_flying = sync_res.fly_cheat_enabled;
     } else if (!write_safe || !final_match_active) {
+        if (s_was_flying) {
+            ue4::SpatialAndKinematicPipeline::patch_fly_client_adjust(base, false);
+        }
         s_was_flying = false;
     }
     if (write_safe && sync_res.force_escape && local_pawn != 0) {
